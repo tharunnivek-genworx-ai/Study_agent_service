@@ -1,0 +1,2 @@
+# CORS middleware placeholder
+
