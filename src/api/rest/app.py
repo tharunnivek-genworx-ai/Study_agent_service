@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 
+from .routes import health, sse, websocket
+
 app = FastAPI()
 
-from .routes import health, sse, websocket  # noqa: F401
-
+app.include_router(health.router)
+app.include_router(sse.router)
+app.include_router(websocket.router)
