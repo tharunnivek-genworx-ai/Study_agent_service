@@ -1,0 +1,72 @@
+import uuid
+
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+
+from src.api.data.clients.postgres.database import Base
+from src.api.utils.time import utc_now
+
+
+class StudyMaterialVersion(Base):
+    __tablename__ = "studymaterialversions"
+
+    version_id = Column(
+        "versionid", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    node_id = Column(
+        "nodeid",
+        UUID(as_uuid=True),
+        ForeignKey("topicnodes.nodeid", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    space_id = Column(
+        "spaceid",
+        UUID(as_uuid=True),
+        ForeignKey("espaces.spaceid", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version_number = Column("versionnumber", Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    generation_type = Column("generationtype", String(20), nullable=False)
+    mentor_feedback_used = Column("mentorfeedbackused", Text, nullable=True)
+    reference_material_id = Column(
+        "referencematerialid",
+        UUID(as_uuid=True),
+        ForeignKey("referencematerials.materialid", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    based_on_version_id = Column(
+        "basedonversionid",
+        UUID(as_uuid=True),
+        ForeignKey("studymaterialversions.versionid", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    llm_model_used = Column("llmmodelused", String(100), nullable=True)
+    prompt_snapshot = Column("promptsnapshot", Text, nullable=True)
+    token_usage = Column("tokenusage", Integer, nullable=True)
+    is_active = Column("isactive", Boolean, nullable=False, default=False)
+    is_published = Column("ispublished", Boolean, nullable=False, default=False)
+    published_at = Column("publishedat", TIMESTAMP(timezone=True), nullable=True)
+    published_by = Column(
+        "publishedby",
+        UUID(as_uuid=True),
+        ForeignKey("mentors.mentorid", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_by = Column(
+        "createdby",
+        UUID(as_uuid=True),
+        ForeignKey("mentors.mentorid", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at = Column(
+        "createdat", TIMESTAMP(timezone=True), nullable=False, default=utc_now
+    )
+    is_archived = Column("isarchived", Boolean, nullable=False, default=False)
+    archived_at = Column("archivedat", TIMESTAMP(timezone=True), nullable=True)
+    archived_by = Column(
+        "archivedby",
+        UUID(as_uuid=True),
+        ForeignKey("mentors.mentorid", ondelete="RESTRICT"),
+        nullable=True,
+    )

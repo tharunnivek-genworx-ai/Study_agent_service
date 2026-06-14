@@ -84,12 +84,16 @@ class NodeMediaOut(BaseModel):
     title: str | None
     url: str | None
     file_url: str | None
+    public_url: str | None = Field(
+        default=None,
+        description="Browser-loadable URL resolved by the service.",
+    )
     order_index: int
     uploaded_by: UUID
     # Phase 2A fields — None in MVP
     source_pdf_material_id: UUID | None
     source_page_number: int | None
-    created_at: datetime
+    created_at: datetime | None = None
 
 
 class NodeMediaListOut(BaseModel):
