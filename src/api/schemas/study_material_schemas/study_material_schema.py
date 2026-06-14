@@ -36,40 +36,71 @@ for that — FastAPI's StreamingResponse handles it directly.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from src.api.utils.study_agent_utils.version_labels import (
+    build_version_display_label,
+    truncate_feedback,
+)
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
 GenerationType = Literal["generate", "regenerate", "improve", "manual_edit"]
 
 
-# ── Request Schemas ──────────────────────────────────────────────────────────
+class _VersionRowLike(Protocol):
+    """Minimal ORM row shape for building version summaries."""
+
+    version_id: UUID
+    version_number: int
+    generation_type: GenerationType
+    based_on_version_id: UUID | None
+    mentor_feedback_used: str | None
+    reference_material_id: UUID | None
+    is_active: bool
+    is_published: bool
+    is_archived: bool
+    archived_at: datetime | None
+    published_at: datetime | None
+    created_by: UUID
+    created_at: datetime
 
 
 class StudyMaterialGenerateRequest(BaseModel):
     """
-    Body for POST /nodes/:id/study-material/generate
-    when generation_type is 'generate' or 'regenerate'.
+    Body for POST /nodes/:id/study-material/generate (first-time generation).
 
     reference_material_id is optional. When provided, the service fetches
-    the file from GCS, extracts text via LlamaParse, and passes it as
-    context to the LLM. When absent, the LLM generates from the node's
-    title and effective teaching instruction alone.
-
-    The effective teaching instruction is resolved at the service layer
-    (node_specific_instruction → nearest ancestor treedefaultinstruction)
-    and is not a client-supplied field.
+    the file, extracts text via LlamaParse, and passes it as context to the LLM.
     """
 
-    generation_type: Literal["generate", "regenerate"]
     reference_material_id: UUID | None = Field(
         default=None,
         description=(
             "Optional: a reference_materials.material_id scoped to this node "
             "or its parent space. When set, extracted PDF text is passed to the LLM."
+        ),
+    )
+
+
+class StudyMaterialRegenerateRequest(BaseModel):
+    """
+    Body for POST /nodes/:id/study-material/regenerate.
+
+    Requires an active version. The current draft and mentor feedback are passed
+    to the LLM. LlamaParse is NOT re-run — cached reference text is reused when
+    the active version was generated with a reference PDF.
+    """
+
+    mentor_regeneration_goal: str = Field(
+        ...,
+        min_length=10,
+        max_length=4000,
+        description=(
+            "What is wrong with the current draft and what must improve in the rewrite."
         ),
     )
 
@@ -133,6 +164,15 @@ class StudyMaterialPublishRequest(BaseModel):
     )
 
 
+class VersionLineageItem(BaseModel):
+    """One step in a version ancestry chain (parent → root)."""
+
+    version_id: UUID
+    version_number: int
+    generation_type: GenerationType
+    is_archived: bool
+
+
 class StudyMaterialActivateRequest(BaseModel):
     """
     Body for PATCH /nodes/:id/study-material/activate.
@@ -180,10 +220,17 @@ class StudyMaterialVersionOut(BaseModel):
     token_usage: int | None
     is_active: bool
     is_published: bool
+    is_archived: bool = False
+    archived_at: datetime | None = None
     published_at: datetime | None
-    published_by: UUID | None
+    published_by: UUID | None = None
     created_by: UUID
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def display_label(self) -> str:
+        return build_version_display_label(self.version_number, self.generation_type)
 
 
 class StudyMaterialVersionSummary(BaseModel):
@@ -199,11 +246,75 @@ class StudyMaterialVersionSummary(BaseModel):
     version_id: UUID
     version_number: int
     generation_type: GenerationType
+    based_on_version_id: UUID | None = None
+    based_on_version_number: int | None = None
+    lineage_chain: list[VersionLineageItem] = Field(default_factory=list)
+    mentor_feedback_preview: str | None = None
+    reference_material_id: UUID | None = None
     is_active: bool
     is_published: bool
+    is_archived: bool = False
+    archived_at: datetime | None = None
     published_at: datetime | None
     created_by: UUID
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def display_label(self) -> str:
+        return build_version_display_label(self.version_number, self.generation_type)
+
+    @classmethod
+    def from_version_row(
+        cls,
+        version: _VersionRowLike,
+        *,
+        version_lookup: dict[UUID, _VersionRowLike] | None = None,
+    ) -> "StudyMaterialVersionSummary":
+        """Build summary with mentor-friendly display fields and lineage."""
+        based_on_id = version.based_on_version_id
+        based_on_number: int | None = None
+        lineage_chain: list[VersionLineageItem] = []
+
+        if version_lookup and based_on_id is not None:
+            parent = version_lookup.get(based_on_id)
+            if parent is not None:
+                based_on_number = parent.version_number
+            cursor_id: UUID | None = based_on_id
+            seen: set[UUID] = set()
+            while cursor_id is not None and cursor_id not in seen:
+                seen.add(cursor_id)
+                ancestor = version_lookup.get(cursor_id)
+                if ancestor is None:
+                    break
+                lineage_chain.append(
+                    VersionLineageItem(
+                        version_id=ancestor.version_id,
+                        version_number=ancestor.version_number,
+                        generation_type=ancestor.generation_type,
+                        is_archived=ancestor.is_archived,
+                    )
+                )
+                cursor_id = ancestor.based_on_version_id
+
+        data = {
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "generation_type": version.generation_type,
+            "based_on_version_id": based_on_id,
+            "based_on_version_number": based_on_number,
+            "lineage_chain": lineage_chain,
+            "mentor_feedback_preview": truncate_feedback(version.mentor_feedback_used),
+            "reference_material_id": version.reference_material_id,
+            "is_active": version.is_active,
+            "is_published": version.is_published,
+            "is_archived": version.is_archived,
+            "archived_at": version.archived_at,
+            "published_at": version.published_at,
+            "created_by": version.created_by,
+            "created_at": version.created_at,
+        }
+        return cls.model_validate(data)
 
 
 class StudyMaterialVersionHistoryOut(BaseModel):
@@ -215,6 +326,46 @@ class StudyMaterialVersionHistoryOut(BaseModel):
     node_id: UUID
     versions: list[StudyMaterialVersionSummary]
     total: int
+
+
+class StudyMaterialClearDraftsEligibilityOut(BaseModel):
+    """Whether the mentor can clear all study material drafts for a node."""
+
+    can_clear: bool
+    version_count: int
+    quiz_count: int
+    block_reason: str | None = None
+
+
+class StudyMaterialClearDraftsOut(BaseModel):
+    """Returned after DELETE /nodes/:id/study-material/drafts."""
+
+    node_id: UUID
+    deleted_count: int
+
+
+class VersionAllowedActionsOut(BaseModel):
+    version_id: UUID
+    can_publish: bool
+    can_unpublish: bool
+    can_archive: bool
+    can_edit_active_draft: bool
+    is_viewing_non_active: bool
+    is_viewing_archived: bool
+
+
+class StudyMaterialMentorUiStateOut(BaseModel):
+    """Mentor-facing study material UI state resolved by the backend."""
+
+    node_id: UUID
+    has_versions: bool
+    active_version_id: UUID | None
+    can_access_study_material: bool
+    can_access_quiz: bool
+    instruction_changed_since_generation: bool
+    current_effective_instruction: str
+    generation_instruction_snapshot: str | None
+    displayed_version_actions: VersionAllowedActionsOut | None
 
 
 class TraineeStudyMaterialOut(BaseModel):
@@ -236,4 +387,28 @@ class TraineeStudyMaterialOut(BaseModel):
     space_id: UUID
     version_number: int
     content: str
+    reference_material_id: UUID | None = None
     published_at: datetime | None
+
+
+class StudyMaterialProgressUpdateRequest(BaseModel):
+    """Body for PATCH /nodes/:id/study-material/progress (trainee scroll tracking)."""
+
+    read_percent: int = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Highest scroll depth reached (0–100). Backend keeps the max value.",
+    )
+
+
+class StudyMaterialProgressOut(BaseModel):
+    """Trainee progress snapshot for a node after a progress update."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    node_id: UUID
+    study_material_viewed: bool
+    study_material_read_percent: int
+    study_material_completed: bool
+    completion_status: str

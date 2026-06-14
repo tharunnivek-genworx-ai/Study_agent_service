@@ -104,6 +104,22 @@ class ReferenceMaterialListOut(BaseModel):
     total: int
 
 
+class ReferenceImageOut(BaseModel):
+    """A figure downloaded during LlamaParse extraction for a reference PDF."""
+
+    filename: str
+    url: str
+    source_page: int | None = None
+
+
+class ReferenceImageListOut(BaseModel):
+    """All extracted reference figures for a reference material."""
+
+    material_id: UUID
+    items: list[ReferenceImageOut]
+    total: int
+
+
 class ReferenceMaterialDeletedOut(BaseModel):
     """
     Confirmation response after a soft-delete (replacement upload or
