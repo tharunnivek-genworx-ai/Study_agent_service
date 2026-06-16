@@ -3,7 +3,9 @@
 Repository for quizzes, quiz_questions, quiz_attempts, and
 quiz_question_responses DB operations.
 
-Handles:
+Quiz question generation and hint generation are separate flows:
+  - This repository handles quiz/question CRUD and attempt lifecycle.
+  - Hint writes on existing question rows live in hint_repository.py.
   - Quiz lookups (by id, all by node ordered newest first)
   - Quiz insert, publish
   - Question lookups (by id, all by quiz, active by quiz)
@@ -20,7 +22,7 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.data.models.postgres.e_learning_content.quiz_attempts import QuizAttempt
@@ -71,25 +73,56 @@ class QuizRepository:
         )
         return int(result.scalar() or 0)
 
+    async def count_published_quizzes_for_study_material_version(
+        self, study_material_version_id: UUID
+    ) -> int:
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(Quiz)
+            .where(
+                Quiz.study_material_version_id == study_material_version_id,
+                Quiz.is_published.is_(True),
+            )
+        )
+        return int(result.scalar() or 0)
+
+    async def count_unpublished_quizzes_for_study_material_version(
+        self, study_material_version_id: UUID
+    ) -> int:
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(Quiz)
+            .where(
+                Quiz.study_material_version_id == study_material_version_id,
+                Quiz.is_published.is_(False),
+            )
+        )
+        return int(result.scalar() or 0)
+
     # ── Quiz Writes ───────────────────────────────────────────────────
 
-    async def create_quiz(
+    async def create_quiz_draft_with_questions(
         self,
+        *,
         node_id: UUID,
         space_id: UUID,
         study_material_version_id: UUID,
         title: str,
         difficulty: str,
         created_by: UUID,
-    ) -> Quiz:
+        questions: list[dict],
+        source: str = "ai_generated",
+    ) -> UUID:
+        """Create a quiz and all questions in a single transaction."""
         now = datetime.now(UTC)
+        quiz_id = uuid4()
         quiz = Quiz(
-            quiz_id=uuid4(),
+            quiz_id=quiz_id,
             node_id=node_id,
             space_id=space_id,
             study_material_version_id=study_material_version_id,
             title=title,
-            total_questions=0,
+            total_questions=len(questions),
             difficulty=difficulty,
             is_published=False,
             published_at=None,
@@ -98,12 +131,54 @@ class QuizRepository:
             updated_at=now,
         )
         self.db.add(quiz)
+        await self.db.flush()
+        for q in questions:
+            self.db.add(
+                QuizQuestion(
+                    question_id=uuid4(),
+                    quiz_id=quiz_id,
+                    node_id=node_id,
+                    question_text=q["question_text"],
+                    option_a=q["option_a"],
+                    option_b=q["option_b"],
+                    option_c=q.get("option_c"),
+                    option_d=q.get("option_d"),
+                    correct_option=q["correct_option"],
+                    hint_1=None,
+                    hint_2=None,
+                    hint_3=None,
+                    explanation=q.get("explanation"),
+                    order_index=q["order_index"],
+                    is_active=True,
+                    source=source,
+                )
+            )
         await self.db.commit()
-        await self.db.refresh(quiz)
-        return quiz
+        return quiz_id
+
+    async def unpublish_other_quizzes(
+        self, node_id: UUID, except_quiz_id: UUID
+    ) -> None:
+        """Clear publish flags on all other quizzes for this node."""
+        result = await self.db.execute(
+            select(Quiz).where(
+                and_(
+                    Quiz.node_id == node_id,
+                    Quiz.is_published.is_(True),
+                    Quiz.quiz_id != except_quiz_id,
+                )
+            )
+        )
+        now = datetime.now(UTC)
+        for other in result.scalars().all():
+            other.is_published = False
+            other.published_at = None
+            other.updated_at = now
+        await self.db.commit()
 
     async def publish_quiz(self, quiz: Quiz, published_by: UUID) -> Quiz:  # noqa: ARG002
         """Set is_published=True and published_at."""
+        await self.unpublish_other_quizzes(quiz.node_id, quiz.quiz_id)
         now = datetime.now(UTC)
         quiz.is_published = True
         quiz.published_at = now
@@ -112,14 +187,53 @@ class QuizRepository:
         await self.db.refresh(quiz)
         return quiz
 
-    async def increment_total_questions(self, quiz: Quiz) -> None:
-        quiz.total_questions = (quiz.total_questions or 0) + 1
-        quiz.updated_at = datetime.now(UTC)
+    async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = True) -> Quiz:
+        """Clear is_published and published_at."""
+        now = datetime.now(UTC)
+        quiz.is_published = False
+        quiz.published_at = None
+        quiz.updated_at = now
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(quiz)
+        return quiz
+
+    async def delete_quiz(self, quiz: Quiz, *, commit: bool = True) -> None:
+        """Hard-delete an unpublished quiz draft and all its questions."""
+        quiz_id = quiz.quiz_id
+        await self.db.execute(
+            delete(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
+        )
+        await self.db.execute(delete(Quiz).where(Quiz.quiz_id == quiz_id))
+        if commit:
+            await self.db.commit()
+
+    async def increment_total_questions(self, quiz_id: UUID) -> None:
+        """Increment counter via SQL UPDATE (safe after other commits expire ORM state)."""
+        now = datetime.now(UTC)
+        await self.db.execute(
+            update(Quiz)
+            .where(Quiz.quiz_id == quiz_id)
+            .values(
+                total_questions=func.coalesce(Quiz.total_questions, 0) + 1,
+                updated_at=now,
+            )
+        )
         await self.db.commit()
 
-    async def decrement_total_questions(self, quiz: Quiz) -> None:
-        quiz.total_questions = max((quiz.total_questions or 1) - 1, 0)
-        quiz.updated_at = datetime.now(UTC)
+    async def decrement_total_questions(self, quiz_id: UUID) -> None:
+        """Decrement counter via SQL UPDATE (safe after other commits expire ORM state)."""
+        now = datetime.now(UTC)
+        await self.db.execute(
+            update(Quiz)
+            .where(Quiz.quiz_id == quiz_id)
+            .values(
+                total_questions=func.greatest(
+                    func.coalesce(Quiz.total_questions, 1) - 1, 0
+                ),
+                updated_at=now,
+            )
+        )
         await self.db.commit()
 
     # ── Question Lookups ──────────────────────────────────────────────
@@ -150,6 +264,25 @@ class QuizRepository:
                 )
             )
             .order_by(QuizQuestion.order_index.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_active_questions_missing_hints(
+        self, quiz_id: UUID
+    ) -> list[QuizQuestion]:
+        """Returns active questions where any hint field is NULL."""
+        result = await self.db.execute(
+            select(QuizQuestion).where(
+                and_(
+                    QuizQuestion.quiz_id == quiz_id,
+                    QuizQuestion.is_active.is_(True),
+                    or_(
+                        QuizQuestion.hint_1.is_(None),
+                        QuizQuestion.hint_2.is_(None),
+                        QuizQuestion.hint_3.is_(None),
+                    ),
+                )
+            )
         )
         return list(result.scalars().all())
 
@@ -218,6 +351,38 @@ class QuizRepository:
         await self.db.commit()
         await self.db.refresh(question)
         return question
+
+    async def create_questions_batch(
+        self,
+        quiz_id: UUID,
+        node_id: UUID,
+        questions: list[dict],
+        *,
+        source: str = "ai_generated",
+    ) -> None:
+        """Insert multiple questions in a single transaction."""
+        for q in questions:
+            self.db.add(
+                QuizQuestion(
+                    question_id=uuid4(),
+                    quiz_id=quiz_id,
+                    node_id=node_id,
+                    question_text=q["question_text"],
+                    option_a=q["option_a"],
+                    option_b=q["option_b"],
+                    option_c=q.get("option_c"),
+                    option_d=q.get("option_d"),
+                    correct_option=q["correct_option"],
+                    hint_1=None,
+                    hint_2=None,
+                    hint_3=None,
+                    explanation=q.get("explanation"),
+                    order_index=q["order_index"],
+                    is_active=True,
+                    source=source,
+                )
+            )
+        await self.db.commit()
 
     async def update_question(
         self, question: QuizQuestion, request: QuizQuestionUpdateRequest

@@ -153,15 +153,36 @@ class StudyMaterialPublishRequest(BaseModel):
     Body for PATCH /nodes/:id/study-material/publish.
 
     version_id is required — the mentor explicitly chooses which version
-    to publish. This prevents accidental publish of a draft the mentor
-    was still editing. The service validates that the version belongs to
-    this node and is not already published.
+    to publish. Preview via GET publish-preview first when confirmation
+    is required.
     """
 
     version_id: UUID = Field(
         ...,
         description="The study_material_versions.version_id to publish.",
     )
+
+
+class StudyMaterialPublishPreviewOut(BaseModel):
+    """Pre-publish check returned before committing."""
+
+    requires_confirmation: bool
+    has_draft_quizzes: bool
+    has_published_quizzes: bool
+    draft_quiz_count: int
+    previous_version_label: str | None = None
+    new_version_label: str
+    is_republishing_older: bool = False
+    current_published_version_label: str | None = None
+
+
+class StudyMaterialUnpublishPreviewOut(BaseModel):
+    """Pre-unpublish check returned before committing."""
+
+    requires_confirmation: bool
+    has_draft_quizzes: bool
+    has_published_quizzes: bool
+    version_label: str
 
 
 class VersionLineageItem(BaseModel):
@@ -352,6 +373,9 @@ class VersionAllowedActionsOut(BaseModel):
     can_edit_active_draft: bool
     is_viewing_non_active: bool
     is_viewing_archived: bool
+    publish_button_label: str = "Publish for trainees"
+    publish_disabled_tooltip: str | None = None
+    unpublish_disabled_tooltip: str | None = None
 
 
 class StudyMaterialMentorUiStateOut(BaseModel):
@@ -360,6 +384,7 @@ class StudyMaterialMentorUiStateOut(BaseModel):
     node_id: UUID
     has_versions: bool
     active_version_id: UUID | None
+    published_version_id: UUID | None = None
     can_access_study_material: bool
     can_access_quiz: bool
     instruction_changed_since_generation: bool
@@ -412,3 +437,42 @@ class StudyMaterialProgressOut(BaseModel):
     study_material_read_percent: int
     study_material_completed: bool
     completion_status: str
+
+
+class PublishedResourceTopicSummary(BaseModel):
+    node_id: UUID
+    topic_title: str
+    published_study_material_version_id: UUID | None = None
+    published_quiz_id: UUID | None = None
+
+
+class SpacePublishedResourcesResponse(BaseModel):
+    space_id: UUID
+    published_topics: list[PublishedResourceTopicSummary]
+
+
+class RepublishChecklistNodeOut(BaseModel):
+    """One node's publishable content after espace republish."""
+
+    node_id: UUID
+    node_title: str
+    last_published_version_id: UUID | None = None
+    last_published_version_label: str | None = None
+    has_unpublished_quiz: bool = False
+    quiz_id: UUID | None = None
+    quiz_title: str | None = None
+
+
+class SpaceRepublishChecklistOut(BaseModel):
+    """Content summary shown after republishing an espace."""
+
+    space_id: UUID
+    nodes_with_publishable_material: list[RepublishChecklistNodeOut]
+
+
+class StudyMaterialFeedbackResponse(BaseModel):
+    has_new_version: bool
+    new_version_id: UUID | None = None
+    status: Literal["ok", "feedback_too_vague", "regeneration_goal_too_vague"]
+    status_message: str | None = None
+    new_version: StudyMaterialVersionOut | None = None

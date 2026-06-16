@@ -3,12 +3,14 @@
 Schemas for quizzes, quiz_questions, quiz_attempts, quiz_question_responses.
 
 Quiz lifecycle (TDD §3.2.2 and §3.2.3):
-  1. Mentor triggers generation → new quizzes row + quiz_questions rows
-     (all three hints are pre-generated at this point — no LLM calls during attempts).
+  1. Mentor triggers quiz generation → new quizzes row + quiz_questions rows
+     (questions only — hints are NOT generated at this step).
   2. Mentor optionally edits/deletes questions.
-  3. Mentor publishes quiz → is_published=TRUE, visible to trainees.
-  4. Trainee starts attempt → quiz_attempts row (status='in_progress').
-  5. Per question: trainee submits/changes answer → quiz_question_responses row.
+  3. Mentor triggers hint generation → hint_1, hint_2, hint_3 written to
+     existing quiz_questions rows (separate Hint Agent LangGraph flow).
+  4. Mentor publishes quiz → is_published=TRUE, visible to trainees.
+  5. Trainee starts attempt → quiz_attempts row (status='in_progress').
+  6. Per question: trainee submits/changes answer → quiz_question_responses row.
      Wrong answer increments hint_level_reached and reveals the next stored hint:
        hint_level_reached=0 → no hint shown yet
        hint_level_reached=1 → hint_1 revealed (1st wrong attempt) — subtle nudge
@@ -16,8 +18,8 @@ Quiz lifecycle (TDD §3.2.2 and §3.2.3):
        hint_level_reached=3 → hint_3 revealed (3rd wrong attempt) — most explicit hint
      IMPORTANT: The correct answer is NEVER revealed automatically during a live attempt.
      explanation is for post-submit review only — it is NOT shown during the live attempt.
-  6. Trainee submits attempt → score calculated; quiz_attempts.status='submitted'.
-  7. Engagement & Chat Service receives completion signal and updates
+  7. Trainee submits attempt → score calculated; quiz_attempts.status='submitted'.
+  8. Engagement & Chat Service receives completion signal and updates
      trainee_node_progress.quiz_best_score and quiz_passed.
 
 Multiple quiz rows per node: old quizzes and their attempts are NEVER deleted.
@@ -61,15 +63,15 @@ class QuizGenerateRequest(BaseModel):
     difficulty and title are optional; the LLM derives sensible defaults
     from the node title if not provided.
 
-    All three hints (hint_1, hint_2, hint_3) are generated at this time.
-    No LLM calls happen during trainee quiz attempts.
+    Hints are NOT generated at this step — call the separate hint generation
+    endpoint after the quiz draft is finalized.
     """
 
-    study_material_version_id: UUID = Field(
-        ...,
+    study_material_version_id: UUID | None = Field(
+        default=None,
         description=(
-            "Must be a published (is_published=TRUE) version for this node. "
-            "The Quiz Agent uses this version's content as primary LLM context."
+            "Optional. When omitted the service uses the node's currently published "
+            "study material version. When provided it must match that version."
         ),
     )
     difficulty: QuizDifficulty = Field(
@@ -81,6 +83,32 @@ class QuizGenerateRequest(BaseModel):
         max_length=300,
         description="Optional quiz title. Auto-generated from node title if omitted.",
     )
+    question_count: int = Field(
+        default=10,
+        ge=5,
+        le=20,
+        description="Number of questions to generate.",
+    )
+    mode: str = Field(
+        default="generate",
+        description="'generate' for fresh generation, 'regenerate' to use existing quiz as context.",
+    )
+    quiz_id: UUID | None = Field(
+        default=None,
+        description="Required when mode='regenerate'. The existing quiz ID to use as context.",
+    )
+    mentor_feedback: str | None = Field(
+        default=None,
+        description="Optional feedback or goal for regeneration.",
+    )
+
+
+class QuizDeleteOut(BaseModel):
+    """Returned after deleting an unpublished quiz draft."""
+
+    quiz_id: UUID
+    node_id: UUID
+    deleted: bool = True
 
 
 class QuizPublishRequest(BaseModel):
@@ -90,6 +118,12 @@ class QuizPublishRequest(BaseModel):
     Kept as an explicit schema (rather than a bare PATCH with no body) so that
     future fields (e.g., scheduled_publish_at) can be added without a route change.
     """
+
+    pass
+
+
+class QuizUnpublishRequest(BaseModel):
+    """Body for PATCH /nodes/:id/quizzes/:quiz_id/unpublish."""
 
     pass
 
@@ -200,7 +234,6 @@ class QuizQuestionOut(BaseModel):
     order_index: int
     is_active: bool
     source: QuestionSource
-    created_at: datetime
 
 
 class QuizOut(BaseModel):
@@ -225,7 +258,8 @@ class QuizOut(BaseModel):
     created_by: UUID
     created_at: datetime
     updated_at: datetime
-    questions: list[QuizQuestionOut]
+    hints_status: str = "none"  # "none" | "partial" | "complete"
+    questions: list[QuizQuestionOut] = Field(default_factory=list)
 
 
 class QuizSummaryOut(BaseModel):
@@ -255,6 +289,36 @@ class QuizListOut(BaseModel):
     node_id: UUID
     quizzes: list[QuizSummaryOut]
     total: int
+
+
+class QuizMentorUiStateOut(BaseModel):
+    """Mentor-facing quiz UI state resolved by the backend."""
+
+    node_id: UUID
+    resolved_quiz_id: UUID | None
+    quiz_draft_exists: bool
+    published_study_material_version_id: UUID | None = None
+    can_generate_quiz: bool = False
+    generate_disabled_tooltip: str | None = None
+    can_access_hints: bool = False
+    hints_locked: bool = False
+    hints_locked_tooltip: str | None = None
+    can_generate_hints: bool = False
+    can_regenerate_hints: bool = False
+    can_publish_quiz: bool = False
+    publish_disabled_tooltip: str | None = None
+    can_edit_questions: bool = False
+    can_regenerate_quiz: bool = False
+    edit_question_disabled_tooltip: str | None = None
+    regenerate_quiz_disabled_tooltip: str | None = None
+    quiz: QuizOut | None = None
+    is_linked_version_published: bool = False
+    is_stale_version: bool = False
+    linked_version_label: str | None = None
+    current_published_version_label: str | None = None
+    stale_helper_text: str | None = None
+    generate_new_quiz_cta_label: str | None = None
+    quiz_title_with_version: str | None = None
 
 
 class QuizQuestionDeletedOut(BaseModel):
@@ -319,6 +383,10 @@ class TraineeQuizQuestionOut(BaseModel):
     was_locked: bool
     selected_option: str | None
     is_correct: bool | None
+
+    # Gated post-submit fields — populated only after attempt is submitted
+    correct_option: str | None = None
+    explanation: str | None = None
 
 
 class TraineeQuizOut(BaseModel):
@@ -436,3 +504,16 @@ class QuizQuestionResponseOut(BaseModel):
     hint_1: str | None = None
     hint_2: str | None = None
     hint_3: str | None = None
+
+
+class PublishedQuizDiscoveryOut(BaseModel):
+    """
+    Discovery info for a node's published quiz and active attempt.
+    """
+
+    quiz_id: UUID | None = None
+    title: str | None = None
+    difficulty: QuizDifficulty | None = None
+    total_questions: int | None = None
+    has_in_progress_attempt: bool = False
+    active_attempt_id: UUID | None = None

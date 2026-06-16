@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     cors_origins: str = "*"
     groq_api_key: str = ""
+    groq_api_key_2: str = ""
+    groq_api_key_3: str = ""
+    groq_api_key_4: str = ""
     llama_parse_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
     # Public base URL of this service, used to build absolute image URLs that
