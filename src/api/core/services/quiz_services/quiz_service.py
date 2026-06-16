@@ -5,7 +5,9 @@ quiz_attempts, and quiz_question_responses.
 
 Flow per TDD §3.2.2 and §3.2.3:
   GENERATE     → validate ownership → validate study material version is published
-                 → (LLM placeholder) → insert quizzes row + quiz_questions rows
+                 → (Quiz Agent LLM placeholder) → insert quizzes row + quiz_questions rows
+                 (questions only — hints are generated separately)
+  GENERATE HINTS → separate HintService / Hint Agent flow on existing quiz rows
   LIST/GET     → access guard → return quiz(zes) with questions
   PUBLISH      → ownership guard → set is_published=True
   ADD QUESTION → ownership guard → validate correct_option references non-None option
@@ -27,48 +29,50 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
-    AttemptAbandonedException,
-    AttemptAlreadySubmittedException,
     AttemptForbiddenException,
-    InvalidSkipPayloadException,
-    QuestionAlreadyLockedException,
-    QuestionBelongsToAnotherAttemptException,
     QuizAlreadyPublishedException,
-    QuizAttemptNotFoundException,
-    QuizHasNoPublishedStudyMaterialException,
+    QuizHintsIncompleteException,
     QuizNotFoundException,
-    QuizNotPublishedException,
+    QuizNotPublishedForUnpublishException,
     QuizQuestionNotFoundException,
-    StudyMaterialVersionMismatchException,
 )
 from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
+from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+    StudyMaterialRepository,
+)
 from src.api.schemas.quiz_schemas.quiz_schema import (
     CorrectOption,
-    QuizAttemptOut,
-    QuizAttemptStartRequest,
-    QuizAttemptSubmitRequest,
+    QuizDeleteOut,
     QuizGenerateRequest,
     QuizListOut,
+    QuizMentorUiStateOut,
     QuizOut,
     QuizPublishRequest,
     QuizQuestionCreateRequest,
     QuizQuestionDeletedOut,
     QuizQuestionOut,
     QuizQuestionReorderRequest,
-    QuizQuestionResponseOut,
-    QuizQuestionResponseRequest,
     QuizQuestionUpdateRequest,
     QuizSummaryOut,
-    TraineeQuizOut,
-    TraineeQuizQuestionOut,
+    QuizUnpublishRequest,
 )
 from src.api.utils.content_utils.node_access import _get_node_and_assert_space_access
+from src.api.utils.quiz_utils.hints_status import compute_hints_status
+from src.api.utils.quiz_utils.mentor_quiz_state import (
+    mentor_quiz_draft_exists,
+    resolve_mentor_quiz_id,
+)
+from src.api.utils.quiz_utils.mentor_quiz_ui import compute_mentor_quiz_ui_flags
+from src.api.utils.quiz_utils.study_material_link import (
+    validate_quiz_can_be_published,
+    validate_quiz_linked_version_is_published,
+    validate_study_material_is_currently_published_for_node,
+)
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
     _assert_space_access,
+    _get_space_and_assert_owner,
 )
-
-_TRAINEE_ROLE = "trainee"
 
 
 def _assert_trainee_owns_attempt(attempt_trainee_id: UUID, user_id: UUID) -> None:
@@ -92,6 +96,14 @@ class QuizService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def _assert_quiz_linked_version_published(self, node_id: UUID, quiz) -> None:  # type: ignore[no-untyped-def]
+        sm_repo = StudyMaterialRepository(self.session)
+        await validate_quiz_linked_version_is_published(
+            sm_repo,
+            node_id=node_id,
+            study_material_version_id=quiz.study_material_version_id,
+        )
+
     # ── generate ───────────────────────────────────────────────────────
 
     async def generate_quiz(
@@ -100,12 +112,12 @@ class QuizService:
         request: QuizGenerateRequest,
         user_id: UUID,
         role: str,
-    ) -> str:
-        """Placeholder — Quiz Agent LLM pipeline not yet implemented.
+    ) -> QuizOut:
+        """Generate a new quiz draft using the Quiz Agent LangGraph.
 
-        Validates ownership and study material version preconditions;
-        returns a stub string. In production this will persist a quizzes
-        row and quiz_questions rows after the LLM call.
+        For mode='generate': creates a fresh quiz from the published study material.
+        For mode='regenerate': loads existing quiz questions as context and generates
+        a new quiz draft, using quiz_id (required) as the source quiz.
         """
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
@@ -113,18 +125,89 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-
-        # Validate study material version exists and is published (EC-4)
-        version = await repo.get_study_material_version(
-            request.study_material_version_id
+        sm_repo = StudyMaterialRepository(self.session)
+        published = await sm_repo.get_published_version(node_id)
+        version_id = request.study_material_version_id or (
+            published.version_id if published is not None else None
         )
-        if version is None or version.node_id != node_id:
-            raise StudyMaterialVersionMismatchException()
-        if not version.is_published:
-            raise QuizHasNoPublishedStudyMaterialException()
+        if version_id is None:
+            from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (  # noqa: PLC0415
+                QuizHasNoPublishedStudyMaterialException,
+            )
 
-        # LLM call goes here — placeholder for now
-        return "AI response"
+            raise QuizHasNoPublishedStudyMaterialException()
+        validate_study_material_is_currently_published_for_node(
+            node_id=node_id,
+            version_id=version_id,
+            published_version=published,
+        )
+
+        if request.mode == "regenerate" and request.quiz_id is not None:
+            source_quiz = await repo.get_quiz_by_id(request.quiz_id)
+            if source_quiz is None or source_quiz.node_id != node_id:
+                raise QuizNotFoundException()
+            validate_study_material_is_currently_published_for_node(
+                node_id=node_id,
+                version_id=source_quiz.study_material_version_id,
+                published_version=published,
+            )
+
+        from src.api.control.agents.quiz_generation_graph import (
+            get_quiz_generation_graph,  # noqa: PLC0415
+        )
+        from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+            QuizGenerationFailedException,  # noqa: PLC0415
+        )
+
+        graph = get_quiz_generation_graph()
+        initial_state = {
+            "mentor_id": user_id,
+            "node_id": node_id,
+            "mode": request.mode,
+            "quiz_id": request.quiz_id,
+            "question_count": request.question_count,
+            "difficulty": request.difficulty,
+            "mentor_feedback": request.mentor_feedback,
+            "space_id": None,
+            "study_material_version_id": published.version_id,  # type: ignore[union-attr]
+            "study_material_content": None,
+        }
+
+        final_state = None
+        last_error: str | None = None
+        for attempt in range(2):
+            final_state = await graph.ainvoke(
+                initial_state,
+                config={"configurable": {"session": self.session}},
+            )
+            if final_state.get("created_quiz_id"):
+                break
+            last_error = final_state.get("error")
+            if attempt == 0 and last_error:
+                continue
+
+        if final_state is None:
+            raise QuizGenerationFailedException()
+
+        if final_state.get("error"):
+            raise QuizGenerationFailedException(str(final_state["error"]))
+
+        created_quiz_id = final_state.get("created_quiz_id")
+        if created_quiz_id is None:
+            raise QuizGenerationFailedException(
+                last_error or "Quiz generation failed. Please try again."
+            )
+
+        quiz = await repo.get_quiz_by_id(created_quiz_id)
+        if quiz is None:
+            raise QuizGenerationFailedException()
+
+        questions = await repo.get_questions_by_quiz(created_quiz_id)
+        active_questions = await repo.get_active_questions_by_quiz(created_quiz_id)
+        quiz_out = QuizOut.model_validate(quiz)
+        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+        quiz_out.hints_status = compute_hints_status(active_questions)
+        return quiz_out
 
     # ── list / get ─────────────────────────────────────────────────────
 
@@ -145,6 +228,111 @@ class QuizService:
             total=len(quizzes),
         )
 
+    async def get_mentor_quiz_ui_state(
+        self,
+        node_id: UUID,
+        user_id: UUID,
+        role: str,
+        *,
+        preferred_quiz_id: UUID | None = None,
+        include_quiz: bool = False,
+    ) -> QuizMentorUiStateOut:
+        """Resolve mentor quiz UI flags and optionally return the full quiz."""
+        _assert_mentor(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        space = await _get_space_and_assert_owner(self.session, node.space_id, user_id)
+        space_is_published = bool(space.is_published)
+        await _assert_space_access(self.session, node.space_id, user_id, role)
+
+        repo = QuizRepository(self.session)
+        sm_repo = StudyMaterialRepository(self.session)
+        published = await sm_repo.get_published_version(node_id)
+        quizzes = await repo.get_quizzes_by_node(node_id)
+        resolved_id = resolve_mentor_quiz_id(quizzes, preferred_quiz_id)
+
+        quiz_out: QuizOut | None = None
+        if include_quiz and resolved_id is not None:
+            quiz_out = await self.get_quiz(node_id, resolved_id, user_id, role)
+
+        quiz_row = None
+        hints_status: str | None = None
+        linked_version_number: int | None = None
+        linked_generation_type: str | None = None
+        if resolved_id is not None and quiz_out is None:
+            quiz_row = await repo.get_quiz_by_id(resolved_id)
+            active_questions = await repo.get_active_questions_by_quiz(resolved_id)
+            hints_status = compute_hints_status(active_questions)
+        elif quiz_out is not None:
+            hints_status = quiz_out.hints_status
+
+        linked_version_id = (
+            quiz_out.study_material_version_id
+            if quiz_out is not None
+            else quiz_row.study_material_version_id
+            if quiz_row is not None
+            else None
+        )
+        if linked_version_id is not None:
+            linked_version = await sm_repo.get_version_by_id(linked_version_id)
+            if linked_version is not None:
+                linked_version_number = linked_version.version_number
+                linked_generation_type = linked_version.generation_type
+
+        flags = compute_mentor_quiz_ui_flags(
+            published=published,
+            quiz_out=quiz_out,
+            quiz_row=quiz_row,
+            hints_status=hints_status,
+            linked_version_number=linked_version_number,
+            linked_generation_type=linked_generation_type,
+        )
+        if not space_is_published:
+            space_block_reason = (
+                "Re-publish this space first to make content visible to trainees."
+            )
+            flags = {
+                **flags,
+                "can_generate_quiz": False,
+                "generate_disabled_tooltip": space_block_reason,
+                "can_access_hints": flags["can_access_hints"],
+                "can_generate_hints": False,
+                "can_regenerate_hints": False,
+                "can_publish_quiz": False,
+                "publish_disabled_tooltip": space_block_reason,
+            }
+
+        return QuizMentorUiStateOut(
+            node_id=node_id,
+            resolved_quiz_id=resolved_id,
+            quiz_draft_exists=mentor_quiz_draft_exists(quizzes),
+            published_study_material_version_id=flags[
+                "published_study_material_version_id"
+            ],
+            can_generate_quiz=flags["can_generate_quiz"],
+            generate_disabled_tooltip=flags["generate_disabled_tooltip"],
+            can_access_hints=flags["can_access_hints"],
+            hints_locked=flags["hints_locked"],
+            hints_locked_tooltip=flags["hints_locked_tooltip"],
+            can_generate_hints=flags["can_generate_hints"],
+            can_regenerate_hints=flags["can_regenerate_hints"],
+            can_publish_quiz=flags["can_publish_quiz"],
+            publish_disabled_tooltip=flags["publish_disabled_tooltip"],
+            can_edit_questions=flags["can_edit_questions"],
+            can_regenerate_quiz=flags["can_regenerate_quiz"],
+            edit_question_disabled_tooltip=flags["edit_question_disabled_tooltip"],
+            regenerate_quiz_disabled_tooltip=flags["regenerate_quiz_disabled_tooltip"],
+            is_linked_version_published=flags["is_linked_version_published"],
+            is_stale_version=flags["is_stale_version"],
+            linked_version_label=flags["linked_version_label"],
+            current_published_version_label=flags["current_published_version_label"],
+            stale_helper_text=flags["stale_helper_text"],
+            generate_new_quiz_cta_label=flags["generate_new_quiz_cta_label"],
+            quiz_title_with_version=flags["quiz_title_with_version"],
+            quiz=quiz_out,
+        )
+
     async def get_quiz(
         self, node_id: UUID, quiz_id: UUID, user_id: UUID, role: str
     ) -> QuizOut:
@@ -160,8 +348,10 @@ class QuizService:
             raise QuizNotFoundException()
 
         questions = await repo.get_questions_by_quiz(quiz_id)
+        active_questions = await repo.get_active_questions_by_quiz(quiz_id)
         quiz_out = QuizOut.model_validate(quiz)
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+        quiz_out.hints_status = compute_hints_status(active_questions)
         return quiz_out
 
     # ── publish ────────────────────────────────────────────────────────
@@ -176,6 +366,96 @@ class QuizService:
     ) -> QuizOut:
         """Set is_published=True on the quiz."""
         _assert_mentor(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        space = await _get_space_and_assert_owner(self.session, node.space_id, user_id)
+        if not space.is_published:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error_code": "ESPACE_NOT_PUBLISHED",
+                    "message": (
+                        "Re-publish this space first to make content visible to trainees. "
+                        "Individual content cannot be published while the space is unpublished."
+                    ),
+                },
+            )
+
+        repo = QuizRepository(self.session)
+        sm_repo = StudyMaterialRepository(self.session)
+        quiz = await repo.get_quiz_by_id(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
+        if quiz.is_published:
+            raise QuizAlreadyPublishedException()
+
+        published = await sm_repo.get_published_version(node_id)
+        await validate_quiz_linked_version_is_published(
+            sm_repo,
+            node_id=node_id,
+            study_material_version_id=quiz.study_material_version_id,
+        )
+        validate_quiz_can_be_published(
+            node_id=node_id,
+            quiz_study_material_version_id=quiz.study_material_version_id,
+            published_version=published,
+        )
+
+        missing = await repo.get_active_questions_missing_hints(quiz_id)
+        if missing:
+            raise QuizHintsIncompleteException()
+
+        quiz = await repo.publish_quiz(quiz, published_by=user_id)
+        questions = await repo.get_questions_by_quiz(quiz_id)
+        active_questions = await repo.get_active_questions_by_quiz(quiz_id)
+        quiz_out = QuizOut.model_validate(quiz)
+        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+        quiz_out.hints_status = compute_hints_status(active_questions)
+        return quiz_out
+
+    async def unpublish_quiz(
+        self,
+        node_id: UUID,
+        quiz_id: UUID,
+        request: QuizUnpublishRequest,  # noqa: ARG002
+        user_id: UUID,
+        role: str,
+    ) -> QuizOut:
+        """Clear is_published on the quiz, hiding it from trainees."""
+        _assert_mentor(role)
+        await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+
+        repo = QuizRepository(self.session)
+        quiz = await repo.get_quiz_by_id(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
+        if not quiz.is_published:
+            raise QuizNotPublishedForUnpublishException()
+
+        quiz = await repo.unpublish_quiz(quiz)
+        questions = await repo.get_questions_by_quiz(quiz_id)
+        active_questions = await repo.get_active_questions_by_quiz(quiz_id)
+        quiz_out = QuizOut.model_validate(quiz)
+        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+        quiz_out.hints_status = compute_hints_status(active_questions)
+        return quiz_out
+
+    # ── question management ────────────────────────────────────────────
+
+    async def delete_quiz(
+        self,
+        node_id: UUID,
+        quiz_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> QuizDeleteOut:
+        """Permanently delete an unpublished quiz draft and all its questions."""
+        _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
@@ -187,11 +467,8 @@ class QuizService:
         if quiz.is_published:
             raise QuizAlreadyPublishedException()
 
-        quiz = await repo.publish_quiz(quiz, published_by=user_id)
-        questions = await repo.get_questions_by_quiz(quiz_id)
-        quiz_out = QuizOut.model_validate(quiz)
-        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
-        return quiz_out
+        await repo.delete_quiz(quiz)
+        return QuizDeleteOut(quiz_id=quiz_id, node_id=node_id, deleted=True)
 
     # ── question management ────────────────────────────────────────────
 
@@ -213,6 +490,7 @@ class QuizService:
         quiz = await repo.get_quiz_by_id(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        await self._assert_quiz_linked_version_published(node_id, quiz)
 
         _validate_correct_option_exists(
             request.correct_option, request.option_c, request.option_d
@@ -240,7 +518,7 @@ class QuizService:
         )
 
         # Keep total_questions in sync
-        await repo.increment_total_questions(quiz)
+        await repo.increment_total_questions(quiz_id)
 
         return QuizQuestionOut.model_validate(question)
 
@@ -263,6 +541,7 @@ class QuizService:
         quiz = await repo.get_quiz_by_id(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        await self._assert_quiz_linked_version_published(node_id, quiz)
 
         question = await repo.get_question_by_id(question_id)
         if question is None or question.quiz_id != quiz_id or not question.is_active:
@@ -308,6 +587,7 @@ class QuizService:
         quiz = await repo.get_quiz_by_id(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        await self._assert_quiz_linked_version_published(node_id, quiz)
 
         all_active = await repo.get_active_questions_by_quiz(quiz_id)
         all_active_ids = {q.question_id for q in all_active}
@@ -340,264 +620,13 @@ class QuizService:
         quiz = await repo.get_quiz_by_id(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        await self._assert_quiz_linked_version_published(node_id, quiz)
 
         question = await repo.get_question_by_id(question_id)
         if question is None or question.quiz_id != quiz_id or not question.is_active:
             raise QuizQuestionNotFoundException()
 
         await repo.soft_delete_question(question)
-        await repo.decrement_total_questions(quiz)
+        await repo.decrement_total_questions(quiz_id)
 
         return QuizQuestionDeletedOut(question_id=question_id)
-
-    # ── attempt lifecycle ──────────────────────────────────────────────
-
-    async def start_attempt(
-        self,
-        node_id: UUID,
-        quiz_id: UUID,
-        request: QuizAttemptStartRequest,  # noqa: ARG002
-        user_id: UUID,
-        role: str,
-    ) -> TraineeQuizOut:
-        """Create a new attempt and return the full question set with blank state.
-
-        EC-9: multiple attempts are always allowed.
-        """
-        node = await _get_node_and_assert_space_access(
-            self.session, node_id, user_id, owner_only=False
-        )
-        await _assert_space_access(self.session, node.space_id, user_id, role)
-
-        repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
-        if quiz is None or quiz.node_id != node_id:
-            raise QuizNotFoundException()
-        if not quiz.is_published:
-            raise QuizNotPublishedException()
-
-        attempt = await repo.create_attempt(
-            quiz_id=quiz_id,
-            node_id=node_id,
-            space_id=node.space_id,
-            trainee_id=user_id,
-        )
-
-        questions = await repo.get_active_questions_by_quiz(quiz_id)
-        trainee_questions = [
-            TraineeQuizQuestionOut(
-                question_id=q.question_id,
-                question_text=q.question_text,
-                option_a=q.option_a,
-                option_b=q.option_b,
-                option_c=q.option_c,
-                option_d=q.option_d,
-                is_active=q.is_active,
-                order_index=q.order_index,
-                hint_1=None,
-                hint_2=None,
-                hint_3=None,
-                hint_level_reached=0,
-                was_skipped=False,
-                was_locked=False,
-                selected_option=None,
-                is_correct=None,
-            )
-            for q in questions
-        ]
-
-        return TraineeQuizOut(
-            quiz_id=quiz_id,
-            node_id=node_id,
-            title=quiz.title,
-            difficulty=quiz.difficulty,
-            total_questions=quiz.total_questions,
-            attempt_id=attempt.attempt_id,
-            attempt_status=attempt.status,
-            started_at=attempt.started_at,
-            questions=trainee_questions,
-        )
-
-    async def submit_response(
-        self,
-        attempt_id: UUID,
-        request: QuizQuestionResponseRequest,
-        user_id: UUID,
-        role: str,  # noqa: ARG002
-    ) -> QuizQuestionResponseOut:
-        """Record or update a trainee's response for a single question.
-
-        - was_skipped=True + selected_option=None → deliberate skip (EC-8).
-        - Correct answer → was_locked=True (EC-7).
-        - Wrong answer   → hint_level_reached incremented, next hint revealed.
-        """
-        repo = QuizRepository(self.session)
-        attempt = await repo.get_attempt_by_id(attempt_id)
-        if attempt is None:
-            raise QuizAttemptNotFoundException()
-
-        _assert_trainee_owns_attempt(attempt.trainee_id, user_id)
-
-        if attempt.status == "submitted":
-            raise AttemptAlreadySubmittedException()
-        if attempt.status == "abandoned":
-            raise AttemptAbandonedException()
-
-        # Skip guard (EC-8)
-        if request.was_skipped and request.selected_option is not None:
-            raise InvalidSkipPayloadException()
-
-        # Validate question belongs to this quiz
-        question = await repo.get_question_by_id(request.question_id)
-        if question is None or question.quiz_id != attempt.quiz_id:
-            raise QuestionBelongsToAnotherAttemptException()
-
-        # Check for existing response to detect lock
-        existing = await repo.get_response(attempt_id, request.question_id)
-        if existing is not None and existing.was_locked:
-            raise QuestionAlreadyLockedException()
-
-        # Evaluate answer
-        is_correct: bool | None = None
-        was_locked = False
-        hint_level = existing.hint_level_reached if existing is not None else 0
-
-        if not request.was_skipped and request.selected_option is not None:
-            is_correct = request.selected_option == question.correct_option
-            if is_correct:
-                was_locked = True
-            else:
-                hint_level = min(hint_level + 1, 3)
-
-        response = await repo.upsert_response(
-            attempt_id=attempt_id,
-            question_id=request.question_id,
-            selected_option=request.selected_option,
-            is_correct=is_correct,
-            hint_level_reached=hint_level,
-            was_skipped=request.was_skipped,
-            was_locked=was_locked,
-        )
-
-        # Progressive hint reveal
-        hint_1 = question.hint_1 if hint_level >= 1 else None
-        hint_2 = question.hint_2 if hint_level >= 2 else None
-        hint_3 = question.hint_3 if hint_level >= 3 else None
-
-        return QuizQuestionResponseOut(
-            response_id=response.response_id,
-            attempt_id=attempt_id,
-            question_id=request.question_id,
-            selected_option=response.selected_option,
-            is_correct=response.is_correct,
-            hint_level_reached=hint_level,
-            was_skipped=response.was_skipped,
-            was_locked=response.was_locked,
-            hint_1=hint_1,
-            hint_2=hint_2,
-            hint_3=hint_3,
-        )
-
-    async def submit_attempt(
-        self,
-        attempt_id: UUID,
-        request: QuizAttemptSubmitRequest,  # noqa: ARG002
-        user_id: UUID,
-        role: str,  # noqa: ARG002
-    ) -> QuizAttemptOut:
-        """Compute score and mark attempt as submitted.
-
-        Engagement & Chat Service is notified separately (stub) to update
-        trainee_node_progress.quiz_best_score and quiz_passed.
-        """
-        repo = QuizRepository(self.session)
-        attempt = await repo.get_attempt_by_id(attempt_id)
-        if attempt is None:
-            raise QuizAttemptNotFoundException()
-
-        _assert_trainee_owns_attempt(attempt.trainee_id, user_id)
-
-        if attempt.status == "submitted":
-            raise AttemptAlreadySubmittedException()
-        if attempt.status == "abandoned":
-            raise AttemptAbandonedException()
-
-        responses = await repo.get_all_responses_for_attempt(attempt_id)
-        total_questions = await repo.get_active_question_count(attempt.quiz_id)
-
-        total_correct = sum(1 for r in responses if r.is_correct)
-        total_with_hints = sum(
-            1 for r in responses if r.is_correct and r.hint_level_reached > 0
-        )
-        total_skipped = sum(1 for r in responses if r.was_skipped)
-        score = total_correct / total_questions if total_questions > 0 else 0.0
-
-        attempt = await repo.submit_attempt(
-            attempt=attempt,
-            score=score,
-            total_correct=total_correct,
-            total_with_hints=total_with_hints,
-            total_skipped=total_skipped,
-        )
-
-        # TODO: notify Engagement & Chat Service of quiz completion
-
-        return QuizAttemptOut.model_validate(attempt)
-
-    async def get_attempt(
-        self,
-        attempt_id: UUID,
-        user_id: UUID,
-        role: str,  # noqa: ARG002
-    ) -> TraineeQuizOut:
-        """Resume a mid-progress attempt. Merges question + response state (EC-7)."""
-        repo = QuizRepository(self.session)
-        attempt = await repo.get_attempt_by_id(attempt_id)
-        if attempt is None:
-            raise QuizAttemptNotFoundException()
-
-        _assert_trainee_owns_attempt(attempt.trainee_id, user_id)
-
-        quiz = await repo.get_quiz_by_id(attempt.quiz_id)
-        if quiz is None:
-            raise QuizNotFoundException()
-
-        questions = await repo.get_questions_by_quiz(attempt.quiz_id)
-        responses_map = await repo.get_responses_map(attempt_id)
-
-        trainee_questions: list[TraineeQuizQuestionOut] = []
-        for q in questions:
-            resp = responses_map.get(q.question_id)
-            hint_level = resp.hint_level_reached if resp is not None else 0
-            trainee_questions.append(
-                TraineeQuizQuestionOut(
-                    question_id=q.question_id,
-                    question_text=q.question_text,
-                    option_a=q.option_a,
-                    option_b=q.option_b,
-                    option_c=q.option_c,
-                    option_d=q.option_d,
-                    is_active=q.is_active,
-                    order_index=q.order_index,
-                    hint_1=q.hint_1 if hint_level >= 1 else None,
-                    hint_2=q.hint_2 if hint_level >= 2 else None,
-                    hint_3=q.hint_3 if hint_level >= 3 else None,
-                    hint_level_reached=hint_level,
-                    was_skipped=resp.was_skipped if resp is not None else False,
-                    was_locked=resp.was_locked if resp is not None else False,
-                    selected_option=resp.selected_option if resp is not None else None,
-                    is_correct=resp.is_correct if resp is not None else None,
-                )
-            )
-
-        return TraineeQuizOut(
-            quiz_id=attempt.quiz_id,
-            node_id=attempt.node_id,
-            title=quiz.title,
-            difficulty=quiz.difficulty,
-            total_questions=quiz.total_questions,
-            attempt_id=attempt_id,
-            attempt_status=attempt.status,
-            started_at=attempt.started_at,
-            questions=trainee_questions,
-        )
