@@ -18,7 +18,6 @@ Routes for study_material_versions.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.services.study_agent_services.study_material_service import (
@@ -28,20 +27,22 @@ from src.api.data.clients.postgres.database import get_db
 from src.api.rest.routes.dependencies import get_current_user
 from src.api.schemas.identity_schemas.auth_schema import TokenPayload
 from src.api.schemas.study_material_schemas.study_material_schema import (
+    SpacePublishedResourcesResponse,
+    SpaceRepublishChecklistOut,
     StudyMaterialActivateRequest,
     StudyMaterialClearDraftsEligibilityOut,
     StudyMaterialClearDraftsOut,
+    StudyMaterialFeedbackResponse,
     StudyMaterialGenerateRequest,
     StudyMaterialImproveRequest,
     StudyMaterialManualEditRequest,
     StudyMaterialMentorUiStateOut,
-    StudyMaterialProgressOut,
-    StudyMaterialProgressUpdateRequest,
+    StudyMaterialPublishPreviewOut,
     StudyMaterialPublishRequest,
     StudyMaterialRegenerateRequest,
+    StudyMaterialUnpublishPreviewOut,
     StudyMaterialVersionHistoryOut,
     StudyMaterialVersionOut,
-    TraineeStudyMaterialOut,
 )
 
 router = APIRouter(tags=["Study Material"])
@@ -68,14 +69,14 @@ async def generate_study_material(
 @router.post(
     "/nodes/{node_id}/study-material/regenerate",
     status_code=status.HTTP_201_CREATED,
-    response_model=StudyMaterialVersionOut,
+    response_model=StudyMaterialFeedbackResponse,
 )
 async def regenerate_study_material(
     node_id: UUID,
     payload: StudyMaterialRegenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialVersionOut:
+) -> StudyMaterialFeedbackResponse:
     """Mentor rewrites the active draft with feedback. No LlamaParse re-run."""
     service = StudyMaterialService(db)
     return await service.regenerate_study_material(
@@ -86,14 +87,14 @@ async def regenerate_study_material(
 @router.post(
     "/nodes/{node_id}/study-material/improve",
     status_code=status.HTTP_201_CREATED,
-    response_model=StudyMaterialVersionOut,
+    response_model=StudyMaterialFeedbackResponse,
 )
 async def improve_study_material(
     node_id: UUID,
     payload: StudyMaterialImproveRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialVersionOut:
+) -> StudyMaterialFeedbackResponse:
     """Mentor submits feedback to improve the current active version."""
     service = StudyMaterialService(db)
     return await service.improve_study_material(
@@ -118,6 +119,23 @@ async def manual_edit_study_material(
     )
 
 
+@router.get(
+    "/nodes/{node_id}/study-material/publish-preview",
+    response_model=StudyMaterialPublishPreviewOut,
+)
+async def preview_publish_study_material(
+    node_id: UUID,
+    version_id: UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> StudyMaterialPublishPreviewOut:
+    """Pre-publish check: returns confirmation requirements without writing."""
+    service = StudyMaterialService(db)
+    return await service.preview_publish_study_material(
+        node_id, version_id, current_user.sub, current_user.role
+    )
+
+
 @router.patch(
     "/nodes/{node_id}/study-material/publish",
     response_model=StudyMaterialVersionOut,
@@ -132,6 +150,23 @@ async def publish_study_material(
     service = StudyMaterialService(db)
     return await service.publish_study_material(
         node_id, payload, current_user.sub, current_user.role
+    )
+
+
+@router.get(
+    "/nodes/{node_id}/study-material/unpublish-preview",
+    response_model=StudyMaterialUnpublishPreviewOut,
+)
+async def preview_unpublish_study_material(
+    node_id: UUID,
+    version_id: UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> StudyMaterialUnpublishPreviewOut:
+    """Pre-unpublish check: returns confirmation requirements without writing."""
+    service = StudyMaterialService(db)
+    return await service.preview_unpublish_study_material(
+        node_id, version_id, current_user.sub, current_user.role
     )
 
 
@@ -307,51 +342,32 @@ async def get_study_material_version(
 
 
 @router.get(
-    "/nodes/{node_id}/study-material/pdf",
+    "/spaces/{space_id}/republish-checklist",
+    response_model=SpaceRepublishChecklistOut,
 )
-async def download_published_study_material_pdf(
-    node_id: UUID,
+async def get_space_republish_checklist(
+    space_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> Response:
-    """Trainee downloads the published study material as a PDF."""
+) -> SpaceRepublishChecklistOut:
+    """List per-node content to re-publish after espace republish."""
     service = StudyMaterialService(db)
-    pdf_bytes, filename = await service.download_published_pdf(
-        node_id, current_user.sub, current_user.role
-    )
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    return await service.get_space_republish_checklist(
+        space_id, current_user.sub, current_user.role
     )
 
 
 @router.get(
-    "/nodes/{node_id}/study-material",
-    response_model=TraineeStudyMaterialOut,
+    "/spaces/{space_id}/published-resources",
+    response_model=SpacePublishedResourcesResponse,
 )
-async def get_published_study_material(
-    node_id: UUID,
+async def get_space_published_resources(
+    space_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> TraineeStudyMaterialOut:
-    """Trainee reads the published study material for a node."""
+) -> SpacePublishedResourcesResponse:
+    """Mentor fetches all published topics, study materials, and quizzes in a space."""
     service = StudyMaterialService(db)
-    return await service.get_published(node_id, current_user.sub, current_user.role)
-
-
-@router.patch(
-    "/nodes/{node_id}/study-material/progress",
-    response_model=StudyMaterialProgressOut,
-)
-async def update_study_material_progress(
-    node_id: UUID,
-    payload: StudyMaterialProgressUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialProgressOut:
-    """Trainee updates scroll read progress for published study material."""
-    service = StudyMaterialService(db)
-    return await service.update_study_material_progress(
-        node_id, payload, current_user.sub, current_user.role
+    return await service.get_space_published_resources(
+        space_id, current_user.sub, current_user.role
     )

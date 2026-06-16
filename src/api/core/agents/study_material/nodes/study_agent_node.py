@@ -7,7 +7,6 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_groq import ChatGroq
 
 from src.api.config.dbconfig import settings
 from src.api.control.prompts.study_agent_prompts import (
@@ -16,6 +15,7 @@ from src.api.control.prompts.study_agent_prompts import (
     regeneration_prompt,
 )
 from src.api.core.agents.study_material.state import StudyMaterialGraphState
+from src.api.utils.groq_retry import invoke_llm_rotating
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +102,16 @@ async def study_agent_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    api_key = settings.groq_api_key
-    if not api_key:
-        return {"error": "GROQ_API_KEY is not configured."}
+    api_keys_configured = any(
+        [
+            settings.groq_api_key,
+            settings.groq_api_key_2,
+            settings.groq_api_key_3,
+            settings.groq_api_key_4,
+        ]
+    )
+    if not api_keys_configured:
+        return {"error": "No GROQ API keys are configured."}
 
     system_prompt, user_message = _build_user_message(state)
     messages = [
@@ -113,40 +120,43 @@ async def study_agent_node(
     ]
     prompt_snapshot = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_message}"
 
-    llm = ChatGroq(
-        model=settings.llm_model,
-        api_key=api_key,
-        temperature=0.3,
-        timeout=120,
-    )
-
     try:
-        response = await llm.ainvoke(messages)
+        content, llm_model_used, token_usage = await invoke_llm_rotating(
+            messages=messages,
+            model=settings.llm_model,
+            temperature=0.3,
+            timeout=120,
+        )
     except Exception as exc:
         logger.exception("Groq study material generation failed")
         return {"error": f"Study material generation failed: {exc}"}
 
-    content = response.content
-    if isinstance(content, list):
-        content = "".join(
-            block.get("text", "") if isinstance(block, dict) else str(block)
-            for block in content
-        )
+    raw_content = str(content).strip()
+    cleaned_content = raw_content
+    if cleaned_content.startswith("---"):
+        cleaned_content = cleaned_content[3:].strip()
 
-    token_usage: int | None = None
-    usage = getattr(response, "usage_metadata", None)
-    if usage and usage.get("total_tokens") is not None:
-        token_usage = int(usage["total_tokens"])
-    else:
-        meta = getattr(response, "response_metadata", None) or {}
-        token_meta = meta.get("token_usage") or {}
-        total = token_meta.get("total_tokens")
-        if total is not None:
-            token_usage = int(total)
+    improve_status = None
+    regenerate_status = None
+
+    mode = state.get("generation_mode") or "generate"
+    if mode == "improve":
+        if cleaned_content.startswith("IMPROVE STATUS:"):
+            improve_status = "vague"
+        else:
+            improve_status = "generated"
+    elif mode == "regenerate":
+        if cleaned_content.startswith("REGENERATE STATUS:"):
+            regenerate_status = "vague"
+        else:
+            regenerate_status = "generated"
 
     return {
         "generated_content": str(content),
         "prompt_snapshot": prompt_snapshot,
         "token_usage": token_usage,
-        "llm_model_used": settings.llm_model,
+        "llm_model_used": llm_model_used,
+        "improve_status": improve_status,
+        "regenerate_status": regenerate_status,
+        "llm_output_content": str(content),
     }

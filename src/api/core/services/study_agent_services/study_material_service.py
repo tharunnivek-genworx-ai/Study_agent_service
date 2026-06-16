@@ -28,17 +28,17 @@ from src.api.core.exceptions.study_material_exceptions.study_material_exceptions
     StudyMaterialClearDraftsBlockedByQuizException,
     StudyMaterialNoActiveVersionException,
     StudyMaterialNoDraftsException,
-    StudyMaterialNoPublishedVersionException,
     StudyMaterialNotFoundException,
-    StudyMaterialPdfGenerationFailedException,
+    StudyMaterialPublishBlockedSpaceUnpublishedException,
     StudyMaterialVersionAlreadyArchivedException,
     StudyMaterialVersionAlreadyPublishedException,
     StudyMaterialVersionMismatchException,
     StudyMaterialVersionNotArchivedException,
     StudyMaterialVersionNotPublishedException,
 )
-from src.api.data.repositories.progress_repositories.trainee_node_progress_repository import (
-    TraineeNodeProgressRepository,
+from src.api.core.services.study_agent_services.study_material_publish_ops import (
+    execute_publish_version_cascade,
+    execute_unpublish_version_cascade,
 )
 from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
 from src.api.data.repositories.space_node_repository.node_repository import (
@@ -48,21 +48,25 @@ from src.api.data.repositories.study_agent_repositories.study_material_repositor
     StudyMaterialRepository,
 )
 from src.api.schemas.study_material_schemas.study_material_schema import (
+    PublishedResourceTopicSummary,
+    RepublishChecklistNodeOut,
+    SpacePublishedResourcesResponse,
+    SpaceRepublishChecklistOut,
     StudyMaterialActivateRequest,
     StudyMaterialClearDraftsEligibilityOut,
     StudyMaterialClearDraftsOut,
+    StudyMaterialFeedbackResponse,
     StudyMaterialGenerateRequest,
     StudyMaterialImproveRequest,
     StudyMaterialManualEditRequest,
     StudyMaterialMentorUiStateOut,
-    StudyMaterialProgressOut,
-    StudyMaterialProgressUpdateRequest,
+    StudyMaterialPublishPreviewOut,
     StudyMaterialPublishRequest,
     StudyMaterialRegenerateRequest,
+    StudyMaterialUnpublishPreviewOut,
     StudyMaterialVersionHistoryOut,
     StudyMaterialVersionOut,
     StudyMaterialVersionSummary,
-    TraineeStudyMaterialOut,
 )
 from src.api.utils.content_utils.node_access import _get_node_and_assert_space_access
 from src.api.utils.space_node_utils.build_node import (
@@ -72,7 +76,7 @@ from src.api.utils.space_node_utils.build_node import (
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
     _assert_space_access,
-    _assert_trainee,
+    _get_space_and_assert_owner,
 )
 from src.api.utils.study_agent_utils.instruction_snapshot import (
     embed_effective_instruction_snapshot,
@@ -81,16 +85,17 @@ from src.api.utils.study_agent_utils.instruction_snapshot import (
 from src.api.utils.study_agent_utils.node_media_persistence import (
     persist_reference_images_to_node_media,
 )
+from src.api.utils.study_agent_utils.publish_cascade import (
+    get_quizzes_linked_to_study_material_version,
+    partition_quizzes_by_publish_state,
+)
 from src.api.utils.study_agent_utils.study_material_artifacts import (
     log_study_material_version,
-)
-from src.api.utils.study_agent_utils.study_material_pdf import (
-    build_study_material_pdf_filename,
-    render_study_material_pdf,
 )
 from src.api.utils.study_agent_utils.version_actions import (
     compute_version_allowed_actions,
 )
+from src.api.utils.study_agent_utils.version_labels import build_version_display_label
 
 
 class StudyMaterialService:
@@ -220,7 +225,7 @@ class StudyMaterialService:
         request: StudyMaterialRegenerateRequest,
         user_id: UUID,
         role: str,
-    ) -> StudyMaterialVersionOut:
+    ) -> StudyMaterialFeedbackResponse:
         """Rewrite active draft using mentor feedback. Skips LlamaParse."""
         _assert_mentor(role)
         node = await _get_node_and_assert_space_access(
@@ -247,7 +252,15 @@ class StudyMaterialService:
         )
         graph_result["node_title"] = node.title
 
-        return await self._persist_new_version(
+        if graph_result.get("regenerate_status") == "vague":
+            return StudyMaterialFeedbackResponse(
+                has_new_version=False,
+                status="regeneration_goal_too_vague",
+                status_message=graph_result.get("llm_output_content"),
+                new_version=None,
+            )
+
+        new_version = await self._persist_new_version(
             node_id=node_id,
             space_id=space_id,
             graph_result=graph_result,
@@ -258,6 +271,13 @@ class StudyMaterialService:
             based_on_version_id=based_on_version_id,
         )
 
+        return StudyMaterialFeedbackResponse(
+            has_new_version=True,
+            new_version_id=new_version.version_id,
+            status="ok",
+            new_version=new_version,
+        )
+
     # ── improve ────────────────────────────────────────────────────────
 
     async def improve_study_material(
@@ -266,7 +286,7 @@ class StudyMaterialService:
         request: StudyMaterialImproveRequest,
         user_id: UUID,
         role: str,
-    ) -> StudyMaterialVersionOut:
+    ) -> StudyMaterialFeedbackResponse:
         """Surgical improvement of active draft via LangGraph. Skips LlamaParse."""
         _assert_mentor(role)
         node = await _get_node_and_assert_space_access(
@@ -293,7 +313,15 @@ class StudyMaterialService:
         )
         graph_result["node_title"] = node.title
 
-        return await self._persist_new_version(
+        if graph_result.get("improve_status") == "vague":
+            return StudyMaterialFeedbackResponse(
+                has_new_version=False,
+                status="feedback_too_vague",
+                status_message=graph_result.get("llm_output_content"),
+                new_version=None,
+            )
+
+        new_version = await self._persist_new_version(
             node_id=node_id,
             space_id=space_id,
             graph_result=graph_result,
@@ -302,6 +330,13 @@ class StudyMaterialService:
             mentor_feedback_used=request.mentor_feedback,
             reference_material_id=reference_material_id,
             based_on_version_id=based_on_version_id,
+        )
+
+        return StudyMaterialFeedbackResponse(
+            has_new_version=True,
+            new_version_id=new_version.version_id,
+            status="ok",
+            new_version=new_version,
         )
 
     # ── manual edit ────────────────────────────────────────────────────
@@ -356,7 +391,85 @@ class StudyMaterialService:
         )
         return StudyMaterialVersionOut.model_validate(version)
 
-    # ── publish ────────────────────────────────────────────────────────
+    # ── publish preview / confirm ──────────────────────────────────────
+
+    async def _load_publish_target(
+        self,
+        node_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> tuple:
+        _assert_mentor(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        space = await _get_space_and_assert_owner(self.session, node.space_id, user_id)
+        if not space.is_published:
+            raise StudyMaterialPublishBlockedSpaceUnpublishedException()
+
+        repo = StudyMaterialRepository(self.session)
+        version = await repo.get_version_by_id(version_id)
+        if version is None or version.node_id != node_id:
+            raise StudyMaterialVersionMismatchException()
+        if version.is_published:
+            raise StudyMaterialVersionAlreadyPublishedException()
+        return node, version, repo
+
+    async def preview_publish_study_material(
+        self,
+        node_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> StudyMaterialPublishPreviewOut:
+        """Return pre-publish confirmation requirements without writing."""
+        _, version, repo = await self._load_publish_target(
+            node_id, version_id, user_id, role
+        )
+        previous = await repo.get_published_version(node_id)
+        new_label = build_version_display_label(
+            version.version_number, version.generation_type
+        )
+
+        has_draft_quizzes = False
+        has_published_quizzes = False
+        draft_quiz_count = 0
+        previous_label: str | None = None
+        current_published_label: str | None = None
+        is_republishing_older = False
+
+        if previous is not None:
+            previous_label = build_version_display_label(
+                previous.version_number, previous.generation_type
+            )
+            current_published_label = previous_label
+            is_republishing_older = version.version_number < previous.version_number
+
+            if previous.version_id != version.version_id:
+                linked = await get_quizzes_linked_to_study_material_version(
+                    self.session,
+                    node_id=node_id,
+                    study_material_version_id=previous.version_id,
+                )
+                draft_quizzes, published_quizzes = partition_quizzes_by_publish_state(
+                    linked
+                )
+                has_draft_quizzes = len(draft_quizzes) > 0
+                has_published_quizzes = len(published_quizzes) > 0
+                draft_quiz_count = len(draft_quizzes)
+
+        requires_confirmation = has_draft_quizzes or has_published_quizzes
+        return StudyMaterialPublishPreviewOut(
+            requires_confirmation=requires_confirmation,
+            has_draft_quizzes=has_draft_quizzes,
+            has_published_quizzes=has_published_quizzes,
+            draft_quiz_count=draft_quiz_count,
+            previous_version_label=previous_label,
+            new_version_label=new_label,
+            is_republishing_older=is_republishing_older,
+            current_published_version_label=current_published_label,
+        )
 
     async def publish_study_material(
         self,
@@ -365,22 +478,57 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
     ) -> StudyMaterialVersionOut:
-        """Sets is_published=True on a specific version."""
+        """Publish a version with atomic quiz cascade when switching versions."""
+        _, version, repo = await self._load_publish_target(
+            node_id, request.version_id, user_id, role
+        )
+        previous = await repo.get_published_version(node_id)
+
+        published = await execute_publish_version_cascade(
+            self.session,
+            node_id=node_id,
+            target_version=version,
+            previous_published_version=previous,
+            published_by=user_id,
+        )
+        return StudyMaterialVersionOut.model_validate(published)
+
+    async def preview_unpublish_study_material(
+        self,
+        node_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> StudyMaterialUnpublishPreviewOut:
+        """Return pre-unpublish confirmation requirements without writing."""
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
 
         repo = StudyMaterialRepository(self.session)
-        version = await repo.get_version_by_id(request.version_id)
+        version = await repo.get_version_by_id(version_id)
         if version is None or version.node_id != node_id:
             raise StudyMaterialVersionMismatchException()
+        if not version.is_published:
+            raise StudyMaterialVersionNotPublishedException()
 
-        if version.is_published:
-            raise StudyMaterialVersionAlreadyPublishedException()
+        linked = await get_quizzes_linked_to_study_material_version(
+            self.session,
+            node_id=node_id,
+            study_material_version_id=version.version_id,
+        )
+        draft_quizzes, published_quizzes = partition_quizzes_by_publish_state(linked)
+        version_label = build_version_display_label(
+            version.version_number, version.generation_type
+        )
 
-        version = await repo.publish_version(version, published_by=user_id)
-        return StudyMaterialVersionOut.model_validate(version)
+        return StudyMaterialUnpublishPreviewOut(
+            requires_confirmation=True,
+            has_draft_quizzes=len(draft_quizzes) > 0,
+            has_published_quizzes=len(published_quizzes) > 0,
+            version_label=version_label,
+        )
 
     async def unpublish_study_material(
         self,
@@ -389,7 +537,7 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
     ) -> StudyMaterialVersionOut:
-        """Clears is_published on a specific version (hides from trainees)."""
+        """Unpublish version; cascade-unpublish linked quizzes; retain drafts."""
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
@@ -399,12 +547,15 @@ class StudyMaterialService:
         version = await repo.get_version_by_id(request.version_id)
         if version is None or version.node_id != node_id:
             raise StudyMaterialVersionMismatchException()
-
         if not version.is_published:
             raise StudyMaterialVersionNotPublishedException()
 
-        version = await repo.unpublish_version(version)
-        return StudyMaterialVersionOut.model_validate(version)
+        unpublished = await execute_unpublish_version_cascade(
+            self.session,
+            node_id=node_id,
+            version=version,
+        )
+        return StudyMaterialVersionOut.model_validate(unpublished)
 
     # ── activate ───────────────────────────────────────────────────────
 
@@ -575,6 +726,8 @@ class StudyMaterialService:
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
+        space = await _get_space_and_assert_owner(self.session, node.space_id, user_id)
+        space_is_published = bool(space.is_published)
 
         node_repo = NodeRepository(self.session)
         ancestors = await node_repo.get_ancestors(node)
@@ -603,26 +756,40 @@ class StudyMaterialService:
         target_version_id = viewing_version_id or (
             active.version_id if active is not None else None
         )
+        published = await sm_repo.get_published_version(node_id)
         if target_version_id is not None:
             target = await sm_repo.get_version_by_id(target_version_id)
             if target is not None and target.node_id == node_id:
                 displayed_version = compute_version_allowed_actions(
                     version_id=target.version_id,
+                    version_number=target.version_number,
+                    generation_type=target.generation_type,
                     is_active=target.is_active,
                     is_published=target.is_published,
                     is_archived=target.is_archived,
                     active_version_id=active.version_id if active else None,
                     viewing_version_id=viewing_version_id,
+                    published_version_id=published.version_id if published else None,
+                    published_version_number=(
+                        published.version_number if published else None
+                    ),
+                    published_generation_type=(
+                        published.generation_type if published else None
+                    ),
+                    space_is_published=space_is_published,
                 )
 
         can_access_quiz = bool(
-            has_versions and active is not None and (active.content or "").strip()
+            space_is_published
+            and published is not None
+            and (published.content or "").strip()
         )
 
         return StudyMaterialMentorUiStateOut(
             node_id=node_id,
             has_versions=has_versions,
             active_version_id=active.version_id if active else None,
+            published_version_id=published.version_id if published else None,
             can_access_study_material=has_versions,
             can_access_quiz=can_access_quiz,
             instruction_changed_since_generation=instruction_changed,
@@ -707,85 +874,145 @@ class StudyMaterialService:
             deleted_count=deleted_count,
         )
 
-    # ── trainee: get published ─────────────────────────────────────────
+    async def get_space_published_resources(
+        self, space_id: UUID, user_id: UUID, role: str
+    ) -> SpacePublishedResourcesResponse:
+        """Resolve all published topics, study materials, and quizzes in a space."""
+        _assert_mentor(role)
+        await _assert_space_access(self.session, space_id, user_id, role)
 
-    async def get_published(
-        self, node_id: UUID, user_id: UUID, role: str
-    ) -> TraineeStudyMaterialOut:
-        """Returns the is_published=True version for a node. Trainee-safe."""
-        node = await _get_node_and_assert_space_access(
-            self.session, node_id, user_id, owner_only=False
+        from sqlalchemy import and_, select
+
+        from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
+        from src.api.data.models.postgres.e_learning_content.study_material_versions import (
+            StudyMaterialVersion,
         )
-        await _assert_space_access(self.session, node.space_id, user_id, role)
+        from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
 
-        repo = StudyMaterialRepository(self.session)
-        version = await repo.get_published_version(node_id)
-        if version is None:
-            raise StudyMaterialNoPublishedVersionException()
-
-        # Serialize BEFORE any commit. session.commit() expires all ORM-instance
-        # attributes (expire_on_commit=True is the default). If we committed first
-        # and then called model_validate, Pydantic would touch published_at /
-        # content / etc. on an expired instance, triggering an implicit async
-        # reload that has no greenlet context → MissingGreenlet crash.
-        result = TraineeStudyMaterialOut.model_validate(version)
-
-        if role == "trainee":
-            progress_repo = TraineeNodeProgressRepository(self.session)
-            await progress_repo.mark_study_material_viewed(
-                user_id, node_id, node.space_id
+        # Fetch active nodes
+        nodes_stmt = select(TopicNode).where(
+            and_(
+                TopicNode.space_id == space_id,
+                TopicNode.is_active.is_(True),
             )
-            await self.session.commit()
-
-        return result
-
-    async def download_published_pdf(
-        self, node_id: UUID, user_id: UUID, role: str
-    ) -> tuple[bytes, str]:
-        """Render the published study material as a PDF for trainees."""
-        _assert_trainee(role)
-        node = await _get_node_and_assert_space_access(
-            self.session, node_id, user_id, owner_only=False
         )
-        await _assert_space_access(self.session, node.space_id, user_id, role)
+        nodes_res = await self.session.execute(nodes_stmt)
+        nodes = list(nodes_res.scalars().all())
 
-        repo = StudyMaterialRepository(self.session)
-        version = await repo.get_published_version(node_id)
-        if version is None:
-            raise StudyMaterialNoPublishedVersionException()
-
-        try:
-            pdf_bytes = render_study_material_pdf(node.title, version.content)
-        except ValueError:
-            raise StudyMaterialPdfGenerationFailedException() from None
-
-        filename = build_study_material_pdf_filename(node.title)
-        return pdf_bytes, filename
-
-    async def update_study_material_progress(
-        self,
-        node_id: UUID,
-        request: StudyMaterialProgressUpdateRequest,
-        user_id: UUID,
-        role: str,
-    ) -> StudyMaterialProgressOut:
-        """Trainee scroll progress — backend keeps the max read_percent (TDD §3.2.4)."""
-        _assert_trainee(role)
-        node = await _get_node_and_assert_space_access(
-            self.session, node_id, user_id, owner_only=False
+        # Fetch published study materials
+        sm_stmt = select(StudyMaterialVersion).where(
+            and_(
+                StudyMaterialVersion.space_id == space_id,
+                StudyMaterialVersion.is_published.is_(True),
+            )
         )
-        await _assert_space_access(self.session, node.space_id, user_id, role)
+        sm_res = await self.session.execute(sm_stmt)
+        sms = list(sm_res.scalars().all())
 
-        repo = StudyMaterialRepository(self.session)
-        published = await repo.get_published_version(node_id)
-        if published is None:
-            raise StudyMaterialNoPublishedVersionException()
-
-        progress_repo = TraineeNodeProgressRepository(self.session)
-        row = await progress_repo.update_read_progress(
-            user_id, node_id, node.space_id, request.read_percent
+        # Fetch published quizzes
+        quiz_stmt = select(Quiz).where(
+            and_(
+                Quiz.space_id == space_id,
+                Quiz.is_published.is_(True),
+            )
         )
-        # Serialize before commit — same expire-on-commit safety as get_published.
-        result = StudyMaterialProgressOut.model_validate(row)
-        await self.session.commit()
-        return result
+        quiz_res = await self.session.execute(quiz_stmt)
+        quizzes = list(quiz_res.scalars().all())
+
+        # Combine
+        sm_map = {sm.node_id: sm.version_id for sm in sms}
+        quiz_map = {q.node_id: q.quiz_id for q in quizzes}
+
+        published_topics = []
+        for node in nodes:
+            version_id = sm_map.get(node.node_id)
+            quiz_id = quiz_map.get(node.node_id)
+            if version_id or quiz_id:
+                published_topics.append(
+                    PublishedResourceTopicSummary(
+                        node_id=node.node_id,
+                        topic_title=node.title,
+                        published_study_material_version_id=version_id,
+                        published_quiz_id=quiz_id,
+                    )
+                )
+
+        return SpacePublishedResourcesResponse(
+            space_id=space_id,
+            published_topics=published_topics,
+        )
+
+    async def get_space_republish_checklist(
+        self, space_id: UUID, user_id: UUID, role: str
+    ) -> SpaceRepublishChecklistOut:
+        """List per-node content mentors can re-publish after espace republish."""
+        _assert_mentor(role)
+        await _assert_space_access(self.session, space_id, user_id, role)
+
+        from sqlalchemy import and_, select
+
+        from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
+        from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
+
+        nodes_stmt = select(TopicNode).where(
+            and_(
+                TopicNode.space_id == space_id,
+                TopicNode.is_active.is_(True),
+            )
+        )
+        nodes_res = await self.session.execute(nodes_stmt)
+        nodes = list(nodes_res.scalars().all())
+
+        sm_repo = StudyMaterialRepository(self.session)
+        checklist: list[RepublishChecklistNodeOut] = []
+
+        for node in nodes:
+            versions = await sm_repo.get_all_versions(node.node_id, archived=False)
+            publishable_versions = [v for v in versions if (v.content or "").strip()]
+            latest_sm = (
+                max(publishable_versions, key=lambda v: v.version_number)
+                if publishable_versions
+                else None
+            )
+
+            quiz_stmt = (
+                select(Quiz)
+                .where(
+                    and_(
+                        Quiz.node_id == node.node_id,
+                        Quiz.space_id == space_id,
+                        Quiz.is_published.is_(False),
+                    )
+                )
+                .order_by(Quiz.created_at.desc())
+            )
+            quiz_res = await self.session.execute(quiz_stmt)
+            draft_quiz = quiz_res.scalars().first()
+
+            if latest_sm is None and draft_quiz is None:
+                continue
+
+            checklist.append(
+                RepublishChecklistNodeOut(
+                    node_id=node.node_id,
+                    node_title=node.title,
+                    last_published_version_id=(
+                        latest_sm.version_id if latest_sm is not None else None
+                    ),
+                    last_published_version_label=(
+                        build_version_display_label(
+                            latest_sm.version_number, latest_sm.generation_type
+                        )
+                        if latest_sm is not None
+                        else None
+                    ),
+                    has_unpublished_quiz=draft_quiz is not None,
+                    quiz_id=draft_quiz.quiz_id if draft_quiz is not None else None,
+                    quiz_title=draft_quiz.title if draft_quiz is not None else None,
+                )
+            )
+
+        return SpaceRepublishChecklistOut(
+            space_id=space_id,
+            nodes_with_publishable_material=checklist,
+        )
