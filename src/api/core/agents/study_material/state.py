@@ -26,3 +26,6 @@ class StudyMaterialGraphState(TypedDict, total=False):
     token_usage: int
     llm_model_used: str
     error: str
+    improve_status: Literal["generated", "vague"] | None
+    regenerate_status: Literal["generated", "vague"] | None
+    llm_output_content: str

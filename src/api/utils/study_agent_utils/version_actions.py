@@ -12,11 +12,17 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
 def compute_version_allowed_actions(
     *,
     version_id: UUID,
+    version_number: int,
+    generation_type: str,
     is_active: bool,
     is_published: bool,
     is_archived: bool,
     active_version_id: UUID | None,
     viewing_version_id: UUID | None,
+    published_version_id: UUID | None = None,
+    published_version_number: int | None = None,
+    published_generation_type: str | None = None,
+    space_is_published: bool = True,
 ) -> VersionAllowedActionsOut:
     is_viewing_non_active = bool(
         viewing_version_id
@@ -29,8 +35,26 @@ def compute_version_allowed_actions(
         is_active and not is_viewing_non_active and not is_viewing_archived
     )
     can_archive = not is_published and not is_archived
-    can_publish = not is_published and not is_archived
     can_unpublish = is_published and not is_archived
+
+    publish_disabled_tooltip: str | None = None
+    can_publish = not is_published and not is_archived and space_is_published
+    if not is_published and not is_archived and not space_is_published:
+        can_publish = False
+        publish_disabled_tooltip = (
+            "Re-publish this space first to make content visible to trainees."
+        )
+
+    publish_button_label = "Publish for trainees"
+    if (
+        not is_published
+        and published_version_id is not None
+        and published_version_id != version_id
+        and published_version_number is not None
+        and published_generation_type is not None
+        and version_number < published_version_number
+    ):
+        publish_button_label = "Re-publish this version"
 
     return VersionAllowedActionsOut(
         version_id=version_id,
@@ -40,4 +64,7 @@ def compute_version_allowed_actions(
         can_edit_active_draft=can_edit_active_draft,
         is_viewing_non_active=is_viewing_non_active,
         is_viewing_archived=is_viewing_archived,
+        publish_button_label=publish_button_label,
+        publish_disabled_tooltip=publish_disabled_tooltip,
+        unpublish_disabled_tooltip=None,
     )

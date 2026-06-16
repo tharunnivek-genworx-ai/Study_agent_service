@@ -17,10 +17,21 @@ Edge cases covered (cross-referenced to TDD §3.6):
   EC-12  — Wrong answer key corrected: update + notification; no exception.
   EC-20  — New quiz resets node completion: handled by Engagement & Chat Service.
 
+Hint generation exceptions live in hint_generation_exceptions.py.
+
 Naming convention mirrors auth_exceptions.py and node_exceptions.py from Service 1.
 """
 
 from fastapi import HTTPException, status
+
+
+class AppException(HTTPException):
+    def __init__(self, status_code: int, error_code: str, message: str) -> None:
+        super().__init__(
+            status_code=status_code,
+            detail={"error_code": error_code, "message": message},
+        )
+
 
 # ── Quiz Not Found ────────────────────────────────────────────────────────────
 
@@ -94,6 +105,16 @@ class QuizNotPublishedException(HTTPException):
         )
 
 
+class QuizNotPublishedForUnpublishException(HTTPException):
+    """Raised when a mentor tries to unpublish a quiz that is not published."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Quiz is not published.",
+        )
+
+
 class QuizHasNoPublishedStudyMaterialException(HTTPException):
     """
     Raised during quiz generation when the provided
@@ -108,6 +129,51 @@ class QuizHasNoPublishedStudyMaterialException(HTTPException):
             detail=(
                 "Quiz can only be generated from a published study material version. "
                 "Publish the version first."
+            ),
+        )
+
+
+class QuizStudyMaterialNotCurrentPublishedException(HTTPException):
+    """Raised when the requested version is not the node's currently published one."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Quiz can only be generated from the currently published study material "
+                "version. Publish that version first."
+            ),
+        )
+
+
+class QuizVersionNotPublishedException(HTTPException):
+    """Raised when quiz actions run against an unpublished study material version."""
+
+    def __init__(
+        self,
+        *,
+        version_label: str,
+        current_published_version_label: str | None,
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "QUIZ_VERSION_NOT_PUBLISHED",
+                "version_label": version_label,
+                "current_published_version_label": current_published_version_label,
+            },
+        )
+
+
+class QuizCannotPublishWithoutPublishedStudyMaterialException(HTTPException):
+    """Raised when a mentor tries to publish a quiz whose study material is not published."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot publish the quiz until its study material version is published "
+                "for trainees."
             ),
         )
 
@@ -227,10 +293,12 @@ class QuizGenerationFailedException(HTTPException):
     Mirrors LLMGenerationFailedException from study_material_exceptions.py.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, message: str = "Quiz generation failed. Please try again."
+    ) -> None:
         super().__init__(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Quiz generation failed. Please try again.",
+            detail=message,
         )
 
 
@@ -245,4 +313,13 @@ class StudyMaterialVersionMismatchException(HTTPException):
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Study material version does not belong to this node.",
+        )
+
+
+class QuizHintsIncompleteException(AppException):
+    def __init__(self):  # type: ignore[no-untyped-def]
+        super().__init__(
+            status_code=422,
+            error_code="QUIZ_HINTS_INCOMPLETE",
+            message="All active questions must have hints generated before publishing.",
         )

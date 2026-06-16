@@ -174,7 +174,7 @@ class StudyMaterialRepository:
         return version
 
     async def unpublish_other_versions(
-        self, node_id: UUID, except_version_id: UUID
+        self, node_id: UUID, except_version_id: UUID, *, commit: bool = True
     ) -> None:
         """Clear publish flags on all other versions for this node."""
         result = await self.db.execute(
@@ -190,30 +190,35 @@ class StudyMaterialRepository:
             other.is_published = False
             other.published_at = None
             other.published_by = None
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
 
     async def publish_version(
-        self, version: StudyMaterialVersion, published_by: UUID
+        self, version: StudyMaterialVersion, published_by: UUID, *, commit: bool = True
     ) -> StudyMaterialVersion:
         """Set is_published=True, published_at, published_by."""
-        await self.unpublish_other_versions(version.node_id, version.version_id)
+        await self.unpublish_other_versions(
+            version.node_id, version.version_id, commit=False
+        )
         now = datetime.now(UTC)
         version.is_published = True
         version.published_at = now
         version.published_by = published_by
-        await self.db.commit()
-        await self.db.refresh(version)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(version)
         return version
 
     async def unpublish_version(
-        self, version: StudyMaterialVersion
+        self, version: StudyMaterialVersion, *, commit: bool = True
     ) -> StudyMaterialVersion:
         """Clear publish flags on a version."""
         version.is_published = False
         version.published_at = None
         version.published_by = None
-        await self.db.commit()
-        await self.db.refresh(version)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(version)
         return version
 
     async def archive_version(

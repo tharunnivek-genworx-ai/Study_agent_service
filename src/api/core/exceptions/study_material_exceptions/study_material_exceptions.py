@@ -33,6 +33,20 @@ class StudyMaterialVersionAlreadyPublishedException(HTTPException):
         )
 
 
+class StudyMaterialPublishBlockedSpaceUnpublishedException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "ESPACE_NOT_PUBLISHED",
+                "message": (
+                    "Re-publish this space first to make content visible to trainees. "
+                    "Individual content cannot be published while the space is unpublished."
+                ),
+            },
+        )
+
+
 class StudyMaterialVersionNotPublishedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
@@ -104,11 +118,57 @@ class StudyMaterialClearDraftsBlockedByQuizException(HTTPException):
         )
 
 
+class StudyMaterialUnpublishBlockedByPublishedQuizException(HTTPException):
+    def __init__(self, quiz_count: int = 1) -> None:
+        noun = "quiz" if quiz_count == 1 else "quizzes"
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This study material version has a published {noun}. "
+                "Unpublish the quiz before unpublishing study material."
+            ),
+        )
+
+
+class StudyMaterialUnpublishBlockedByQuizException(HTTPException):
+    def __init__(self, quiz_count: int = 1) -> None:
+        noun = "quiz" if quiz_count == 1 else "quizzes"
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"A {noun} draft exists for this study material version. "
+                "Publish the quiz draft first, or delete it before unpublishing study material."
+            ),
+        )
+
+
 class StudyMaterialNoDraftsException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No study material drafts exist for this topic.",
+        )
+
+
+class StudyMaterialPublishTransactionFailedException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "PUBLISH_TRANSACTION_FAILED",
+                "message": "Something went wrong. No changes were made. Please try again.",
+            },
+        )
+
+
+class StudyMaterialUnpublishTransactionFailedException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "UNPUBLISH_TRANSACTION_FAILED",
+                "message": "Something went wrong. No changes were made. Please try again.",
+            },
         )
 
 
