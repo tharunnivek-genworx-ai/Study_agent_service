@@ -1,3 +1,4 @@
+# C:\CapStone\study_agent_service\src\api\core\exceptions\space_node_exceptions\node_exceptions.py
 from fastapi import HTTPException, status
 
 

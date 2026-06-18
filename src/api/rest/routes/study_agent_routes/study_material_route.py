@@ -10,9 +10,7 @@ Routes for study_material_versions.
   activate    → PATCH /nodes/{node_id}/study-material/activate
   versions    → GET   /nodes/{node_id}/study-material/versions
   version     → GET   /nodes/{node_id}/study-material/versions/{version_id}
-  trainee     → GET   /nodes/{node_id}/study-material
-  trainee pdf → GET   /nodes/{node_id}/study-material/pdf
-  progress    → PATCH /nodes/{node_id}/study-material/progress
+  trainee routes → see ``trainee_study_routes`` (GET study-material, PDF, panel, progress)
 """
 
 from uuid import UUID

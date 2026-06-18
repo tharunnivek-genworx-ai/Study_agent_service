@@ -12,6 +12,8 @@ Reference materials (TDD §3.3.2):
 Node media:
   Attach          → POST   /nodes/{node_id}/media
   List            → GET    /nodes/{node_id}/media
+                    GET    /nodes/{node_id}/media?reference_material_id=...
+                    (reference_material_id returns ReferenceImageListOut)
   Reorder         → PATCH  /nodes/{node_id}/media/reorder
   Delete          → DELETE /nodes/{node_id}/media/{media_id}
 
@@ -130,22 +132,6 @@ async def list_node_reference_materials(
     return await service.list_by_node(node_id, current_user.sub, current_user.role)
 
 
-@router.get(
-    "/reference-materials/{material_id}/reference-images",
-    response_model=ReferenceImageListOut,
-)
-async def list_reference_images(
-    material_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: TokenPayload = Depends(get_current_user),
-) -> ReferenceImageListOut:
-    """List all figures downloaded from a reference PDF during LlamaParse extraction."""
-    service = ReferenceMaterialService(db)
-    return await service.list_reference_images(
-        material_id, current_user.sub, current_user.role
-    )
-
-
 @router.patch(
     "/reference-materials/{material_id}/visibility",
     response_model=ReferenceMaterialOut,
@@ -213,14 +199,17 @@ async def attach_node_media(
     )
 
 
-@router.get("/nodes/{node_id}/media", response_model=NodeMediaListOut)
+@router.get(
+    "/nodes/{node_id}/media",
+    response_model=NodeMediaListOut | ReferenceImageListOut,
+)
 async def list_node_media(
     node_id: UUID,
     reference_material_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> NodeMediaListOut:
-    """List media for a node. Pass reference_material_id to scope PDF-extracted images."""
+) -> NodeMediaListOut | ReferenceImageListOut:
+    """List mentor media for a node, or reference LlamaParse images when scoped by PDF."""
     service = ReferenceMaterialService(db)
     return await service.list_media(
         node_id,

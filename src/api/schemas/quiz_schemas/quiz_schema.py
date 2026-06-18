@@ -1,4 +1,4 @@
-# src/api/schemas/content_schemas/quiz_schema.py
+# src/api/schemas/quiz_schemas/quiz_schema.py
 """
 Schemas for quizzes, quiz_questions, quiz_attempts, quiz_question_responses.
 
@@ -43,6 +43,41 @@ QuizDifficulty = Literal["easy", "medium", "hard", "mixed"]
 QuizAttemptStatus = Literal["in_progress", "submitted", "abandoned"]
 CorrectOption = Literal["A", "B", "C", "D"]
 QuestionSource = Literal["ai_generated", "mentor_manual"]
+QuestionNavStatus = Literal["notVisited", "visited", "answered", "skipped"]
+
+
+class QuizQualityCheckScoresOut(BaseModel):
+    """Individual dimension scores from the quiz QC evaluator."""
+
+    answer_correctness: int | None = None
+    topic_relevance: int | None = None
+    option_quality: int | None = None
+    question_clarity: int | None = None
+    difficulty_alignment: int | None = None
+    explanation_quality: int | None = None
+    duplicate_overlap: int | None = None
+
+
+class QuizQualityCheckFlaggedQuestionOut(BaseModel):
+    """Flagged question entry in the quiz QC result."""
+
+    question_id: UUID
+    question_number: int
+    flags: list[str] = Field(default_factory=list)
+
+
+class QuizQualityCheckResultOut(BaseModel):
+    """Structured quiz QC evaluation result surfaced to the frontend."""
+
+    overall_status: Literal["pass", "warn", "fail"]
+    wrong_answer_risk: Literal["none", "low", "medium", "high"]
+    scores: QuizQualityCheckScoresOut
+    flagged_questions: list[QuizQualityCheckFlaggedQuestionOut] = Field(
+        default_factory=list
+    )
+    issues: list[str] = Field(default_factory=list)
+    corrective_instructions: str = ""
+    summary: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -261,12 +296,17 @@ class QuizOut(BaseModel):
     hints_status: str = "none"  # "none" | "partial" | "complete"
     questions: list[QuizQuestionOut] = Field(default_factory=list)
 
+    # ── Quality-Check fields ──────────────────────────────────────
+    qc_failed_permanently: bool = False
+    qc_result: QuizQualityCheckResultOut | None = None
+
 
 class QuizSummaryOut(BaseModel):
     """
     Lightweight quiz row without questions. Used in list endpoints
     (GET /nodes/:id/quizzes) to show all quiz generations for the node
     without loading every question set.
+    Future implementation for quiz lineage and tracking
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -284,7 +324,10 @@ class QuizSummaryOut(BaseModel):
 
 
 class QuizListOut(BaseModel):
-    """All quizzes for a node, ordered by created_at DESC (newest first)."""
+    """
+    All quizzes for a node, ordered by created_at DESC (newest first).
+    Future implementation for quiz lineage and tracking
+    """
 
     node_id: UUID
     quizzes: list[QuizSummaryOut]
@@ -388,13 +431,18 @@ class TraineeQuizQuestionOut(BaseModel):
     correct_option: str | None = None
     explanation: str | None = None
 
+    # Backend-computed navigation / interaction flags
+    nav_status: QuestionNavStatus = "notVisited"
+    can_answer: bool = True
+    can_skip: bool = True
+
 
 class TraineeQuizOut(BaseModel):
     """
-    Full quiz view for a trainee mid-attempt.
-    Returned on attempt start and resume. Contains all questions with
-    their current attempt state merged in by the service.
-    Does not expose correct answers or explanations — those are post-submit only.
+    Full quiz view for a trainee mid-attempt or post-submit review.
+    Returned on attempt start, resume, and GET attempt.
+    Correct answers and explanations are populated only after submission.
+    total_correct and total_skipped are populated only after submission.
     """
 
     quiz_id: UUID
@@ -405,6 +453,10 @@ class TraineeQuizOut(BaseModel):
     attempt_id: UUID
     attempt_status: QuizAttemptStatus
     started_at: datetime
+    resume_question_id: UUID | None = None
+    score_percent: int | None = None
+    total_correct: int | None = None
+    total_skipped: int | None = None
     questions: list[TraineeQuizQuestionOut]
 
 
@@ -424,10 +476,9 @@ class QuizQuestionResponseRequest(BaseModel):
     """
     Body for POST/PATCH /attempts/:attempt_id/response.
 
-    selected_option=None with was_skipped=True records a deliberate skip.
-    selected_option set with was_skipped=False records an answer submission.
-    The service increments hint_level_reached if the answer is wrong,
-    and sets was_locked=True once the answer is correct (EC-7, EC-8).
+    selected_option records an answer submission. The service increments
+    hint_level_reached if the answer is wrong, and sets was_locked=True once
+    the answer is correct (EC-7, EC-8).
 
     The service validates that was_locked=False before accepting an update —
     locked questions cannot be changed.
@@ -436,11 +487,7 @@ class QuizQuestionResponseRequest(BaseModel):
     question_id: UUID
     selected_option: CorrectOption | None = Field(
         default=None,
-        description="None when was_skipped=True.",
-    )
-    was_skipped: bool = Field(
-        default=False,
-        description="True records a deliberate skip. selected_option must be None.",
+        description="The trainee's chosen option. Required to record an answer.",
     )
 
 
@@ -504,6 +551,34 @@ class QuizQuestionResponseOut(BaseModel):
     hint_1: str | None = None
     hint_2: str | None = None
     hint_3: str | None = None
+    next_question_id: UUID | None = None
+    resume_question_id: UUID | None = None
+
+
+class TraineeQuizAttemptSummaryOut(BaseModel):
+    """Lightweight card for a trainee's past or in-progress attempt."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    attempt_id: UUID
+    status: QuizAttemptStatus
+    score: float | None = None
+    score_percent: int | None = None
+    total_correct: int | None = None
+    total_skipped: int | None = None
+    total_questions: int
+    started_at: datetime
+    submitted_at: datetime | None = None
+    attempt_label: str
+
+
+class TraineeQuizAttemptListOut(BaseModel):
+    """All attempts for a trainee on a node's published quiz, newest first."""
+
+    quiz_id: UUID
+    node_id: UUID
+    title: str
+    attempts: list[TraineeQuizAttemptSummaryOut] = Field(default_factory=list)
 
 
 class PublishedQuizDiscoveryOut(BaseModel):
@@ -517,3 +592,6 @@ class PublishedQuizDiscoveryOut(BaseModel):
     total_questions: int | None = None
     has_in_progress_attempt: bool = False
     active_attempt_id: UUID | None = None
+    submitted_attempt_count: int = 0
+    can_start_new_attempt: bool = True
+    can_view_previous_attempts: bool = False

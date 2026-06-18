@@ -12,7 +12,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 
 from src.api.data.clients.postgres.database import Base
-from src.api.utils.time import utc_now
+from src.api.utils.common_utils.time import utc_now
 
 
 class TraineeNodeProgress(Base):

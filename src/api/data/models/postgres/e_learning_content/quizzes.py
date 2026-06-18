@@ -1,10 +1,10 @@
 import uuid
 
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
 from src.api.data.clients.postgres.database import Base
-from src.api.utils.time import utc_now
+from src.api.utils.common_utils.time import utc_now
 
 
 class Quiz(Base):
@@ -32,6 +32,12 @@ class Quiz(Base):
     title = Column(String(300), nullable=False)
     total_questions = Column("totalquestions", Integer, nullable=False)
     difficulty = Column(String(20), nullable=False, default="mixed")
+
+    qc_failed_permanently = Column(
+        "qcfailedpermanently", Boolean, nullable=False, default=False
+    )
+    qc_result = Column("qcresult", JSONB, nullable=True)
+
     is_published = Column("ispublished", Boolean, nullable=False, default=False)
     published_at = Column("publishedat", TIMESTAMP(timezone=True), nullable=True)
     created_by = Column(

@@ -44,11 +44,10 @@ select = [
 "src/api/rest/**/*.py" = ["B008", "E501"]
 "src/api/data/models/**/*.py" = ["E501"]
 "src/api/schemas/**/*.py" = ["E501"]
-"src/api/control/prompts/**/*.py" = ["E501"]
+"src/api/control/**/*.py" = ["E501"]
 "src/api/core/**/*.py" = ["E501"]
 "src/api/utils/**/*.py" = ["E501"]
 "src/api/data/**/*.py" = ["E501"]
-"src/api/schemas/study_material_schemas/llama_parse_schema.py" = ["B018"]
 "alembic/versions/*.py" = ["E501"]
 
 [tool.mypy]

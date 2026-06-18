@@ -32,6 +32,12 @@ from src.api.core.exceptions.study_material_exceptions.reference_material_except
     ReferenceMaterialNodeScopeMismatchException,
     ReferenceMaterialNotFoundForDeleteException,
 )
+from src.api.data.models.postgres.e_learning_content.reference_llamaparse_images import (
+    ReferenceLlamaParseImage,
+)
+from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (
+    ReferenceLlamaParseRepository,
+)
 from src.api.data.repositories.study_agent_repositories.reference_material_repository import (
     ReferenceMaterialRepository,
 )
@@ -51,18 +57,31 @@ from src.api.schemas.study_material_schemas.reference_material_schema import (
     ReferenceMaterialScope,
     ReferenceMaterialVisibilityUpdate,
 )
-from src.api.utils.content_utils.node_access import _get_node_and_assert_space_access
+from src.api.utils.reference_media_utils.media_url_utils import storage_path_to_url
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
     _assert_space_access,
+    _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
 )
 from src.api.utils.study_agent_utils.media_response import build_node_media_out
-from src.api.utils.study_agent_utils.reference_images_utils import (
-    list_downloaded_reference_images,
-)
 
 _UPLOAD_ROOT = Path("/app/uploads/reference_materials")
+
+
+def _reference_image_items(
+    images: list[ReferenceLlamaParseImage],
+) -> list[ReferenceImageOut]:
+    return [
+        ReferenceImageOut(
+            llamaparse_image_id=image.llamaparse_image_id,
+            filename=image.filename,
+            title=image.title,
+            url=storage_path_to_url(image.file_url),
+            source_page=image.source_page_number,
+        )
+        for image in images
+    ]
 
 
 async def _save_file_locally(
@@ -202,37 +221,6 @@ class ReferenceMaterialService:
         )
         return ReferenceMaterialOut.model_validate(material)
 
-    async def list_reference_images(
-        self, material_id: UUID, user_id: UUID, role: str
-    ) -> ReferenceImageListOut:
-        """List figures extracted from a reference PDF (LlamaParse download folder)."""
-        repo = ReferenceMaterialRepository(self.session)
-        material = await repo.get_by_id(material_id)
-
-        if material is None or material.deleted_at is not None:
-            raise ReferenceMaterialNotFoundForDeleteException()
-
-        if material.node_id is not None:
-            await _get_node_and_assert_space_access(
-                self.session, material.node_id, user_id, owner_only=False
-            )
-        else:
-            await _assert_space_access(self.session, material.space_id, user_id, role)
-
-        pdf_path = Path(material.file_url)
-        if not pdf_path.is_file():
-            return ReferenceImageListOut(material_id=material_id, items=[], total=0)
-
-        items = [
-            ReferenceImageOut.model_validate(record)
-            for record in list_downloaded_reference_images(pdf_path)
-        ]
-        return ReferenceImageListOut(
-            material_id=material_id,
-            items=items,
-            total=len(items),
-        )
-
     async def delete_reference_material(
         self, material_id: UUID, user_id: UUID, role: str
     ) -> ReferenceMaterialDeletedOut:
@@ -301,20 +289,43 @@ class ReferenceMaterialService:
         user_id: UUID,
         role: str,
         reference_material_id: UUID | None = None,
-    ) -> NodeMediaListOut:
-        """List media for a node, optionally scoped to one reference PDF."""
+    ) -> NodeMediaListOut | ReferenceImageListOut:
+        """List mentor media for a node, or LlamaParse figures for one reference PDF."""
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=False
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
 
-        repo = ReferenceMaterialRepository(self.session)
         if reference_material_id is not None:
-            items = await repo.get_media_by_node_and_reference(
-                node_id, reference_material_id
+            material_repo = ReferenceMaterialRepository(self.session)
+            material = await material_repo.get_by_id(reference_material_id)
+
+            if material is None or material.deleted_at is not None:
+                raise ReferenceMaterialNotFoundForDeleteException()
+
+            if material.node_id is not None:
+                await _get_node_and_assert_space_access(
+                    self.session, material.node_id, user_id, owner_only=False
+                )
+            else:
+                await _assert_space_access(
+                    self.session, material.space_id, user_id, role
+                )
+
+            parse_repo = ReferenceLlamaParseRepository(self.session)
+            images = await parse_repo.list_images_by_reference_and_node(
+                reference_material_id, node_id
             )
-        else:
-            items = await repo.get_media_by_node(node_id)
+            items = _reference_image_items(images)
+            return ReferenceImageListOut(
+                material_id=reference_material_id,
+                node_id=node_id,
+                items=items,
+                total=len(items),
+            )
+
+        repo = ReferenceMaterialRepository(self.session)
+        items = await repo.get_media_by_node(node_id)
         return NodeMediaListOut(
             items=[build_node_media_out(i) for i in items],
             total=len(items),

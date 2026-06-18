@@ -16,30 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.data.models.postgres.e_learning_content.study_material_versions import (
-    StudyMaterialVersion,
-)
 
 
 class HintRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.db = session
 
-    # ── Quiz / version lookups (precondition checks) ──────────────────
+    # ── Quiz lookups (precondition checks) ────────────────────────────
 
     async def get_quiz_by_id(self, quiz_id: UUID) -> Quiz | None:
         result = await self.db.execute(select(Quiz).where(Quiz.quiz_id == quiz_id))
         return cast(Quiz | None, result.scalars().first())
-
-    async def get_study_material_version(
-        self, version_id: UUID
-    ) -> StudyMaterialVersion | None:
-        result = await self.db.execute(
-            select(StudyMaterialVersion).where(
-                StudyMaterialVersion.version_id == version_id
-            )
-        )
-        return cast(StudyMaterialVersion | None, result.scalars().first())
 
     # ── Question lookups ──────────────────────────────────────────────
 

@@ -89,33 +89,6 @@ class ReferenceMaterialRepository:
 
     # ── Reference Material Writes ────────────────────────────────────────
 
-    async def create_reference_material(
-        self,
-        space_id: UUID,
-        node_id: UUID | None,
-        title: str,
-        scope: ReferenceMaterialScope,
-        file_url: str,
-        file_name: str,
-        file_size_bytes: int | None,
-        mime_type: str,
-        is_visible_to_trainees: bool,
-        uploaded_by: UUID,
-    ) -> ReferenceMaterial:
-        return await self.create_reference_material_with_id(
-            material_id=uuid4(),
-            space_id=space_id,
-            node_id=node_id,
-            title=title,
-            scope=scope,
-            file_url=file_url,
-            file_name=file_name,
-            file_size_bytes=file_size_bytes,
-            mime_type=mime_type,
-            is_visible_to_trainees=is_visible_to_trainees,
-            uploaded_by=uploaded_by,
-        )
-
     async def create_reference_material_with_id(
         self,
         material_id: UUID,
@@ -182,47 +155,6 @@ class ReferenceMaterialRepository:
         )
         return list(result.scalars().all())
 
-    async def get_media_by_node_and_reference(
-        self,
-        node_id: UUID,
-        reference_material_id: UUID,
-    ) -> list[NodeMedia]:
-        """PDF-extracted images for a node scoped to one reference material."""
-        result = await self.db.execute(
-            select(NodeMedia)
-            .where(
-                and_(
-                    NodeMedia.node_id == node_id,
-                    NodeMedia.media_type == "image",
-                    NodeMedia.source_pdf_material_id == reference_material_id,
-                )
-            )
-            .order_by(NodeMedia.order_index.asc())
-        )
-        return list(result.scalars().all())
-
-    async def delete_pdf_extracted_media(
-        self,
-        node_id: UUID,
-        reference_material_id: UUID,
-    ) -> int:
-        """Hard-delete PDF-extracted image rows for a node + reference material."""
-        result = await self.db.execute(
-            select(NodeMedia).where(
-                and_(
-                    NodeMedia.node_id == node_id,
-                    NodeMedia.media_type == "image",
-                    NodeMedia.source_pdf_material_id == reference_material_id,
-                )
-            )
-        )
-        rows = list(result.scalars().all())
-        for row in rows:
-            await self.db.delete(row)
-        if rows:
-            await self.db.commit()
-        return len(rows)
-
     async def get_next_media_order_index(self, node_id: UUID) -> int:
         """Return MAX(order_index) + 1 for node media. Returns 0 if none exist."""
         result = await self.db.execute(
@@ -243,8 +175,6 @@ class ReferenceMaterialRepository:
         file_url: str | None,
         order_index: int,
         uploaded_by: UUID,
-        source_pdf_material_id: UUID | None = None,
-        source_page_number: int | None = None,
     ) -> NodeMedia:
         media = NodeMedia(
             media_id=uuid4(),
@@ -256,8 +186,6 @@ class ReferenceMaterialRepository:
             file_url=file_url,
             order_index=order_index,
             uploaded_by=uploaded_by,
-            source_pdf_material_id=source_pdf_material_id,
-            source_page_number=source_page_number,
         )
         self.db.add(media)
         await self.db.commit()

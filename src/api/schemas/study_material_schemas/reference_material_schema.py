@@ -1,4 +1,4 @@
-# src/api/schemas/content_schemas/reference_material_schema.py
+# C:\CapStone\study_agent_service\src\api\schemas\study_material_schemas\reference_material_schema.py
 """
 Schemas for reference_materials table operations.
 
@@ -105,17 +105,22 @@ class ReferenceMaterialListOut(BaseModel):
 
 
 class ReferenceImageOut(BaseModel):
-    """A figure downloaded during LlamaParse extraction for a reference PDF."""
+    """A figure extracted from a reference PDF during LlamaParse."""
 
+    model_config = ConfigDict(from_attributes=True)
+
+    llamaparse_image_id: UUID
     filename: str
+    title: str | None = None
     url: str
     source_page: int | None = None
 
 
 class ReferenceImageListOut(BaseModel):
-    """All extracted reference figures for a reference material."""
+    """All extracted reference figures for a reference material on a specific node."""
 
     material_id: UUID
+    node_id: UUID
     items: list[ReferenceImageOut]
     total: int
 
