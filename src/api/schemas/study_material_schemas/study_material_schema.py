@@ -1,4 +1,4 @@
-# src/api/schemas/content_schemas/study_material_schema.py
+# C:\CapStone\study_agent_service\src\api\schemas\study_material_schemas\study_material_schema.py
 """
 Schemas for study_material_versions table operations.
 
@@ -45,6 +45,34 @@ from src.api.utils.study_agent_utils.version_labels import (
     build_version_display_label,
     truncate_feedback,
 )
+
+
+class QualityCheckScoresOut(BaseModel):
+    """Individual dimension scores from the QC evaluator."""
+
+    structure: int | None = None
+    content_accuracy: int | None = None
+    code_quality: int | None = None
+    section_depth: int | None = None
+    readability: int | None = None
+    teaching_alignment: int | None = None
+
+
+class QualityCheckResultOut(BaseModel):
+    """Structured QC evaluation result surfaced to the frontend.
+
+    Included in API responses when QC permanently fails (all 3 attempts
+    exhausted) so the mentor can see what quality issues were detected.
+    """
+
+    overall_status: Literal["pass", "warn", "fail"]
+    is_refusal: bool = False
+    hallucination_risk: Literal["none", "low", "medium", "high"]
+    scores: QualityCheckScoresOut
+    issues: list[str] = Field(default_factory=list)
+    corrective_instructions: str = ""
+    summary: str = ""
+
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
@@ -248,6 +276,10 @@ class StudyMaterialVersionOut(BaseModel):
     created_by: UUID
     created_at: datetime
 
+    # ── Quality-Check fields (populated only on LLM-generated versions) ──
+    qc_failed_permanently: bool = False
+    qc_result: QualityCheckResultOut | None = None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def display_label(self) -> str:
@@ -403,6 +435,10 @@ class TraineeStudyMaterialOut(BaseModel):
 
     Only is_published=TRUE versions are ever returned by the service
     that serves this schema — the filtering happens at query time.
+
+    ``study_material_read_percent`` and ``study_material_completed`` are
+    computed server-side from trainee_node_progress (not stored on the
+    version row).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -414,29 +450,8 @@ class TraineeStudyMaterialOut(BaseModel):
     content: str
     reference_material_id: UUID | None = None
     published_at: datetime | None
-
-
-class StudyMaterialProgressUpdateRequest(BaseModel):
-    """Body for PATCH /nodes/:id/study-material/progress (trainee scroll tracking)."""
-
-    read_percent: int = Field(
-        ...,
-        ge=0,
-        le=100,
-        description="Highest scroll depth reached (0–100). Backend keeps the max value.",
-    )
-
-
-class StudyMaterialProgressOut(BaseModel):
-    """Trainee progress snapshot for a node after a progress update."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    node_id: UUID
-    study_material_viewed: bool
-    study_material_read_percent: int
-    study_material_completed: bool
-    completion_status: str
+    study_material_read_percent: int = Field(default=0, ge=0, le=100)
+    study_material_completed: bool = False
 
 
 class PublishedResourceTopicSummary(BaseModel):
@@ -476,3 +491,7 @@ class StudyMaterialFeedbackResponse(BaseModel):
     status: Literal["ok", "feedback_too_vague", "regeneration_goal_too_vague"]
     status_message: str | None = None
     new_version: StudyMaterialVersionOut | None = None
+
+    # ── Quality-Check fields ──────────────────────────────────────
+    qc_failed_permanently: bool = False
+    qc_result: QualityCheckResultOut | None = None

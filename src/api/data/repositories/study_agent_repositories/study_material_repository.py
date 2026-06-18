@@ -132,6 +132,8 @@ class StudyMaterialRepository:
         token_usage: int | None,
         is_active: bool,
         created_by: UUID,
+        qc_failed_permanently: bool = False,
+        qc_result: dict | None = None,
     ) -> StudyMaterialVersion:
         now = datetime.now(UTC)
         version = StudyMaterialVersion(
@@ -153,6 +155,8 @@ class StudyMaterialRepository:
             published_by=None,
             created_by=created_by,
             created_at=now,
+            qc_failed_permanently=qc_failed_permanently,
+            qc_result=qc_result,
         )
         self.db.add(version)
         await self.db.commit()

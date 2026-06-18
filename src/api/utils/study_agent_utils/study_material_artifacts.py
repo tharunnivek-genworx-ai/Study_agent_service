@@ -40,6 +40,8 @@ def log_study_material_version(
             "llm_model_used": graph_result.get("llm_model_used"),
             "token_usage": graph_result.get("token_usage"),
             "prompt_snapshot": graph_result.get("prompt_snapshot"),
+            "qc_failed_permanently": graph_result.get("qc_failed_permanently", False),
+            "qc_result": graph_result.get("qc_result"),
             "logged_at": datetime.now(UTC).isoformat(),
         }
         out_path.write_text(

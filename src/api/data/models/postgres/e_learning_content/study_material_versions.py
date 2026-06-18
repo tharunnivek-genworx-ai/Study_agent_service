@@ -1,10 +1,10 @@
 import uuid
 
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
 from src.api.data.clients.postgres.database import Base
-from src.api.utils.time import utc_now
+from src.api.utils.common_utils.time import utc_now
 
 
 class StudyMaterialVersion(Base):
@@ -70,3 +70,7 @@ class StudyMaterialVersion(Base):
         ForeignKey("mentors.mentorid", ondelete="RESTRICT"),
         nullable=True,
     )
+    qc_failed_permanently = Column(
+        "qcfailedpermanently", Boolean, nullable=False, default=False
+    )
+    qc_result = Column("qcresult", JSONB, nullable=True)

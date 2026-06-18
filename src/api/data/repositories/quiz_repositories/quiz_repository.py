@@ -31,27 +31,12 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 )
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.data.models.postgres.e_learning_content.study_material_versions import (
-    StudyMaterialVersion,
-)
 from src.api.schemas.quiz_schemas.quiz_schema import QuizQuestionUpdateRequest
 
 
 class QuizRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.db = session
-
-    # ── Study Material Version (precondition check) ───────────────────
-
-    async def get_study_material_version(
-        self, version_id: UUID
-    ) -> StudyMaterialVersion | None:
-        result = await self.db.execute(
-            select(StudyMaterialVersion).where(
-                StudyMaterialVersion.version_id == version_id
-            )
-        )
-        return cast(StudyMaterialVersion | None, result.scalars().first())
 
     # ── Quiz Lookups ──────────────────────────────────────────────────
 
@@ -73,32 +58,6 @@ class QuizRepository:
         )
         return int(result.scalar() or 0)
 
-    async def count_published_quizzes_for_study_material_version(
-        self, study_material_version_id: UUID
-    ) -> int:
-        result = await self.db.execute(
-            select(func.count())
-            .select_from(Quiz)
-            .where(
-                Quiz.study_material_version_id == study_material_version_id,
-                Quiz.is_published.is_(True),
-            )
-        )
-        return int(result.scalar() or 0)
-
-    async def count_unpublished_quizzes_for_study_material_version(
-        self, study_material_version_id: UUID
-    ) -> int:
-        result = await self.db.execute(
-            select(func.count())
-            .select_from(Quiz)
-            .where(
-                Quiz.study_material_version_id == study_material_version_id,
-                Quiz.is_published.is_(False),
-            )
-        )
-        return int(result.scalar() or 0)
-
     # ── Quiz Writes ───────────────────────────────────────────────────
 
     async def create_quiz_draft_with_questions(
@@ -112,6 +71,8 @@ class QuizRepository:
         created_by: UUID,
         questions: list[dict],
         source: str = "ai_generated",
+        qc_failed_permanently: bool = False,
+        qc_result: dict | None = None,
     ) -> UUID:
         """Create a quiz and all questions in a single transaction."""
         now = datetime.now(UTC)
@@ -129,13 +90,21 @@ class QuizRepository:
             created_by=created_by,
             created_at=now,
             updated_at=now,
+            qc_failed_permanently=qc_failed_permanently,
+            qc_result=qc_result,
         )
         self.db.add(quiz)
         await self.db.flush()
         for q in questions:
+            q_id = q.get("question_id")
+            if isinstance(q_id, str):
+                q_id = UUID(q_id)
+            elif not isinstance(q_id, UUID):
+                q_id = uuid4()
+
             self.db.add(
                 QuizQuestion(
-                    question_id=uuid4(),
+                    question_id=q_id,
                     quiz_id=quiz_id,
                     node_id=node_id,
                     question_text=q["question_text"],
@@ -286,17 +255,6 @@ class QuizRepository:
         )
         return list(result.scalars().all())
 
-    async def get_active_question_count(self, quiz_id: UUID) -> int:
-        result = await self.db.execute(
-            select(func.count()).where(
-                and_(
-                    QuizQuestion.quiz_id == quiz_id,
-                    QuizQuestion.is_active.is_(True),
-                )
-            )
-        )
-        return result.scalar() or 0
-
     async def get_next_question_order_index(self, quiz_id: UUID) -> int:
         """Return MAX(order_index) + 1 among active questions. Returns 0 if none."""
         result = await self.db.execute(
@@ -351,38 +309,6 @@ class QuizRepository:
         await self.db.commit()
         await self.db.refresh(question)
         return question
-
-    async def create_questions_batch(
-        self,
-        quiz_id: UUID,
-        node_id: UUID,
-        questions: list[dict],
-        *,
-        source: str = "ai_generated",
-    ) -> None:
-        """Insert multiple questions in a single transaction."""
-        for q in questions:
-            self.db.add(
-                QuizQuestion(
-                    question_id=uuid4(),
-                    quiz_id=quiz_id,
-                    node_id=node_id,
-                    question_text=q["question_text"],
-                    option_a=q["option_a"],
-                    option_b=q["option_b"],
-                    option_c=q.get("option_c"),
-                    option_d=q.get("option_d"),
-                    correct_option=q["correct_option"],
-                    hint_1=None,
-                    hint_2=None,
-                    hint_3=None,
-                    explanation=q.get("explanation"),
-                    order_index=q["order_index"],
-                    is_active=True,
-                    source=source,
-                )
-            )
-        await self.db.commit()
 
     async def update_question(
         self, question: QuizQuestion, request: QuizQuestionUpdateRequest

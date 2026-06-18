@@ -23,7 +23,7 @@ from src.api.core.exceptions.quiz_exceptions.hint_generation_exceptions import (
     HintsNothingToDeleteException,
     QuizHasNoQuestionsException,
 )
-from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
 )
 from src.api.data.repositories.quiz_repositories.hint_repository import HintRepository
@@ -36,12 +36,14 @@ from src.api.schemas.quiz_schemas.hint_schema import (
     HintRegenerateRequest,
 )
 from src.api.schemas.quiz_schemas.quiz_schema import QuizOut, QuizQuestionOut
-from src.api.utils.content_utils.node_access import _get_node_and_assert_space_access
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.study_material_link import (
     validate_quiz_linked_version_is_published,
 )
-from src.api.utils.space_node_utils.node_role_assert import _assert_mentor
+from src.api.utils.space_node_utils.node_role_assert import (
+    _assert_mentor,
+    _get_node_and_assert_space_access,
+)
 
 
 class HintService:
@@ -103,7 +105,7 @@ class HintService:
         if not questions_needing_hints:
             raise HintsAlreadyCompleteException()
 
-        from src.api.control.agents.hint_generation_graph import (
+        from src.api.control.hint_agent.graph.hint_generation_graph import (
             get_hint_generation_graph,  # noqa: PLC0415
         )
 
@@ -148,7 +150,7 @@ class HintService:
         if matched_ids != payload_ids:
             raise HintQuestionsNotFoundException()
 
-        from src.api.control.agents.hint_generation_graph import (
+        from src.api.control.hint_agent.graph.hint_generation_graph import (
             get_hint_generation_graph,  # noqa: PLC0415
         )
 

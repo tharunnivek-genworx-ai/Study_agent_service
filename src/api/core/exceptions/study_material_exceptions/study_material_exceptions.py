@@ -1,3 +1,4 @@
+# C:\CapStone\study_agent_service\src\api\core\exceptions\study_material_exceptions\study_material_exceptions.py
 from fastapi import HTTPException, status
 
 
@@ -95,13 +96,13 @@ class StudyMaterialCannotArchivePublishedException(HTTPException):
         )
 
 
-class StudyMaterialReferenceCacheMissingException(HTTPException):
+class StudyMaterialReferenceParseMissingException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "Reference material was used for this node but parsed content is not "
-                "cached. Run a fresh generate with the reference PDF first."
+                "stored. Run a fresh generate with the reference PDF first."
             ),
         )
 
@@ -114,30 +115,6 @@ class StudyMaterialClearDraftsBlockedByQuizException(HTTPException):
             detail=(
                 f"This topic has {quiz_count} {noun}. "
                 "Delete the quiz first before clearing study material drafts."
-            ),
-        )
-
-
-class StudyMaterialUnpublishBlockedByPublishedQuizException(HTTPException):
-    def __init__(self, quiz_count: int = 1) -> None:
-        noun = "quiz" if quiz_count == 1 else "quizzes"
-        super().__init__(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"This study material version has a published {noun}. "
-                "Unpublish the quiz before unpublishing study material."
-            ),
-        )
-
-
-class StudyMaterialUnpublishBlockedByQuizException(HTTPException):
-    def __init__(self, quiz_count: int = 1) -> None:
-        noun = "quiz" if quiz_count == 1 else "quizzes"
-        super().__init__(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"A {noun} draft exists for this study material version. "
-                "Publish the quiz draft first, or delete it before unpublishing study material."
             ),
         )
 
@@ -177,4 +154,20 @@ class StudyMaterialPdfGenerationFailedException(HTTPException):
         super().__init__(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate study material PDF. Please try again.",
+        )
+
+
+class StudyMaterialPublishBlockedReferenceMaterialRequiredException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot publish a study material version that requires reference material.",
+        )
+
+
+class StudyMaterialModificationBlockedReferenceMaterialRequiredException(HTTPException):
+    def __init__(self, action: str = "modify") -> None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot {action} study material when reference material is required. Please upload reference material first.",
         )

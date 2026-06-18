@@ -1,4 +1,4 @@
-# src/api/core/exceptions/content_exceptions/reference_material_exceptions.py
+# C:\CapStone\study_agent_service\src\api\core\exceptions\study_material_exceptions\reference_material_exceptions.py
 """
 HTTP exceptions for reference_materials and node_media operations.
 
@@ -28,19 +28,6 @@ class ReferenceMaterialNotFoundForDeleteException(HTTPException):
         )
 
 
-class ReferenceMaterialForbiddenException(HTTPException):
-    """
-    Raised when a mentor tries to upload, delete, or update visibility
-    for a reference material in a space they do not own.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to manage materials for this space.",
-        )
-
-
 class ReferenceMaterialNodeScopeMismatchException(HTTPException):
     """
     Raised when scope='node' is set but node_id is missing, or when
@@ -58,47 +45,6 @@ class ReferenceMaterialNodeScopeMismatchException(HTTPException):
         )
 
 
-class UnsupportedFileTypeException(HTTPException):
-    """
-    Raised when an uploaded file's MIME type is not in the allowed set
-    (application/pdf, application/vnd.ms-powerpoint, etc.).
-    The allowed MIME types are defined in the service config, not here.
-    """
-
-    def __init__(self, mime_type: str) -> None:
-        super().__init__(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"File type '{mime_type}' is not supported for reference materials.",
-        )
-
-
-class FileSizeLimitExceededException(HTTPException):
-    """
-    Raised when an uploaded file exceeds the configured maximum size
-    (e.g., 50 MB). Limit is read from service config at the upload handler.
-    """
-
-    def __init__(self, max_mb: int) -> None:
-        super().__init__(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds the maximum allowed size of {max_mb} MB.",
-        )
-
-
-class GCSUploadFailedException(HTTPException):
-    """
-    Raised when the Google Cloud Storage upload call fails after retries.
-    The file is not saved to the DB if GCS upload fails — atomicity is
-    enforced at the service layer (upload first, then insert DB row).
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="File upload failed. Please try again.",
-        )
-
-
 # ── Node Media ────────────────────────────────────────────────────────────────
 
 
@@ -112,19 +58,6 @@ class NodeMediaNotFoundException(HTTPException):
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Media item not found.",
-        )
-
-
-class NodeMediaForbiddenException(HTTPException):
-    """
-    Raised when a mentor tries to attach or remove media for a node
-    in a space they do not own.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to manage media for this node.",
         )
 
 

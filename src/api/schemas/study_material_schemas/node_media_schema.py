@@ -1,4 +1,4 @@
-# src/api/schemas/content_schemas/node_media_schema.py
+# C:\CapStone\study_agent_service\src\api\schemas\study_material_schemas\node_media_schema.py
 """
 Schemas for node_media table operations.
 
@@ -15,9 +15,8 @@ order_index controls display order within the node's media panel.
 Reordering is done via a bulk patch (list of media_ids in desired order),
 same pattern as node sibling reorder in the Identity service.
 
-Phase 2 fields (source_pdf_material_id, source_page_number) are read-only
-from this service's perspective — they are set by the auto-tree pipeline
-in Learning Content Service Phase 2A and never exposed in request bodies here.
+LlamaParse figures extracted from reference PDFs are stored in
+reference_llamaparse_images, not node_media.
 """
 
 from datetime import datetime
@@ -69,11 +68,7 @@ class NodeMediaReorderRequest(BaseModel):
 
 
 class NodeMediaOut(BaseModel):
-    """
-    Full representation of a node_media row.
-    Phase 2 fields are included as Optional so the same schema
-    works across MVP and Phase 2A without a version bump.
-    """
+    """Full representation of a mentor-attached node_media row."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -90,9 +85,6 @@ class NodeMediaOut(BaseModel):
     )
     order_index: int
     uploaded_by: UUID
-    # Phase 2A fields — None in MVP
-    source_pdf_material_id: UUID | None
-    source_page_number: int | None
     created_at: datetime | None = None
 
 
