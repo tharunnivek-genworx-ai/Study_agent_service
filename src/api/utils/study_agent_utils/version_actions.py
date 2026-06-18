@@ -23,6 +23,7 @@ def compute_version_allowed_actions(
     published_version_number: int | None = None,
     published_generation_type: str | None = None,
     space_is_published: bool = True,
+    content: str | None = None,
 ) -> VersionAllowedActionsOut:
     is_viewing_non_active = bool(
         viewing_version_id
@@ -43,6 +44,14 @@ def compute_version_allowed_actions(
         can_publish = False
         publish_disabled_tooltip = (
             "Re-publish this space first to make content visible to trainees."
+        )
+
+    # Disable edit and publish if reference material is required
+    if content and "GENERATION STATUS: Reference material required" in content:
+        can_edit_active_draft = False
+        can_publish = False
+        publish_disabled_tooltip = (
+            "Reference material required to generate study material before publishing."
         )
 
     publish_button_label = "Publish for trainees"

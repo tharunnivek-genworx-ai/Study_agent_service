@@ -1,6 +1,6 @@
 """Minimal stub — trainees table is owned by Identity & Spaces Service."""
 
-from sqlalchemy import Column
+from sqlalchemy import Column, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from src.api.data.clients.postgres.database import Base
@@ -12,3 +12,5 @@ class Trainee(Base):
     __tablename__ = "trainees"
 
     trainee_id = Column("traineeid", UUID(as_uuid=True), primary_key=True)
+    email = Column(String(255), nullable=False)
+    full_name = Column("fullname", String(150), nullable=False)

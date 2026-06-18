@@ -24,17 +24,19 @@ Flow per TDD §3.2.2 and §3.2.3:
   GET ATTEMPT  → trainee guard → merge question + response state (EC-7 resume)
 """
 
+import logging
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
-    AttemptForbiddenException,
     QuizAlreadyPublishedException,
     QuizHintsIncompleteException,
-    QuizNotFoundException,
     QuizNotPublishedForUnpublishException,
     QuizQuestionNotFoundException,
+)
+from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
+    QuizNotFoundException,
 )
 from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
 from src.api.data.repositories.study_agent_repositories.study_material_repository import (
@@ -44,7 +46,6 @@ from src.api.schemas.quiz_schemas.quiz_schema import (
     CorrectOption,
     QuizDeleteOut,
     QuizGenerateRequest,
-    QuizListOut,
     QuizMentorUiStateOut,
     QuizOut,
     QuizPublishRequest,
@@ -53,10 +54,11 @@ from src.api.schemas.quiz_schemas.quiz_schema import (
     QuizQuestionOut,
     QuizQuestionReorderRequest,
     QuizQuestionUpdateRequest,
-    QuizSummaryOut,
     QuizUnpublishRequest,
 )
-from src.api.utils.content_utils.node_access import _get_node_and_assert_space_access
+from src.api.utils.mentor_progress_utils.space_recompute import (
+    recompute_all_trainees_space_progress,
+)
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.mentor_quiz_state import (
     mentor_quiz_draft_exists,
@@ -71,13 +73,11 @@ from src.api.utils.quiz_utils.study_material_link import (
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
     _assert_space_access,
+    _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
 )
 
-
-def _assert_trainee_owns_attempt(attempt_trainee_id: UUID, user_id: UUID) -> None:
-    if attempt_trainee_id != user_id:
-        raise AttemptForbiddenException()
+logger = logging.getLogger(__name__)
 
 
 def _validate_correct_option_exists(
@@ -142,6 +142,7 @@ class QuizService:
             published_version=published,
         )
 
+        failed_qc_feedback = None
         if request.mode == "regenerate" and request.quiz_id is not None:
             source_quiz = await repo.get_quiz_by_id(request.quiz_id)
             if source_quiz is None or source_quiz.node_id != node_id:
@@ -151,8 +152,14 @@ class QuizService:
                 version_id=source_quiz.study_material_version_id,
                 published_version=published,
             )
+            if source_quiz.qc_failed_permanently and source_quiz.qc_result:
+                from src.api.control.quiz_agent.nodes.quiz_nodes import (
+                    format_qc_feedback,  # noqa: PLC0415
+                )
 
-        from src.api.control.agents.quiz_generation_graph import (
+                failed_qc_feedback = format_qc_feedback(source_quiz.qc_result)
+
+        from src.api.control.quiz_agent.graph.quiz_generation_graph import (
             get_quiz_generation_graph,  # noqa: PLC0415
         )
         from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
@@ -171,20 +178,17 @@ class QuizService:
             "space_id": None,
             "study_material_version_id": published.version_id,  # type: ignore[union-attr]
             "study_material_content": None,
+            "qc_passed": False,
+            "qc_feedback": "",
+            "qc_attempt": 0,
+            "qc_failed_permanently": False,
+            "failed_qc_feedback": failed_qc_feedback,
         }
 
-        final_state = None
-        last_error: str | None = None
-        for attempt in range(2):
-            final_state = await graph.ainvoke(
-                initial_state,
-                config={"configurable": {"session": self.session}},
-            )
-            if final_state.get("created_quiz_id"):
-                break
-            last_error = final_state.get("error")
-            if attempt == 0 and last_error:
-                continue
+        final_state = await graph.ainvoke(
+            initial_state,
+            config={"configurable": {"session": self.session}},
+        )
 
         if final_state is None:
             raise QuizGenerationFailedException()
@@ -195,7 +199,7 @@ class QuizService:
         created_quiz_id = final_state.get("created_quiz_id")
         if created_quiz_id is None:
             raise QuizGenerationFailedException(
-                last_error or "Quiz generation failed. Please try again."
+                "Quiz generation failed. Please try again."
             )
 
         quiz = await repo.get_quiz_by_id(created_quiz_id)
@@ -208,25 +212,6 @@ class QuizService:
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
         quiz_out.hints_status = compute_hints_status(active_questions)
         return quiz_out
-
-    # ── list / get ─────────────────────────────────────────────────────
-
-    async def list_quizzes(
-        self, node_id: UUID, user_id: UUID, role: str
-    ) -> QuizListOut:
-        """List all quiz generations for a node, ordered by created_at DESC."""
-        node = await _get_node_and_assert_space_access(
-            self.session, node_id, user_id, owner_only=False
-        )
-        await _assert_space_access(self.session, node.space_id, user_id, role)
-
-        repo = QuizRepository(self.session)
-        quizzes = await repo.get_quizzes_by_node(node_id)
-        return QuizListOut(
-            node_id=node_id,
-            quizzes=[QuizSummaryOut.model_validate(q) for q in quizzes],
-            total=len(quizzes),
-        )
 
     async def get_mentor_quiz_ui_state(
         self,
@@ -414,6 +399,24 @@ class QuizService:
         quiz_out = QuizOut.model_validate(quiz)
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
         quiz_out.hints_status = compute_hints_status(active_questions)
+
+        # EC-20 / EC-23: quiz publish changes completion requirements for every
+        # trainee who had previously read the study material (their progress now
+        # requires a passing quiz score). Fan out a space-level recompute so the
+        # cached trainee_space_progress rows reflect the new rules immediately.
+        space_id = quiz.space_id
+        try:
+            await recompute_all_trainees_space_progress(self.session, space_id=space_id)
+        except Exception:
+            logger.warning(
+                "publish_quiz: space-progress recompute failed for "
+                "space_id=%s node_id=%s — progress data may be stale until "
+                "next mentor dashboard refresh",
+                space_id,
+                node_id,
+                exc_info=True,
+            )
+
         return quiz_out
 
     async def unpublish_quiz(
@@ -443,6 +446,23 @@ class QuizService:
         quiz_out = QuizOut.model_validate(quiz)
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
         quiz_out.hints_status = compute_hints_status(active_questions)
+
+        # EC-20 / EC-23: quiz unpublish reverts completion to reading-only for
+        # trainees who already read the material. Recompute so the cached rollup
+        # correctly treats those trainees as 100% complete (no quiz required).
+        space_id = quiz.space_id
+        try:
+            await recompute_all_trainees_space_progress(self.session, space_id=space_id)
+        except Exception:
+            logger.warning(
+                "unpublish_quiz: space-progress recompute failed for "
+                "space_id=%s node_id=%s — progress data may be stale until "
+                "next mentor dashboard refresh",
+                space_id,
+                node_id,
+                exc_info=True,
+            )
+
         return quiz_out
 
     # ── question management ────────────────────────────────────────────

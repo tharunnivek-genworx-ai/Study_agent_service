@@ -18,17 +18,24 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.agents.study_material.runner import (
+from src.api.control.study_agent.graph.runner import (
     run_study_material_generation,
     run_study_material_improve,
     run_study_material_regeneration,
 )
+from src.api.control.study_agent.nodes.quality_check_node import format_qc_feedback
+from src.api.control.study_agent.utils.instruction_snapshot import (
+    embed_effective_instruction_snapshot,
+    extract_effective_instruction_snapshot,
+)
 from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     StudyMaterialCannotArchivePublishedException,
     StudyMaterialClearDraftsBlockedByQuizException,
+    StudyMaterialModificationBlockedReferenceMaterialRequiredException,
     StudyMaterialNoActiveVersionException,
     StudyMaterialNoDraftsException,
     StudyMaterialNotFoundException,
+    StudyMaterialPublishBlockedReferenceMaterialRequiredException,
     StudyMaterialPublishBlockedSpaceUnpublishedException,
     StudyMaterialVersionAlreadyArchivedException,
     StudyMaterialVersionAlreadyPublishedException,
@@ -49,6 +56,8 @@ from src.api.data.repositories.study_agent_repositories.study_material_repositor
 )
 from src.api.schemas.study_material_schemas.study_material_schema import (
     PublishedResourceTopicSummary,
+    QualityCheckResultOut,
+    QualityCheckScoresOut,
     RepublishChecklistNodeOut,
     SpacePublishedResourcesResponse,
     SpaceRepublishChecklistOut,
@@ -68,7 +77,6 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialVersionOut,
     StudyMaterialVersionSummary,
 )
-from src.api.utils.content_utils.node_access import _get_node_and_assert_space_access
 from src.api.utils.space_node_utils.build_node import (
     format_effective_instruction,
     resolve_effective_instruction_parts,
@@ -76,14 +84,8 @@ from src.api.utils.space_node_utils.build_node import (
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
     _assert_space_access,
+    _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
-)
-from src.api.utils.study_agent_utils.instruction_snapshot import (
-    embed_effective_instruction_snapshot,
-    extract_effective_instruction_snapshot,
-)
-from src.api.utils.study_agent_utils.node_media_persistence import (
-    persist_reference_images_to_node_media,
 )
 from src.api.utils.study_agent_utils.publish_cascade import (
     get_quizzes_linked_to_study_material_version,
@@ -96,6 +98,36 @@ from src.api.utils.study_agent_utils.version_actions import (
     compute_version_allowed_actions,
 )
 from src.api.utils.study_agent_utils.version_labels import build_version_display_label
+
+
+def _build_qc_result_out(
+    graph_result: dict[str, Any],
+) -> QualityCheckResultOut | None:
+    """Convert the raw QC dict from graph state into the typed response schema."""
+    raw = graph_result.get("qc_result")
+    if raw is None or not isinstance(raw, dict):
+        return None
+    try:
+        scores_raw = raw.get("scores", {})
+        scores = QualityCheckScoresOut(
+            structure=scores_raw.get("structure"),
+            content_accuracy=scores_raw.get("content_accuracy"),
+            code_quality=scores_raw.get("code_quality"),
+            section_depth=scores_raw.get("section_depth"),
+            readability=scores_raw.get("readability"),
+            teaching_alignment=scores_raw.get("teaching_alignment"),
+        )
+        return QualityCheckResultOut(
+            overall_status=raw.get("overall_status", "fail"),
+            is_refusal=raw.get("is_refusal", False),
+            hallucination_risk=raw.get("hallucination_risk", "none"),
+            scores=scores,
+            issues=raw.get("issues", []),
+            corrective_instructions=raw.get("corrective_instructions", ""),
+            summary=raw.get("summary", ""),
+        )
+    except Exception:
+        return None
 
 
 class StudyMaterialService:
@@ -121,6 +153,12 @@ class StudyMaterialService:
         if active is not None:
             await repo.deactivate_version(active)
 
+        qc_failed_permanently = bool(graph_result.get("qc_failed_permanently"))
+        qc_result_out = (
+            _build_qc_result_out(graph_result) if qc_failed_permanently else None
+        )
+        qc_result_dict = qc_result_out.model_dump() if qc_result_out else None
+
         version = await repo.create_version(
             node_id=node_id,
             space_id=space_id,
@@ -138,6 +176,8 @@ class StudyMaterialService:
             token_usage=graph_result.get("token_usage"),
             is_active=True,
             created_by=user_id,
+            qc_failed_permanently=qc_failed_permanently,
+            qc_result=qc_result_dict,
         )
         topic_title = graph_result.get("node_title") or str(node_id)
         log_study_material_version(
@@ -151,29 +191,6 @@ class StudyMaterialService:
             mentor_feedback_used=mentor_feedback_used,
         )
         return StudyMaterialVersionOut.model_validate(version)
-
-    async def _persist_reference_images_if_any(
-        self,
-        *,
-        node_id: UUID,
-        space_id: UUID,
-        reference_material_id: UUID | None,
-        graph_result: dict[str, Any],
-        user_id: UUID,
-    ) -> None:
-        if reference_material_id is None:
-            return
-        parsed = graph_result.get("parsed_reference_data") or {}
-        if not parsed.get("reference_images"):
-            return
-        await persist_reference_images_to_node_media(
-            self.session,
-            node_id=node_id,
-            space_id=space_id,
-            reference_material_id=reference_material_id,
-            structured_data=parsed,
-            uploaded_by=user_id,
-        )
 
     # ── generate ───────────────────────────────────────────────────────
 
@@ -191,23 +208,17 @@ class StudyMaterialService:
         )
         # Capture before any commit — ORM attributes expire after commit in async sessions.
         space_id = node.space_id
+        node_title = node.title
 
         graph_result = await run_study_material_generation(
             session=self.session,
             node_id=node_id,
             reference_material_id=request.reference_material_id,
-        )
-        graph_result["node_title"] = node.title
-
-        await self._persist_reference_images_if_any(
-            node_id=node_id,
-            space_id=space_id,
-            reference_material_id=request.reference_material_id,
-            graph_result=graph_result,
             user_id=user_id,
         )
+        graph_result["node_title"] = node_title
 
-        return await self._persist_new_version(
+        version_out = await self._persist_new_version(
             node_id=node_id,
             space_id=space_id,
             graph_result=graph_result,
@@ -216,6 +227,7 @@ class StudyMaterialService:
             reference_material_id=request.reference_material_id,
             based_on_version_id=None,
         )
+        return version_out
 
     # ── regenerate ─────────────────────────────────────────────────────
 
@@ -233,15 +245,28 @@ class StudyMaterialService:
         )
 
         space_id = node.space_id
+        node_title = node.title
 
         repo = StudyMaterialRepository(self.session)
         active = await repo.get_active_version(node_id)
         if active is None:
             raise StudyMaterialNoActiveVersionException()
 
+        if (
+            active.content
+            and "GENERATION STATUS: Reference material required" in active.content
+        ):
+            raise StudyMaterialModificationBlockedReferenceMaterialRequiredException(
+                action="regenerate"
+            )
+
         reference_material_id = active.reference_material_id
         based_on_version_id = active.version_id
         current_draft_content = active.content
+
+        failed_qc_feedback = None
+        if active.qc_failed_permanently and active.qc_result:
+            failed_qc_feedback = format_qc_feedback(active.qc_result)
 
         graph_result = await run_study_material_regeneration(
             session=self.session,
@@ -249,8 +274,10 @@ class StudyMaterialService:
             current_draft_content=current_draft_content,
             mentor_regeneration_goal=request.mentor_regeneration_goal,
             reference_material_id=reference_material_id,
+            user_id=user_id,
+            failed_qc_feedback=failed_qc_feedback,
         )
-        graph_result["node_title"] = node.title
+        graph_result["node_title"] = node_title
 
         if graph_result.get("regenerate_status") == "vague":
             return StudyMaterialFeedbackResponse(
@@ -276,6 +303,8 @@ class StudyMaterialService:
             new_version_id=new_version.version_id,
             status="ok",
             new_version=new_version,
+            qc_failed_permanently=new_version.qc_failed_permanently,
+            qc_result=new_version.qc_result,
         )
 
     # ── improve ────────────────────────────────────────────────────────
@@ -294,15 +323,28 @@ class StudyMaterialService:
         )
 
         space_id = node.space_id
+        node_title = node.title
 
         repo = StudyMaterialRepository(self.session)
         active = await repo.get_active_version(node_id)
         if active is None:
             raise StudyMaterialNoActiveVersionException()
 
+        if (
+            active.content
+            and "GENERATION STATUS: Reference material required" in active.content
+        ):
+            raise StudyMaterialModificationBlockedReferenceMaterialRequiredException(
+                action="improve"
+            )
+
         reference_material_id = active.reference_material_id
         based_on_version_id = active.version_id
         current_draft_content = active.content
+
+        failed_qc_feedback = None
+        if active.qc_failed_permanently and active.qc_result:
+            failed_qc_feedback = format_qc_feedback(active.qc_result)
 
         graph_result = await run_study_material_improve(
             session=self.session,
@@ -310,8 +352,10 @@ class StudyMaterialService:
             current_draft_content=current_draft_content,
             mentor_feedback=request.mentor_feedback,
             reference_material_id=reference_material_id,
+            user_id=user_id,
+            failed_qc_feedback=failed_qc_feedback,
         )
-        graph_result["node_title"] = node.title
+        graph_result["node_title"] = node_title
 
         if graph_result.get("improve_status") == "vague":
             return StudyMaterialFeedbackResponse(
@@ -337,6 +381,8 @@ class StudyMaterialService:
             new_version_id=new_version.version_id,
             status="ok",
             new_version=new_version,
+            qc_failed_permanently=new_version.qc_failed_permanently,
+            qc_result=new_version.qc_result,
         )
 
     # ── manual edit ────────────────────────────────────────────────────
@@ -354,9 +400,18 @@ class StudyMaterialService:
             self.session, node_id, user_id, owner_only=True
         )
         space_id = node.space_id
+        node_title = node.title
 
         repo = StudyMaterialRepository(self.session)
         active = await repo.get_active_version(node_id)
+        if (
+            active is not None
+            and active.content
+            and "GENERATION STATUS: Reference material required" in active.content
+        ):
+            raise StudyMaterialModificationBlockedReferenceMaterialRequiredException(
+                action="manually edit"
+            )
         based_on = active.version_id if active is not None else None
         reference_material_id = active.reference_material_id if active else None
 
@@ -380,7 +435,7 @@ class StudyMaterialService:
             created_by=user_id,
         )
         log_study_material_version(
-            topic_title=node.title,
+            topic_title=node_title,
             version_number=next_version,
             generation_type="manual_edit",
             version_id=str(version.version_id),
@@ -414,6 +469,11 @@ class StudyMaterialService:
             raise StudyMaterialVersionMismatchException()
         if version.is_published:
             raise StudyMaterialVersionAlreadyPublishedException()
+        if (
+            version.content
+            and "GENERATION STATUS: Reference material required" in version.content
+        ):
+            raise StudyMaterialPublishBlockedReferenceMaterialRequiredException()
         return node, version, repo
 
     async def preview_publish_study_material(
@@ -777,6 +837,7 @@ class StudyMaterialService:
                         published.generation_type if published else None
                     ),
                     space_is_published=space_is_published,
+                    content=target.content,
                 )
 
         can_access_quiz = bool(

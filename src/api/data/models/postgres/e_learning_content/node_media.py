@@ -35,10 +35,3 @@ class NodeMedia(Base):
         ForeignKey("mentors.mentorid", ondelete="RESTRICT"),
         nullable=False,
     )
-    source_pdf_material_id = Column(
-        "sourcepdfmaterialid",
-        UUID(as_uuid=True),
-        ForeignKey("referencematerials.materialid", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    source_page_number = Column("sourcepagenumber", Integer, nullable=True)

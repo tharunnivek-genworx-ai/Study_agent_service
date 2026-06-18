@@ -1,3 +1,4 @@
+# C:\CapStone\study_agent_service\src\api\schemas\identity_schemas\auth_schema.py
 from typing import Literal
 from uuid import UUID
 

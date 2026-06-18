@@ -70,11 +70,21 @@ def llamaparse_log_path(
     return topic_dir(topic_title, "LlamaParse") / filename
 
 
-def nodemedia_images_dir(topic_title: str, *, stamp: str | None = None) -> Path:
-    """e.g. .../Topic_nodemedia/topic_slug_images_20260612_170530/"""
+def reference_llamaparse_images_dir(
+    reference_material_id: UUID,
+    node_id: UUID,
+    *,
+    stamp: str | None = None,
+) -> Path:
+    """e.g. .../reference_llamaparse/{material_id}/{node_id}/images_20260618_120000/"""
     ts = stamp or ist_timestamp()
-    slug = slugify_topic(topic_title)
-    return topic_dir(topic_title, "nodemedia") / f"{slug}_images_{ts}"
+    return (
+        ARTIFACTS_ROOT
+        / "reference_llamaparse"
+        / str(reference_material_id)
+        / str(node_id)
+        / f"images_{ts}"
+    )
 
 
 def ensure_dir(path: Path) -> Path:

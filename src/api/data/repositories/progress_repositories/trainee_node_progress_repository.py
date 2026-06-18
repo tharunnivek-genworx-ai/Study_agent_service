@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.data.models.postgres.progress_models.trainee_node_progress import (
     TraineeNodeProgress,
 )
-from src.api.utils.time import utc_now
+from src.api.utils.common_utils.time import utc_now
 
 
 def _derive_completion_status(
@@ -43,6 +43,21 @@ class TraineeNodeProgressRepository:
             )
         )
         return cast(TraineeNodeProgress | None, result.scalars().first())
+
+    async def get_batch_by_trainee_and_nodes(
+        self, trainee_id: UUID, node_ids: list[UUID]
+    ) -> dict[UUID, TraineeNodeProgress]:
+        """Batch-fetch progress rows for panel rollups and batch GET endpoint."""
+        if not node_ids:
+            return {}
+        result = await self.db.execute(
+            select(TraineeNodeProgress).where(
+                TraineeNodeProgress.trainee_id == trainee_id,
+                TraineeNodeProgress.node_id.in_(node_ids),
+            )
+        )
+        rows = list(result.scalars().all())
+        return {row.node_id: row for row in rows}
 
     async def get_or_create(
         self,
@@ -83,23 +98,25 @@ class TraineeNodeProgressRepository:
         await self.db.flush()
         return row
 
-    async def update_read_progress(
+    async def record_quiz_attempt_submission(
         self,
         trainee_id: UUID,
         node_id: UUID,
         space_id: UUID,
-        read_percent: int,
+        score: float,
     ) -> TraineeNodeProgress:
+        """Persist quiz contribution to node progress after attempt submission."""
         row = await self.get_or_create(trainee_id, node_id, space_id)
         now = utc_now()
-        clamped = max(0, min(100, read_percent))
-        row.study_material_read_percent = max(row.study_material_read_percent, clamped)
-        if row.study_material_read_percent >= 100:
-            row.study_material_completed = True
-        if not row.study_material_viewed:
-            row.study_material_viewed = True
-            row.first_viewed_at = now
-        row.last_viewed_at = now
+
+        best_score = (
+            score if row.quiz_best_score is None else max(row.quiz_best_score, score)
+        )
+        row.quiz_best_score = best_score
+        row.quiz_attempt_count = max(row.quiz_attempt_count + 1, 1)
+        if best_score >= 0.70:
+            row.quiz_passed = True
+
         row.completion_status = _derive_completion_status(
             study_material_completed=row.study_material_completed,
             quiz_passed=row.quiz_passed,
