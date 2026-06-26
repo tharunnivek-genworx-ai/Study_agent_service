@@ -85,8 +85,9 @@ async def recompute_all_trainees_space_progress(
     recomputed = 0
     failed = 0
 
-    for trainee, _space_progress in enrolled:
-        trainee_id = trainee.trainee_id
+    trainee_ids = [trainee.trainee_id for trainee, _space_progress in enrolled]
+
+    for trainee_id in trainee_ids:
         try:
             await space_svc.recompute_after_node_update(
                 trainee_id=trainee_id,

@@ -24,6 +24,9 @@ from src.api.utils.space_node_utils.build_node import (
     format_effective_instruction,
     resolve_effective_instruction_parts,
 )
+from src.api.utils.study_agent_utils.artifacts.study_material_artifacts import (
+    new_artifact_run_id,
+)
 
 
 async def resolve_instruction_node(
@@ -54,6 +57,7 @@ async def resolve_instruction_node(
         "has_reference_material": False,
         "reference_file_path": None,
         "reference_file_is_temp": False,
+        "artifact_run_id": new_artifact_run_id(),
     }
 
     reference_material_id = state.get("reference_material_id")

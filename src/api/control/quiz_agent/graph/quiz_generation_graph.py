@@ -34,7 +34,9 @@ def _route_after_load_context(
 
 def _route_after_invoke(
     state: QuizGraphState,
-) -> Literal["parse_quiz_output", "__end__"]:
+) -> Literal["parse_quiz_output", "persist_quiz_draft", "__end__"]:
+    if state.get("terminal_llm_failure"):
+        return "persist_quiz_draft"
     if state.get("error"):
         return "__end__"
     return "parse_quiz_output"

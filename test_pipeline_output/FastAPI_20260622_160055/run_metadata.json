@@ -1,0 +1,36 @@
+{
+  "topic_title": "FastAPI",
+  "total_chunks": 3,
+  "pages_per_chunk": 10,
+  "fast_model": "llama-3.1-8b-instant",
+  "gen_model": "llama-3.3-70b-versatile",
+  "token_metrics": {
+    "raw_json_tokens": 13960,
+    "aggregated_summaries_tokens": 3476,
+    "final_input_tokens": 5377,
+    "chunk_summaries_tokens": [
+      {
+        "input_tokens": 4382,
+        "output_tokens": 1114,
+        "total_tokens": 5496
+      },
+      {
+        "input_tokens": 4523,
+        "output_tokens": 940,
+        "total_tokens": 5463
+      },
+      {
+        "input_tokens": 3661,
+        "output_tokens": 936,
+        "total_tokens": 4597
+      }
+    ],
+    "final_generation_tokens": {
+      "input_tokens": 5377,
+      "output_tokens": 3001,
+      "total_tokens": 8378
+    }
+  },
+  "timestamp": "20260622_160055",
+  "chunk_count": 3
+}

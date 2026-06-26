@@ -19,13 +19,12 @@ Quiz lifecycle (TDD §3.2.2 and §3.2.3):
      IMPORTANT: The correct answer is NEVER revealed automatically during a live attempt.
      explanation is for post-submit review only — it is NOT shown during the live attempt.
   7. Trainee submits attempt → score calculated; quiz_attempts.status='submitted'.
-  8. Engagement & Chat Service receives completion signal and updates
-     trainee_node_progress.quiz_best_score and quiz_passed.
+  8. study_agent_service updates trainee_node_progress.quiz_best_score and
+     quiz_passed on submit; EC-20 reset runs on quiz publish.
 
-Multiple quiz rows per node: old quizzes and their attempts are NEVER deleted.
-When regenerated, a new quizzes row is created. Only the published quiz is
-shown to trainees (filtered at query time by is_published=TRUE on the latest
-quiz row for the node — service enforces this).
+Multiple quiz rows per node: superseded/archived quizzes and their attempts are
+retained. Regenerating uses one active draft per node (in-place when a draft
+already exists). Only the active published quiz is shown to trainees.
 
 EC-10: Deleted questions (is_active=False) still appear in historical attempt
 responses, labelled '(Removed)' by the frontend using is_active=False flag.
@@ -36,6 +35,11 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from src.api.schemas.common.generation_diagnostics_schema import (
+    GenerationDiagnosticsOut,
+)
+from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
@@ -89,26 +93,10 @@ class QuizGenerateRequest(BaseModel):
     """
     Body for POST /nodes/:id/quizzes/generate.
 
-    study_material_version_id is required — the Quiz Agent always generates
-    from a specific published version, not from whatever happens to be active.
-    This anchors the quiz to a known content snapshot, preserving audit lineage
-    (EC-4: if content is regenerated, the quiz still references the version
-    it was generated from).
-
-    difficulty and title are optional; the LLM derives sensible defaults
-    from the node title if not provided.
-
-    Hints are NOT generated at this step — call the separate hint generation
-    endpoint after the quiz draft is finalized.
+    Generation always uses the node's currently published study material as
+    source context (``study_material_version_id`` metadata is set server-side).
     """
 
-    study_material_version_id: UUID | None = Field(
-        default=None,
-        description=(
-            "Optional. When omitted the service uses the node's currently published "
-            "study material version. When provided it must match that version."
-        ),
-    )
     difficulty: QuizDifficulty = Field(
         default="mixed",
         description="Desired difficulty level. 'mixed' lets the LLM vary question difficulty.",
@@ -160,7 +148,22 @@ class QuizPublishRequest(BaseModel):
 class QuizUnpublishRequest(BaseModel):
     """Body for PATCH /nodes/:id/quizzes/:quiz_id/unpublish."""
 
-    pass
+    retention_mode: RetentionMode = Field(
+        ...,
+        description=(
+            "remove_completely — hidden from students, not in Previous versions. "
+            "keep_for_review — archived, accessible in Previous versions."
+        ),
+    )
+
+
+class QuizUnpublishPreviewOut(BaseModel):
+    """Pre-unpublish check returned by GET unpublish-preview before committing."""
+
+    requires_confirmation: bool
+    quiz_title: str
+    trainees_attempt_count: int = 0
+    version_label: str | None = None
 
 
 class QuizQuestionCreateRequest(BaseModel):
@@ -284,7 +287,7 @@ class QuizOut(BaseModel):
     quiz_id: UUID
     node_id: UUID
     space_id: UUID
-    study_material_version_id: UUID
+    study_material_version_id: UUID | None
     title: str
     total_questions: int
     difficulty: QuizDifficulty
@@ -298,7 +301,8 @@ class QuizOut(BaseModel):
 
     # ── Quality-Check fields ──────────────────────────────────────
     qc_failed_permanently: bool = False
-    qc_result: QuizQualityCheckResultOut | None = None
+    qc_result: GenerationDiagnosticsOut | None = None
+    next_llm_retry_at: datetime | None = None
 
 
 class QuizSummaryOut(BaseModel):
@@ -314,7 +318,7 @@ class QuizSummaryOut(BaseModel):
     quiz_id: UUID
     node_id: UUID
     space_id: UUID
-    study_material_version_id: UUID
+    study_material_version_id: UUID | None
     title: str
     total_questions: int
     difficulty: QuizDifficulty
@@ -334,12 +338,29 @@ class QuizListOut(BaseModel):
     total: int
 
 
+class QuizHistoryItemOut(BaseModel):
+    """One row in the mentor quiz history panel."""
+
+    quiz_id: UUID
+    title: str
+    status_badge: str
+    lifecycle_status: str
+    study_material_version_id: UUID | None
+    version_label: str
+    total_questions: int
+    difficulty: QuizDifficulty
+    published_at: datetime | None = None
+    can_view: bool = True
+    can_delete: bool = False
+
+
 class QuizMentorUiStateOut(BaseModel):
     """Mentor-facing quiz UI state resolved by the backend."""
 
     node_id: UUID
     resolved_quiz_id: UUID | None
     quiz_draft_exists: bool
+    quiz_history: list[QuizHistoryItemOut] = Field(default_factory=list)
     published_study_material_version_id: UUID | None = None
     can_generate_quiz: bool = False
     generate_disabled_tooltip: str | None = None
@@ -352,16 +373,13 @@ class QuizMentorUiStateOut(BaseModel):
     publish_disabled_tooltip: str | None = None
     can_edit_questions: bool = False
     can_regenerate_quiz: bool = False
-    edit_question_disabled_tooltip: str | None = None
-    regenerate_quiz_disabled_tooltip: str | None = None
     quiz: QuizOut | None = None
-    is_linked_version_published: bool = False
-    is_stale_version: bool = False
-    linked_version_label: str | None = None
-    current_published_version_label: str | None = None
-    stale_helper_text: str | None = None
-    generate_new_quiz_cta_label: str | None = None
-    quiz_title_with_version: str | None = None
+    show_update_quiz_nudge: bool = False
+    quiz_sm_version_label: str | None = None
+    publish_quiz_button_label: str = "Make quiz live for students"
+    unpublish_quiz_button_label: str = "Remove quiz from students"
+    has_other_live_quiz: bool = False
+    other_live_quiz_title: str | None = None
 
 
 class QuizQuestionDeletedOut(BaseModel):
@@ -506,8 +524,8 @@ class QuizAttemptOut(BaseModel):
     """
     Returned after attempt submission (POST /attempts/:id/submit).
     score is a float 0.0–1.0 (e.g., 0.75 = 75%).
-    The Engagement & Chat Service is notified separately to update
-    trainee_node_progress — this response carries the raw attempt result only.
+    Progress fields on trainee_node_progress are updated by study_agent_service
+    on submit — this response carries the raw attempt result only.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -595,3 +613,54 @@ class PublishedQuizDiscoveryOut(BaseModel):
     submitted_attempt_count: int = 0
     can_start_new_attempt: bool = True
     can_view_previous_attempts: bool = False
+    is_review_only: bool = False
+    review_notice: str | None = None
+
+
+class TraineeArchivedQuizItemOut(BaseModel):
+    """One archived quiz linked to a superseded SM version."""
+
+    quiz_id: UUID
+    study_material_version_id: UUID | None
+    title: str
+    difficulty: QuizDifficulty
+    total_questions: int
+    published_at: datetime | None
+    has_trainee_attempt: bool = False
+    best_score_percent: int | None = None
+
+
+class TraineeArchivedQuizGroupOut(BaseModel):
+    """Archived quizzes grouped under one superseded SM version."""
+
+    study_material_version_id: UUID | None
+    version_number: int
+    version_label: str
+    quizzes: list[TraineeArchivedQuizItemOut] = Field(default_factory=list)
+
+
+class TraineeArchivedQuizListOut(BaseModel):
+    """Archived quizzes for GET .../quizzes/archive."""
+
+    node_id: UUID
+    groups: list[TraineeArchivedQuizGroupOut] = Field(default_factory=list)
+
+
+class ArchivedQuizReviewOut(BaseModel):
+    """Read-only review of an archived quiz with answers and explanations."""
+
+    quiz_id: UUID
+    node_id: UUID
+    title: str
+    difficulty: QuizDifficulty
+    total_questions: int
+    study_material_version_id: UUID | None
+    version_label: str
+    is_archived_reference: bool = True
+    attempt_id: UUID | None = None
+    attempt_status: QuizAttemptStatus | None = None
+    is_partial_attempt: bool = False
+    score_percent: int | None = None
+    total_correct: int | None = None
+    total_skipped: int | None = None
+    questions: list[TraineeQuizQuestionOut] = Field(default_factory=list)

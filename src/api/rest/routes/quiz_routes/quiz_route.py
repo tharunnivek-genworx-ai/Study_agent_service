@@ -44,6 +44,7 @@ from src.api.schemas.quiz_schemas.quiz_schema import (
     QuizQuestionOut,
     QuizQuestionReorderRequest,
     QuizQuestionUpdateRequest,
+    QuizUnpublishPreviewOut,
     QuizUnpublishRequest,
 )
 
@@ -128,6 +129,23 @@ async def publish_quiz(
     )
 
 
+@router.get(
+    "/nodes/{node_id}/quizzes/{quiz_id}/unpublish-preview",
+    response_model=QuizUnpublishPreviewOut,
+)
+async def preview_unpublish_quiz(
+    node_id: UUID,
+    quiz_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizUnpublishPreviewOut:
+    """Pre-unpublish check: returns attempt counts and confirmation flag without writing."""
+    service = QuizService(db)
+    return await service.preview_unpublish_quiz(
+        node_id, quiz_id, current_user.sub, current_user.role
+    )
+
+
 @router.patch(
     "/nodes/{node_id}/quizzes/{quiz_id}/unpublish",
     response_model=QuizOut,
@@ -139,7 +157,7 @@ async def unpublish_quiz(
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> QuizOut:
-    """Mentor unpublishes a quiz, hiding it from trainees."""
+    """Mentor unpublishes a quiz with a retention choice (remove or keep for review)."""
     service = QuizService(db)
     return await service.unpublish_quiz(
         node_id, quiz_id, payload, current_user.sub, current_user.role
@@ -159,10 +177,10 @@ async def delete_quiz(
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> QuizDeleteOut:
-    """Permanently delete an unpublished quiz draft and all its questions.
+    """Soft-discard an unpublished quiz draft from the mentor workspace.
 
-    Only works on unpublished quizzes. Trainee attempt history is preserved
-    for published quizzes (which cannot be deleted via this endpoint).
+    Live quizzes and quizzes kept in Previous versions for students cannot be
+    discarded via this endpoint.
     """
     service = QuizService(db)
     return await service.delete_quiz(

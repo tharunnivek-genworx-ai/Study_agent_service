@@ -1,0 +1,115 @@
+{
+  "topic_title": "FastAPI Tutorial",
+  "total_chunks": 3,
+  "pages_per_chunk": 10,
+  "fast_model": "llama-3.1-8b-instant",
+  "gen_model": "llama-3.3-70b-versatile",
+  "reduce_metrics": [
+    {
+      "level": 1,
+      "batch": 1,
+      "num_batches": 1,
+      "items_in_batch": 3,
+      "approx_input_tokens": 3777,
+      "approx_output_tokens": 1566,
+      "token_usage": {
+        "input_tokens": 3812,
+        "output_tokens": 1567,
+        "total_tokens": 5379
+      },
+      "labels": [
+        "pages 1\u201310",
+        "pages 11\u201320",
+        "pages 21\u201330"
+      ]
+    }
+  ],
+  "token_metrics": {
+    "raw_json_tokens": 13960,
+    "master_outline_tokens": 1566,
+    "aggregated_summaries_tokens": 1566,
+    "final_input_tokens": 2540,
+    "total_subchunk_summarization_tokens": 19312,
+    "total_merge_tokens": 9419,
+    "total_reduce_tokens": 5379,
+    "total_generation_tokens": 4810,
+    "chunk_summaries_tokens": [
+      {
+        "input_tokens": 2148,
+        "output_tokens": 1394,
+        "total_tokens": 3542,
+        "approx_input_tokens": 3488,
+        "approx_output_tokens": 1393,
+        "num_subchunks": 6
+      },
+      {
+        "input_tokens": 2295,
+        "output_tokens": 1451,
+        "total_tokens": 3746,
+        "approx_input_tokens": 3510,
+        "approx_output_tokens": 1450,
+        "num_subchunks": 6
+      },
+      {
+        "input_tokens": 1457,
+        "output_tokens": 674,
+        "total_tokens": 2131,
+        "approx_input_tokens": 2645,
+        "approx_output_tokens": 673,
+        "num_subchunks": 4
+      }
+    ],
+    "final_generation_tokens": {
+      "input_tokens": 2540,
+      "output_tokens": 2270,
+      "total_tokens": 4810,
+      "prompt_tokens": 974,
+      "ref_material_tokens": 1566
+    },
+    "reduce_level_metrics": [
+      {
+        "level": 1,
+        "batch": 1,
+        "num_batches": 1,
+        "items_in_batch": 3,
+        "approx_input_tokens": 3777,
+        "approx_output_tokens": 1566,
+        "token_usage": {
+          "input_tokens": 3812,
+          "output_tokens": 1567,
+          "total_tokens": 5379
+        },
+        "labels": [
+          "pages 1\u201310",
+          "pages 11\u201320",
+          "pages 21\u201330"
+        ]
+      }
+    ]
+  },
+  "chunk_summary_index": [
+    {
+      "chunk_index": 1,
+      "page_range": "pages 1\u201310",
+      "num_subchunks": 6,
+      "approx_input_tokens": 3488,
+      "approx_output_tokens": 1393
+    },
+    {
+      "chunk_index": 2,
+      "page_range": "pages 11\u201320",
+      "num_subchunks": 6,
+      "approx_input_tokens": 3510,
+      "approx_output_tokens": 1450
+    },
+    {
+      "chunk_index": 3,
+      "page_range": "pages 21\u201330",
+      "num_subchunks": 4,
+      "approx_input_tokens": 2645,
+      "approx_output_tokens": 673
+    }
+  ],
+  "timestamp": "20260622_200944",
+  "chunk_count": 3
+}

@@ -1,4 +1,13 @@
-"""Validate quiz ↔ study material version linkage."""
+"""Validate quiz ↔ study material linkage.
+
+Mentor paths only require that *some* published SM exists on the node.
+Version-match checks are intentionally absent so quiz lifecycle is
+decoupled from SM version identity.
+
+`validate_study_material_is_currently_published_for_node` retains the
+strict version-match check because it guards **trainee** attempt start,
+where content identity matters.
+"""
 
 from __future__ import annotations
 
@@ -8,15 +17,16 @@ from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
     QuizCannotPublishWithoutPublishedStudyMaterialException,
     QuizHasNoPublishedStudyMaterialException,
     QuizStudyMaterialNotCurrentPublishedException,
-    QuizVersionNotPublishedException,
 )
 from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     StudyMaterialVersionMismatchException,
 )
+from src.api.data.models.postgres.e_learning_content.study_material_versions import (
+    StudyMaterialVersion,
+)
 from src.api.data.repositories.study_agent_repositories.study_material_repository import (
     StudyMaterialRepository,
 )
-from src.api.utils.study_agent_utils.version_labels import build_version_display_label
 
 
 class _PublishedVersionLike:
@@ -26,66 +36,80 @@ class _PublishedVersionLike:
     generation_type: str
 
 
-def _version_label(version: _PublishedVersionLike | None) -> str | None:
-    if version is None:
-        return None
-    return build_version_display_label(version.version_number, version.generation_type)
-
-
 def validate_study_material_is_currently_published_for_node(
     *,
     node_id: UUID,
-    version_id: UUID,
+    version_id: UUID | None,
     published_version: _PublishedVersionLike | None,
 ) -> None:
     """
-    Ensure version_id is the single currently published study material for the node.
-    Used before quiz generation, quiz publish, and trainee quiz delivery.
+    Ensure the node has a published study material before a trainee starts a quiz.
+
+    When ``version_id`` metadata is present on the quiz, it must match the
+    currently published SM version.  When metadata is ``None`` (orphaned after
+    SM supersede), any live SM on the node is sufficient.
     """
     if published_version is None:
         raise QuizHasNoPublishedStudyMaterialException()
     if published_version.node_id != node_id:
         raise StudyMaterialVersionMismatchException()
-    if published_version.version_id != version_id:
+    if version_id is not None and published_version.version_id != version_id:
         raise QuizStudyMaterialNotCurrentPublishedException()
 
 
-async def validate_quiz_linked_version_is_published(
+async def get_mentor_quiz_study_material_source(
     sm_repo: StudyMaterialRepository,
     *,
     node_id: UUID,
-    study_material_version_id: UUID,
-) -> None:
-    """Block quiz mutations when the linked study material version is unpublished."""
-    linked = await sm_repo.get_version_by_id(study_material_version_id)
-    if linked is None or linked.node_id != node_id:
-        raise StudyMaterialVersionMismatchException()
-    if linked.is_published:
-        return
+) -> StudyMaterialVersion:
+    """Resolve study material for mentor quiz generation and draft editing.
 
+    Prefer the live published edition; otherwise fall back to the mentor's
+    active working draft when nothing is live for students.
+    """
     published = await sm_repo.get_published_version(node_id)
-    raise QuizVersionNotPublishedException(
-        version_label=build_version_display_label(
-            linked.version_number, linked.generation_type
-        ),
-        current_published_version_label=_version_label(published),
-    )
+    if published is not None and (published.content or "").strip():
+        return published
+
+    active = await sm_repo.get_active_version(node_id)
+    if active is not None and (active.content or "").strip():
+        return active
+
+    raise QuizHasNoPublishedStudyMaterialException()
+
+
+async def require_mentor_quiz_study_material_source(
+    sm_repo: StudyMaterialRepository,
+    *,
+    node_id: UUID,
+) -> StudyMaterialVersion:
+    """Require usable study material before mentor quiz draft work."""
+    return await get_mentor_quiz_study_material_source(sm_repo, node_id=node_id)
+
+
+async def require_published_study_material_for_node(
+    sm_repo: StudyMaterialRepository,
+    *,
+    node_id: UUID,
+) -> None:
+    """Require a live study material on the node before mentor quiz mutations.
+
+    Option B: any published SM on the node is sufficient — no version-match
+    with the quiz's ``study_material_version_id`` metadata.
+    """
+    published = await sm_repo.get_published_version(node_id)
+    if published is None:
+        raise QuizHasNoPublishedStudyMaterialException()
 
 
 def validate_quiz_can_be_published(
     *,
-    node_id: UUID,
-    quiz_study_material_version_id: UUID,
     published_version: _PublishedVersionLike | None,
 ) -> None:
-    """Block quiz publish when the linked study material is not currently published."""
-    try:
-        validate_study_material_is_currently_published_for_node(
-            node_id=node_id,
-            version_id=quiz_study_material_version_id,
-            published_version=published_version,
-        )
-    except QuizStudyMaterialNotCurrentPublishedException as exc:
-        raise QuizCannotPublishWithoutPublishedStudyMaterialException() from exc
-    except QuizHasNoPublishedStudyMaterialException as exc:
-        raise QuizCannotPublishWithoutPublishedStudyMaterialException() from exc
+    """Block quiz publish when no study material is published on the node.
+
+    Relaxed from the previous version-match check: any live SM on the node
+    satisfies the publish precondition.
+    """
+    if published_version is None:
+        raise QuizCannotPublishWithoutPublishedStudyMaterialException()

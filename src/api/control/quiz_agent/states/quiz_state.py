@@ -5,6 +5,7 @@ Both state classes are plain ``TypedDict`` (no Pydantic, no dataclasses) and use
 merges into the running state.
 """
 
+from datetime import datetime
 from typing import Any, TypedDict
 from uuid import UUID
 
@@ -39,3 +40,9 @@ class QuizGraphState(TypedDict, total=False):
     qc_attempt: int  # Number of QC evaluations so far (max 3)
     qc_failed_permanently: bool  # True when all 3 QC attempts failed
     failed_qc_feedback: str | None  # Previously failed QC feedback context from DB
+
+    # ── LLM failure diagnostics ───────────────────────────────────
+    terminal_llm_failure: bool
+    llm_error_type: str | None
+    provider_meta: dict[str, Any] | None
+    next_llm_retry_at: datetime | None

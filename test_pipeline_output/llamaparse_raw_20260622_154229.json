@@ -1,0 +1,813 @@
+{
+  "document_metadata": {
+    "detected_title": "FastAPI – Introduction",
+    "detected_topics": [
+      "FastAPI",
+      "Environment Setup",
+      "Uvicorn",
+      "OpenAPI",
+      "Type Hints",
+      "IDE Support",
+      "REST Architecture",
+      "Path Parameters",
+      "Query Parameters"
+    ],
+    "total_pages": 30,
+    "has_code": true,
+    "has_images": true,
+    "has_tables": true
+  },
+  "sections": [
+    {
+      "section_index": 1,
+      "heading": "# 1. FastAPI – Introduction",
+      "heading_level": 1,
+      "body_text": "**FastAPI** is a modern Python web framework, very efficient in building APIs. It is based on Python’s type hints feature that has been added since Python 3.6 onwards. It is one of the fastest web frameworks of Python.\n* As it works on the functionality of Starlette and Pydantic libraries, its performance is amongst the best and on par with that of NodeJS and Go.\n\n* In addition to offering high performance, FastAPI offers significant speed for development, reduces human-induced errors in the code, is easy to learn and is completely production-ready.\n\n* FastAPI is fully compatible with well-known standards of APIs, namely OpenAPI and JSON schema.\nFastAPI has been developed by **Sebastian Ramirez** in Dec. 2018. FastAPI 0.68.0 is the currently available version.\n## FastAPI – Environment Setup\nTo install FastAPI (preferably in a virtual environment), use **pip** installer.\n```bash\npip3 install fastapi\n```\nFastAPI depends on **Starlette** and **Pydantic** libraries, hence they also get installed.\n## Installing Uvicorn using PIP\nFastAPI doesn’t come with any built-in server application. To run FastAPI app, you need an ASGI server called **uvicorn**, so install the same too, using pip installer. It will also install uvicorn’s dependencies - asgiref, click, h11, and typing-extensions\n```bash\npip3 install uvicorn\n```\nWith these two libraries installed, we can check all the libraries installed so far.\ntutorialspoint SIMPLY EASY LEARNING logo",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "bash",
+          "code": "pip3 install fastapi",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "bash",
+          "code": "pip3 install uvicorn",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "bash",
+          "code": "pip3 freeze\n\nasgiref==3.4.1\nclick==8.0.1\ncolorama==0.4.4\nfastapi==0.68.0\nh11==0.12.0\nimportlib-metadata==4.6.4\npydantic==1.8.2\nstarlette==0.14.2\ntyping-extensions==3.10.0.0\nuvicorn==0.15.0\nzipp==3.5.0",
+          "caption": "FastAPI – Python Web Framework",
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 2,
+      "heading": "# 2. FastAPI – Hello World",
+      "heading_level": 1,
+      "body_text": "## Getting Started\nThe first step in creating a FastAPI app is to declare the application object of FastAPI class.\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n```\nThis **app** object is the main point of interaction of the application with the client browser. The uvicorn server uses this object to listen to client’s request.\nThe next step is to create path operation. Path is a URL which when visited by the client invokes visits a mapped URL to one of the HTTP methods, an associated function is to be executed. We need to bind a view function to a URL and the corresponding HTTP method. For example, the index() function corresponds to ‘/’ path with ‘get’ operation.\n```python\n@app.get(\"/\")\nasync def root():\n    return {\"message\": \"Hello World\"}\n```\nThe function returns a JSON response, however, it can return **dict**, **list**, **str**, **int**, etc. It can also return Pydantic models.\nSave the following code as main.py\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}\n```",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": "@app.get(\"/\")\nasync def root():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_hello_world_browser_response",
+          "source_page": 4,
+          "figure_index_on_page": 1,
+          "document_figure_index": 1,
+          "full_description": "A screenshot of a web browser window open to localhost:8000. The page displays a JSON response containing a single object with the text {\"message\":\"Hello World\"}. The screenshot is presented as an example of the result after running the FastAPI application with Uvicorn. The browser content is centered on the JSON text, and the surrounding UI is not described in detail beyond the browser context. The image includes no visible buttons or controls emphasized in the source text. It illustrates that the root endpoint returns the Hello World JSON response.",
+          "purpose": "Illustrates the browser output returned by the FastAPI root endpoint."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 3,
+      "heading": "# 2. FastAPI – Hello World",
+      "heading_level": 1,
+      "body_text": "## Getting Started\nThe first step in creating a FastAPI app is to declare the application object of FastAPI class.\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n```\nThis **app** object is the main point of interaction of the application with the client browser. The uvicorn server uses this object to listen to client’s request.\nThe next step is to create path operation. Path is a URL which when visited by the client invokes visits a mapped URL to one of the HTTP methods, an associated function is to be executed. We need to bind a view function to a URL and the corresponding HTTP method. For example, the index() function corresponds to ‘/’ path with ‘get’ operation.\n```python\n@app.get(\"/\")\nasync def root():\n    return {\"message\": \"Hello World\"}\n```\nThe function returns a JSON response, however, it can return **dict**, **list**, **str**, **int**, etc. It can also return Pydantic models.\nSave the following code as main.py\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}\n```",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": "@app.get(\"/\")\nasync def root():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "uvicorn_server_startup_console",
+          "source_page": 4,
+          "figure_index_on_page": 1,
+          "document_figure_index": 2,
+          "full_description": "A screenshot of a terminal or command-line window showing the command uvicorn main:app --reload. The output text includes Uvicorn running on http://127.0.0.1:8000 with a Press CTRL+C to quit note, followed by Started reloader process [28720], Started server process [28722], Waiting for application startup., and Application startup complete. This image is described in the source text as part of starting the Uvicorn server. It shows the server successfully launching in reload mode and listening on the local host address. The visible text is presented in a fixed-width console style.",
+          "purpose": "Shows the Uvicorn server startup command and console output."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 4,
+      "heading": "# 3. FastAPI – OpenAPI",
+      "heading_level": 1,
+      "body_text": "## Getting Started\nThe first step in creating a FastAPI app is to declare the application object of FastAPI class.\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n```\nThis **app** object is the main point of interaction of the application with the client browser. The uvicorn server uses this object to listen to client’s request.\nThe next step is to create path operation. Path is a URL which when visited by the client invokes visits a mapped URL to one of the HTTP methods, an associated function is to be executed. We need to bind a view function to a URL and the corresponding HTTP method. For example, the index() function corresponds to ‘/’ path with ‘get’ operation.\n```python\n@app.get(\"/\")\nasync def root():\n    return {\"message\": \"Hello World\"}\n```\nThe function returns a JSON response, however, it can return **dict**, **list**, **str**, **int**, etc. It can also return Pydantic models.\nSave the following code as main.py\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}\n```",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": "@app.get(\"/\")\nasync def root():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_docs_page",
+          "source_page": 5,
+          "figure_index_on_page": 1,
+          "document_figure_index": 3,
+          "full_description": "A screenshot of the FastAPI Swagger UI documentation page. The page shows a GET / Index endpoint and indicates a 200 Successful Response. The interface is presented as interactive API documentation generated from the FastAPI app. The visible content implies a standard Swagger UI layout with an endpoint summary and a successful response status. The source text identifies this as the browser display after opening /docs. The screenshot is used to demonstrate the automatically generated OpenAPI documentation.",
+          "purpose": "Illustrates the Swagger UI documentation generated by FastAPI."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 5,
+      "heading": "# 3. FastAPI – OpenAPI",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nClick the **'try it out'** button and then **'Execute'** button that appears afterward.\nScreenshot of FastAPI Swagger UI showing a successful API response with Curl command, Request URL, and JSON response body \"Hello World\".\nYou can see the **Curl** command internally executed, the request URL, the response headers, and the JSON format of the server’s response.\nFastAPI generates a schema using **OpenAPI** specifications. The specification determines how to define API paths, path parameters, etc. The API schema defined by the OpenAPI standard decides how the data is sent",
+      "code_blocks": null,
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_executed_request",
+          "source_page": 6,
+          "figure_index_on_page": 1,
+          "document_figure_index": 4,
+          "full_description": "A screenshot of the FastAPI Swagger UI after using the Try it out and Execute controls. It shows a successful API response with a Curl command, the Request URL, response headers, and a JSON response body containing Hello World. The screenshot emphasizes the executed request details displayed by Swagger UI. The source text notes that the response is shown after pressing the execution controls. The layout corresponds to the interactive API testing panel in Swagger UI. The browser UI is not described with exact colors or icons, but the visible fields and returned message are explicit.",
+          "purpose": "Shows the Swagger UI response after executing the GET request."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 6,
+      "heading": "# 3. FastAPI – OpenAPI",
+      "heading_level": 1,
+      "body_text": "using JSON Schema. Visit \nhttp://127.0.0.1:8000/openapi.json\n from your browser. A neatly formatted JSON response as follows will be displayed:\n```json\n{\n  \"openapi\": \"3.0.2\",\n  \"info\": {\n    \"title\": \"FastAPI\",\n    \"version\": \"0.1.0\"\n  },\n  \"paths\": {\n    \"/\": {\n      \"get\": {\n        \"summary\": \"Index\",\n        \"operationId\": \"index__get\",\n        \"responses\": {\n          \"200\": {\n            \"description\": \"Successful Response\",\n            \"content\": {\n              \"application/json\": {\n                \"schema\": {}\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n```\nFastAPI also supports another automatic documentation method provided by **Redoc** (\nhttps://github.com/Redocly/redoc\n).",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "json",
+          "code": "{\n  \"openapi\": \"3.0.2\",\n  \"info\": {\n    \"title\": \"FastAPI\",\n    \"version\": \"0.1.0\"\n  },\n  \"paths\": {\n    \"/\": {\n      \"get\": {\n        \"summary\": \"Index\",\n        \"operationId\": \"index__get\",\n        \"responses\": {\n          \"200\": {\n            \"description\": \"Successful Response\",\n            \"content\": {\n              \"application/json\": {\n                \"schema\": {}\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 7,
+      "heading": "# 3. FastAPI – OpenAPI",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nEnter \nhttp://localhost:8000/redoc\n as URL in the browser’s address bar.\nScreenshot of a web browser showing the FastAPI ReDoc interface at 127.0.0.1:8000/redoc. The page displays \"FastAPI (0.1.0)\", a download link for the OpenAPI specification, and an \"Index\" section with a GET request to the root path. The response section shows a \"200 Successful Response\" and a response sample for \"application/json\" with a value of \"null\".",
+      "code_blocks": null,
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_redoc_interface",
+          "source_page": 8,
+          "figure_index_on_page": 1,
+          "document_figure_index": 5,
+          "full_description": "A screenshot of the FastAPI ReDoc interface opened at 127.0.0.1:8000/redoc. The page shows the heading FastAPI (0.1.0), a download link for the OpenAPI specification, and an Index section describing a GET request to the root path. The response area displays 200 Successful Response and a sample response for application/json with the value null. The source text explicitly identifies the ReDoc page and its main visible elements. The screenshot demonstrates the alternative automatic documentation generated by FastAPI. The browser context is visible, but the important content is the API documentation layout and response example.",
+          "purpose": "Illustrates the ReDoc documentation page generated by FastAPI."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 8,
+      "heading": "# 4. FastAPI – Uvicorn",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nUnlike the Flask framework, FastAPI doesn’t contain any built-in development server. Hence we need **Uvicorn**. It implements **ASGI** standards and is lightning fast. ASGI stands for **Asynchronous Server Gateway Interface**.\nThe **WSGI** (Web Server Gateway Interface – the older standard) compliant web servers are not suitable for **asyncio** applications. Python web frameworks (such as FastAPI) implementing ASGI specifications provide high speed performance, comparable to web apps built with Node and Go.\nUvicorn uses **uvloop** and **httptools** libraries. It also provides support for HTTP/2 and WebSockets, which cannot be handled by WSGI. **uvloop** id similar to the built-in **asyncio** event loop. **httptools** library handles the http protocols.\nThe installation of Uvicorn as described earlier will install it with minimal dependencies. However, standard installation will also install **cython** based dependencies along with other additional libraries.\n```\npip3 install uvicorn(standard)\n```\nWith this, the **WebSockets** protocol will be supported. Also, **PyYAML** will be installed to allow you to provide a .yaml file.\nAs mentioned earlier, the application is launched on the Uvicorn server with the following command:\n```\nuvicorn main:app -reload\n```\nThe **--reload** option enables the debug mode so that any changes in app.py will be automatically reflected and the display on the client browser will be automatically refreshed. In addition, the following command-line options may be used:\n| --host TEXT    | Bind socket to this host. \\[default 127.0.0.1] |\n| -------------- | ---------------------------------------------- |\n| --port INTEGER | Bind socket to this port. \\[default 8000]      |\n| --uds TEXT     | Bind to a UNIX domain socket.                  |\n| --fd INTEGER   | Bind to socket from this file descriptor.      |\n| --reload       | Enable auto-reload.                            |",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "bash",
+          "code": "pip3 install uvicorn(standard)",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "bash",
+          "code": "uvicorn main:app -reload",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": [
+        {
+          "table_index": 1,
+          "caption": null,
+          "markdown_table": "| --host TEXT    | Bind socket to this host. \\[default 127.0.0.1] |\n| -------------- | ---------------------------------------------- |\n| --port INTEGER | Bind socket to this port. \\[default 8000]      |\n| --uds TEXT     | Bind to a UNIX domain socket.                  |\n| --fd INTEGER   | Bind to socket from this file descriptor.      |\n| --reload       | Enable auto-reload.                            |"
+        }
+      ]
+    },
+    {
+      "section_index": 9,
+      "heading": "# 4. FastAPI – Uvicorn",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\n| --reload-dir PATH                  | Set reload directories explicitly, default current working directory. |\n| ---------------------------------- | --------------------------------------------------------------------- |\n| --reload-include TEXT              | Include files while watching. Includes '\\*.py' by default             |\n| -reload-exclude TEXT               | Exclude while watching for files.                                     |\n| --reload-delay FLOAT               | Delay between previous and next check default 0.25                    |\n| -loop \\[auto\\|asyncio\\|uvloop]     | Event loop implementation. \\[default auto]                            |\n| --http \\[auto\\|h11\\|httptools]     | HTTP protocol implementation. \\[default auto]                         |\n| --interface auto\\|asgi\\|asgi\\|wsgi | Select application interface. \\[default auto]                         |\n| --env-file PATH                    | Environment configuration file.                                       |\n| --log-config PATH                  | Logging configuration file. Supported formats .ini, .json, .yaml.     |\n| --version                          | Display the uvicorn version and exit.                                 |\n| --app-dir TEXT                     | Look for APP in the specified directory default current directory     |\n| --help                             | Show this message and exit.                                           |\nInstead of starting Uvicorn server from command line, it can be launched programmatically also.\n## Example\nIn the Python code, call `uvicorn.run()` method, using any of the parameters listed above:\n```python\nimport uvicorn\nfrom fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/\")",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "import uvicorn\nfrom fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/\")",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": [
+        {
+          "table_index": 1,
+          "caption": null,
+          "markdown_table": "| --reload-dir PATH                  | Set reload directories explicitly, default current working directory. |\n| ---------------------------------- | --------------------------------------------------------------------- |\n| --reload-include TEXT              | Include files while watching. Includes '\\*.py' by default             |\n| -reload-exclude TEXT               | Exclude while watching for files.                                     |\n| --reload-delay FLOAT               | Delay between previous and next check default 0.25                    |\n| -loop \\[auto\\|asyncio\\|uvloop]     | Event loop implementation. \\[default auto]                            |\n| --http \\[auto\\|h11\\|httptools]     | HTTP protocol implementation. \\[default auto]                         |\n| --interface auto\\|asgi\\|asgi\\|wsgi | Select application interface. \\[default auto]                         |\n| --env-file PATH                    | Environment configuration file.                                       |\n| --log-config PATH                  | Logging configuration file. Supported formats .ini, .json, .yaml.     |\n| --version                          | Display the uvicorn version and exit.                                 |\n| --app-dir TEXT                     | Look for APP in the specified directory default current directory     |\n| --help                             | Show this message and exit.                                           |"
+        }
+      ]
+    },
+    {
+      "section_index": 10,
+      "heading": "# 4. FastAPI – Uvicorn",
+      "heading_level": 1,
+      "body_text": "```python\nasync def index():\n    return {\"message\": \"Hello World\"}\n\nif __name__ == \"__main__\":\n    uvicorn.run(\"main:app\", host=\"127.0.0.1\", port=8000, reload=True)\n```\nNow run this **app.py** as Python script as follows:\n```bash\n(fastapienv) C:\\fastapienv>python app.py\n```\nUvicorn server will thus be launched in debug mode.",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "async def index():\n    return {\"message\": \"Hello World\"}\n\nif __name__ == \"__main__\":\n    uvicorn.run(\"main:app\", host=\"127.0.0.1\", port=8000, reload=True)",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "bash",
+          "code": "(fastapienv) C:\\fastapienv>python app.py",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 11,
+      "heading": "# 5. FastAPI – Type Hints",
+      "heading_level": 1,
+      "body_text": "# 5. FastAPI – Type Hints\nFastAPI – Python Web Framework\nFastAPI makes extensive use of the **Type** hinting feature made available in Python’s version 3.5 onwards. As a matter of fact, Python is known to be a dynamically typed language. It also happens to be Python’s distinct feature. In a Python code, a variable need not be declared to be belonging to a certain type, and its type is determined dynamically by the instantaneous value assigned to it. Python’s interpreter doesn’t perform type checks and hence it is prone to runtime exceptions.\nIn the following example, a **division()** function is defined with two parameters and returns their division, assuming that the parameters will be numeric.\n```python\n>>> def division(a, b):\n        return a/b\n>>> division(10, 4)\n2.5\n\n>>> division(10, 2.5)\n4.0\n```\nHowever, if one of the values passed to the function happen to be non-numeric, it results in TypeError as shown below:\n```python\n>>> division(\"Python\",5)\n\nTypeError: unsupported operand type(s) for /: 'str' and 'int'\n```\nEven a basic coding environment such as IDLE indicates that the function requires two parameters but won’t specify the types as they haven’t been declared.",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": ">>> def division(a, b):\n        return a/b\n>>> division(10, 4)\n2.5\n\n>>> division(10, 2.5)\n4.0",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": ">>> division(\"Python\",5)\n\nTypeError: unsupported operand type(s) for /: 'str' and 'int'",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 12,
+      "heading": "# 5. FastAPI – Type Hints",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\n```python\n>>>\n>>>\n>>> def division(a,b):\n       return a/b\n\n>>> division(\n       (a, b)\n```\nPython’s new type hinting feature helps in prompting the user with the expected type of the parameters to be passed. This is done by adding a colon and data type after the parameter. We’ll redefine the `division()` function as follows:\n```python\n>>> def division(a:int,b:int):\n       return a/b\n\n>>> division(\n       (a: int, b: int)\n```\nNote that while calling the function, Python hints at the expected type of each parameter to be passed. However, this doesn’t prevent the `TypeError` from appearing if an incompatible value is passed. You will have to use a static type checker such as **MyPy** to check for compatibility before running.\nJust as the formal parameters in the function’s definition, it is possible to provide type hint for a function’s return value. Just before the colon symbol in the function’s definition statement (after which the function block starts) add an arrow (->) and the type.\n```python\n>>> def division(a:int, b:int) ->float:\n       return a/b\n\n>>> division(\n       (a: int, b: int) -> float\n```\nHowever, as mentioned earlier, if incompatible values are passed to the function, or returned by the function, Python reports `TypeError`. Use of MyPy static type checker can detect such errors. Install mypy package first.",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": ">>>\n>>>\n>>> def division(a,b):\n       return a/b\n\n>>> division(\n       (a, b)",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": ">>> def division(a:int,b:int):\n       return a/b\n\n>>> division(\n       (a: int, b: int)",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "python",
+          "code": ">>> def division(a:int, b:int) ->float:\n       return a/b\n\n>>> division(\n       (a: int, b: int) -> float",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 13,
+      "heading": "# 5. FastAPI – Type Hints",
+      "heading_level": 1,
+      "body_text": "```bash\npip3 install mypy\n```\nSave the following code as typecheck.py\n```python\ndef division(x:int, y:int) -> int:\n    return (x//y)\n\na=division(10,2)\nprint (a)\n\nb=division(5,2.5)\nprint (b)\n\nc=division(\"Hello\",10)\nprint (c)\n```\nCheck this code for type errors using mypy.\n```bash\nC:\\python37>mypy typechk.py\ntypechk.py:7: error: Argument 2 to \"division\" has incompatible type \"float\"; expected \"int\"\ntypechk.py:10: error: Argument 1 to \"division\" has incompatible type \"str\"; expected \"int\"\nFound 2 errors in 1 file (checked 1 source file)\n```\nThere are errors in second and third calls to the function. In second, value passed to **y** is **float** when **int** is expected. In third, value passed to **x** is **str** when **int** is expected. (Note that // operator returns integer division)\nAll standard data types can be used as type hints. This can be done with global variables, variables as function parameters, inside function definition etc.\n```python\nx: int = 3\ny: float = 3.14\n```",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "bash",
+          "code": "pip3 install mypy",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": "def division(x:int, y:int) -> int:\n    return (x//y)\n\na=division(10,2)\nprint (a)\n\nb=division(5,2.5)\nprint (b)\n\nc=division(\"Hello\",10)\nprint (c)",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "bash",
+          "code": "C:\\python37>mypy typechk.py\ntypechk.py:7: error: Argument 2 to \"division\" has incompatible type \"float\"; expected \"int\"\ntypechk.py:10: error: Argument 1 to \"division\" has incompatible type \"str\"; expected \"int\"\nFound 2 errors in 1 file (checked 1 source file)",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 4,
+          "language": "python",
+          "code": "x: int = 3\ny: float = 3.14",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 14,
+      "heading": "# 5. FastAPI – Type Hints",
+      "heading_level": 1,
+      "body_text": "```python\nnm: str = 'abc'\nmarried: bool = False\nnames: list = ['a', 'b', 'c']\nmarks: tuple = (10, 20, 30)\nmarklist: dict = {'a': 10, 'b': 20, 'c': 30}\n```\nA new addition in newer versions of Python (version 3.5 onwards) standard library is the typing module. It defines special types for corresponding standard collection types. The types on typing module are **List, Tuple, Dict, and Sequence**. It also consists of **Union** and **Optional** types. Note that standard names of data types are all in small case, whereas ones in typing module have first letter in upper case. Using this feature, we can ask a collection of a particular type.\n```python\nfrom typing import List, Tuple, Dict\n\n# following line declares a List object of strings.\n# If violated, mypy shows error\ncities: List[str] = ['Mumbai', 'Delhi', 'Chennai']\n\n# This is Tuple with three elements respectively\n# of str, int and float type)\nemployee: Tuple[str, int, float] = ('Ravi', 25, 35000)\n\n# Similarly in the following Dict, the object key should be str\n# and value should be of int type, failing which\n# static type checker throws error\nmarklist: Dict[str, int] = {'Ravi': 61, 'Anil': 72}\n```",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "nm: str = 'abc'\nmarried: bool = False\nnames: list = ['a', 'b', 'c']\nmarks: tuple = (10, 20, 30)\nmarklist: dict = {'a': 10, 'b': 20, 'c': 30}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": "from typing import List, Tuple, Dict\n\n# following line declares a List object of strings.\n# If violated, mypy shows error\ncities: List[str] = ['Mumbai', 'Delhi', 'Chennai']\n\n# This is Tuple with three elements respectively\n# of str, int and float type)\nemployee: Tuple[str, int, float] = ('Ravi', 25, 35000)\n\n# Similarly in the following Dict, the object key should be str\n# and value should be of int type, failing which\n# static type checker throws error\nmarklist: Dict[str, int] = {'Ravi': 61, 'Anil': 72}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 15,
+      "heading": "# 6. FastAPI – IDE Support",
+      "heading_level": 1,
+      "body_text": "The Type Hinting feature of Python is most effectively used in almost all **IDEs** (Integrated Development Environments) such as **PyCharm** and **VS Code** to provide dynamic autocomplete features.\nLet us see how VS Code uses the type hints to provide autocomplete suggestions while writing a code. In the example below, a function named as **sayhello** with name as an argument has been defined. The function returns a string by concatenating “Hello” to the name parameter by adding a space in between. Additionally, it is required to ensure that the first letter of the name be in upper case.\nPython’s **str** class has a **capitalize()** method for the purpose, but if one doesn’t remember it while typing the code, one has to search for it elsewhere. If you give a dot after name, you expect the list of attributes but nothing is shown because Python doesn’t know what will be the runtime type of name variable.\nScreenshot of VS Code showing a Python function without type hints and no autocomplete suggestions after a dot.\nHere, type hint comes handy. Include **str** as the type of name in the function definition. Now when you press dot (.) after name, a drop down list of all string methods appears, from which the required method (in this case capitalize()) can be picked.\n<page_number>16</page_number>\ntutorialspoint SIMPLY EASY LEARNING logo",
+      "code_blocks": null,
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "vscode_no_autocomplete_without_type_hints",
+          "source_page": 16,
+          "figure_index_on_page": 1,
+          "document_figure_index": 6,
+          "full_description": "A screenshot of Visual Studio Code showing a Python function without type hints and no autocomplete suggestions after typing a dot after a variable name. The editor window is described in the source text as demonstrating that Python does not know the runtime type of the variable, so attribute suggestions do not appear. The screenshot likely contains code for a sayhello function, but the source text only explicitly mentions the absence of autocomplete suggestions after the dot. The visual focus is on the VS Code editor pane. The purpose is to contrast missing type hints with missing autocomplete behavior.",
+          "purpose": "Shows VS Code without type hints and no autocomplete suggestions."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 16,
+      "heading": "# 6. FastAPI – IDE Support",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nScreenshot of Visual Studio Code showing Python code with type hints and an autocomplete dropdown menu for string methods.\nIt is also possible to use type hints with a user defined class. In the following example a rectangle class is defined with type hints for arguments to the `__init__()` constructor.\n```python\nclass rectangle:\n    def __init__(self, w:int, h:int) ->None:\n        self.width=w\n        self.height=h\n```\nFollowing is a function that uses an object of above rectangle class as an argument. The type hint used in the declaration is the name of the class.\n```python\ndef area(r:rectangle)->int:\n    return r.width*r.height\n\nr1=rectangle(10,20)\nprint (\"area = \", area(r1))\n```\nIn this case also, the IDE editor provides autocomplete support prompting list of the instance attributes. Following is a screenshot of **PyCharm** editor.\ntutorialspoint SIMPLY EASY LEARNING logo",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "class rectangle:\n    def __init__(self, w:int, h:int) ->None:\n        self.width=w\n        self.height=h",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "python",
+          "code": "def area(r:rectangle)->int:\n    return r.width*r.height\n\nr1=rectangle(10,20)\nprint (\"area = \", area(r1))",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "vscode_autocomplete_with_type_hints",
+          "source_page": 17,
+          "figure_index_on_page": 1,
+          "document_figure_index": 7,
+          "full_description": "A screenshot of Visual Studio Code showing Python code with type hints and an autocomplete dropdown menu for string methods. The source text indicates that type hints are present and that when a dot is typed after the variable, a dropdown list of string methods appears. The screenshot is meant to show the type hinting effect on code completion. The visible editor content is not transcribed in the source, but the key visual element is the autocomplete list. The purpose is to show how str type hints enable method suggestions in VS Code.",
+          "purpose": "Shows VS Code with type hints and autocomplete suggestions."
+        },
+        {
+          "image_index": 2,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "pycharm_type_hints_autocomplete",
+          "source_page": 17,
+          "figure_index_on_page": 2,
+          "document_figure_index": 8,
+          "full_description": "A screenshot of the PyCharm IDE showing Python code with type hints and an autocomplete dropdown menu. The source text states that this editor provides autocomplete support and prompts a list of instance attributes when working with a user-defined class. The screenshot likely corresponds to the rectangle example and the area function discussed in the nearby text. The emphasis is on the IDE’s completion popup within the code editor. The purpose is to show type-hint-driven autocomplete for class instance attributes in PyCharm.",
+          "purpose": "Shows PyCharm autocomplete support for a user-defined class."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 17,
+      "heading": "# 6. FastAPI – IDE Support",
+      "heading_level": 1,
+      "body_text": "**FastAPI** makes extensive use of the type hints. This feature is found everywhere, such as path parameters, query parameters, headers, bodies, dependencies, etc. as well as validating the data from the incoming request. The OpenAPI document generation also uses type hints.",
+      "code_blocks": null,
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 18,
+      "heading": "# 7. FastAPI – REST Architecture",
+      "heading_level": 1,
+      "body_text": "**RElational State Transfer** (REST) is a software architectural style. REST defines how the architecture of a web application should behave. It is a resource based architecture where everything that the REST server hosts, (a file, an image, or a row in a table of a database), is a resource, having many representations.\nREST recommends certain architectural constraints.\n* Uniform interface\n* Statelessness\n* Client-server\n* Cacheability\n* Layered system\n* Code on demand\nREST constraints has the following advantages:\n* Scalability\n* Simplicity\n* Modifiability\n* Reliability\n* Portability\n* Visibility\nREST uses HTTP verbs or methods for the operation on the resources. The POST, GET, PUT and DELETE methods perform respectively CREATE, READ, UPDATE and DELETE operations respectively.",
+      "code_blocks": null,
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 19,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "8. FastAPI – Path Parameters FastAPI – Python Web Framework\nModern web frameworks use routes or endpoints as a part of URL instead of file-based URLs. This helps the user to remember the application URLs more effectively. In FastAPI, it is termed a path. A path or route is the part of the URL trailing after the first ‘/’.\nFor example, in the following URL,\n$$ \\underline{\\text{\nhttp://localhost:8000/hello/TutorialsPoint}}\n $$\nthe path or the route would be\n$$ \\underline{\\text{/hello/TutorialsPoint}} $$\nIn FastAPI, such a path string is given as a parameter to the operation decorator. The operation here refers to the HTTP verb used by the browser to send the data. These operations include GET, PUT, etc. The operation decorator (for example, `@app.get(\"/\")`) is immediately followed by a function that is executed when the specified URL is visited. In the below example:\n```python\nfrom fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}\n```\nHere, (\"/\") is the path, get is the operation, @app.get(\"/\") is the path operation decorator, and the index() function just below it is termed as path operation function.\nAny of the following HTTP verbs can be used as operations.\n| GET  | Sends data in unencrypted form to the server. Most common method. |\n| ---- | ----------------------------------------------------------------- |\n| HEAD | Same as GET, but without the response body.                       |",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": [
+        {
+          "table_index": 1,
+          "caption": null,
+          "markdown_table": "| GET  | Sends data in unencrypted form to the server. Most common method. |\n| ---- | ----------------------------------------------------------------- |\n| HEAD | Same as GET, but without the response body.                       |"
+        }
+      ]
+    },
+    {
+      "section_index": 20,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\n| POST   | Used to send HTML form data to the server. Data received by the POST method is not cached by the server. |\n| ------ | -------------------------------------------------------------------------------------------------------- |\n| PUT    | Replaces all current representations of the target resource with the uploaded content.                   |\n| DELETE | Removes all current representations of the target resource given by a URL.                               |\nThe **async** keyword in the function’s definition tells FastAPI that it is to be run asynchronously i.e. without blocking the current thread of execution. However, a path operation function can be defined without the async prefix also.\nThis decorated function returns a JSON response. Although it can return almost any of Python’s objects, it will be automatically converted to JSON. Further in this tutorial, we shall see how such a function returns **Pydantic** model objects.\nThe URL’s endpoint or path can have one or more variable parameters. They can be accepted by using Python’s string formatting notation. In the above example URL <u>\nhttp://localhost:8000/hello/TutorialsPoint\n</u>, the last value may change in every client request. This variable parameter can be accepted in a variable as defined in the path and passed to the formal parameters defined in the function bound to the operation decorator.\n## Example\nAdd another path decorator with a variable parameter in the route, and bind **hello()** function to have name parameter. Modify the main.py as per the following.\n```python\nimport uvicorn\n\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}\n\n@app.get(\"/hello/{name}\")",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "import uvicorn\n\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/\")\nasync def index():\n    return {\"message\": \"Hello World\"}\n\n@app.get(\"/hello/{name}\")",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": [
+        {
+          "table_index": 1,
+          "caption": null,
+          "markdown_table": "| POST   | Used to send HTML form data to the server. Data received by the POST method is not cached by the server. |\n| ------ | -------------------------------------------------------------------------------------------------------- |\n| PUT    | Replaces all current representations of the target resource with the uploaded content.                   |\n| DELETE | Removes all current representations of the target resource given by a URL.                               |"
+        }
+      ]
+    },
+    {
+      "section_index": 21,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "```python\nasync def hello(name):\n    return {\"name\": name}\n```\nStart the Uvicorn server and visit \nhttp://localhost:8000/hello/Tutorialspoint\n URL. The browser shows the following JSON response.\n```json\n{\"name\":\"Tutorialspoint\"}\n```\nChange the variable path parameter to something else such as \nhttp://localhost:8000/hello/Python\n so that the browser shows:\n```json\n{\"name\":\"Python\"}\n```\n## Check OpenAPI docs\nNow if we check the OpenAPI documentation by entering the URL as \nhttp://localhost:8000/docs\n, it will show two routes and their respective view functions. Click the try out button below /hello/{name} button and give Tutorialspoint as the value of the name parameter's description and then click the Execute button.",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "async def hello(name):\n    return {\"name\": name}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "json",
+          "code": "{\"name\":\"Tutorialspoint\"}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "json",
+          "code": "{\"name\":\"Python\"}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_path_parameter_input",
+          "source_page": 22,
+          "figure_index_on_page": 1,
+          "document_figure_index": 9,
+          "full_description": "A screenshot of FastAPI Swagger UI showing the /hello/{name} endpoint with a parameter field filled with TutorialsPoint and an Execute button. The source text says the user should click Try it out and then Execute, and the screenshot captures that interactive input area. The visible endpoint is the path parameter route for name. The screenshot emphasizes the request parameter entry field and the button used to send the request. The purpose is to demonstrate how to enter a path parameter value in Swagger UI and execute the request.",
+          "purpose": "Shows entering a path parameter value in Swagger UI."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 22,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nScreenshot of FastAPI Swagger UI showing a successful GET request to /hello/Tutorialspoint with a 200 response code and JSON body.\nIt will then show the **Curl** command, the **request URL** and the details of server’s response with response body and response headers.",
+      "code_blocks": null,
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_path_parameter_response",
+          "source_page": 23,
+          "figure_index_on_page": 1,
+          "document_figure_index": 10,
+          "full_description": "A screenshot of FastAPI Swagger UI showing the result of a successful GET request to /hello/Tutorialspoint. The interface indicates a 200 response code and a JSON body in the response panel. The source text says the page also shows the Curl command, the request URL, and the details of the server response including response body and response headers. The visual is a standard Swagger execution result screen. The purpose is to show the successful execution output for the path parameter request.",
+          "purpose": "Shows the successful Swagger UI response for the path parameter request."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 23,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nScreenshot of FastAPI Swagger UI showing a successful GET request to /hello/Tutorialspoint with a 200 response code and JSON body.\nA route can have multiple parameters separated by \"/\" symbol.\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/hello/{name}/{age}\")\nasync def hello(name,age):",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/hello/{name}/{age}\")\nasync def hello(name,age):",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 24,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "```python\nreturn {\"name\": name, \"age\":age}\n```\nIn this case, **/hello** is the route, followed by two parameters put in curly brackets. If the URL given in the browser’s address bar is <u>\nhttp://localhost:8000/hello/Ravi/20\n</u>, The data of Ravi and 20 will be assigned to variables name and age respectively. The browser displays the following JSON response:\n```json\n{\"name\":\"Ravi\",\"age\":\"20\"}\n```\n## Path Parameters with Types\nYou can use Python’s type hints for the parameters of the function to be decorated. In this case, define name as str and age as int.\n```python\n@app.get(\"/hello/{name}/{age}\")\nasync def hello(name:str,age:int):\n    return {\"name\": name, \"age\":age}\n```\nThis will result in the browser displaying an HTTP error message in the JSON response if the types don’t match. Try entering <u>\nhttp://localhost:8000/hello/20/Ravi\n</u> as the URL. The browser’s response will be as follows:\n```json\n{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"path\",\n        \"age\"\n      ],\n      \"msg\": \"value is not a valid integer\",\n      \"type\": \"type_error.integer\"\n    }\n  ]\n}\n```",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "return {\"name\": name, \"age\":age}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 2,
+          "language": "json",
+          "code": "{\"name\":\"Ravi\",\"age\":\"20\"}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 3,
+          "language": "python",
+          "code": "@app.get(\"/hello/{name}/{age}\")\nasync def hello(name:str,age:int):\n    return {\"name\": name, \"age\":age}",
+          "caption": null,
+          "is_reconstructed": false
+        },
+        {
+          "block_index": 4,
+          "language": "json",
+          "code": "{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"path\",\n        \"age\"\n      ],\n      \"msg\": \"value is not a valid integer\",\n      \"type\": \"type_error.integer\"\n    }\n  ]\n}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 25,
+      "heading": "# 8. FastAPI – Path Parameters",
+      "heading_level": 1,
+      "body_text": "```json\n}\n```\nThe reason is obvious as **age** being integer, can’t accept a string value. This will also be reflected in the Swagger UI (OpenAPI) documentation.\nScreenshot of FastAPI Swagger UI showing path parameters 'name' as string and 'age' as integer for the /hello/{name}/{age} endpoint.",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "json",
+          "code": "}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_typed_path_parameters",
+          "source_page": 26,
+          "figure_index_on_page": 1,
+          "document_figure_index": 11,
+          "full_description": "A screenshot of FastAPI Swagger UI showing the path parameters for the /hello/{name}/{age} endpoint. The source text specifies that name is shown as a string and age is shown as an integer in the documentation. The image is intended to confirm type annotations in the interactive API docs. The visible UI likely lists parameter names with their types. The purpose is to illustrate how Swagger UI reflects typed path parameters.",
+          "purpose": "Shows typed path parameters in Swagger UI documentation."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 26,
+      "heading": "# 9. FastAPI – Query Parameters",
+      "heading_level": 1,
+      "body_text": "A classical method of passing the request data to the server is to append a query string to the URL. Assuming that a Python script (hello.py) on a server is executed as **CGI**, a list of key-value pairs concatenated by the ampersand (&) forms the query string, which is appended to the URL by putting a question mark (?) as a separator. For example:\nhttp://localhost/cgi-bin/hello.py?name=Ravi&age=20\nThe trailing part of the URL, after (?), is the query string, which is then parsed by the server-side script for further processing.\nAs mentioned, the query string is a list of parameter=value pairs concatenated by & symbol. FastAPI automatically treats the part of the endpoint which is not a path parameter as a query string and parses it into parameters and its values. These parameters are passed to the function below the operation decorator.\n## Example\n```python\nfrom fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/hello\")\nasync def hello(name:str,age:int):\n    return {\"name\": name, \"age\":age}\n```\nStart the Uvicorn server and this URL in the browser:\nhttp://localhost:8000/hello?name=Ravi&age=20\nYou should get the same JSON response. However, checking the tells you that FastAPI has detected that /hello endpoint has no path parameters, but query parameters.",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/hello\")\nasync def hello(name:str,age:int):\n    return {\"name\": name, \"age\":age}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": null,
+      "tables": null
+    },
+    {
+      "section_index": 27,
+      "heading": "# 9. FastAPI – Query Parameters",
+      "heading_level": 1,
+      "body_text": "Screenshot of FastAPI Swagger UI showing a GET /hello endpoint with name and age parameters\nClick the **Try it out** button, enter \"Ravi\" and \"20\" as values, and press the **Execute** button. The documentation page now shows Curl command, request URL, and the body and headers of HTTP response.",
+      "code_blocks": null,
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_query_parameter_input",
+          "source_page": 28,
+          "figure_index_on_page": 1,
+          "document_figure_index": 12,
+          "full_description": "A screenshot of FastAPI Swagger UI showing a GET /hello endpoint with name and age parameters. The source text says the user should click Try it out, enter Ravi and 20, and press Execute. The screenshot represents the query-parameter form for the endpoint. The visible documentation page is expected to show the request inputs and the API testing controls. The purpose is to demonstrate entering query parameters in the interactive docs.",
+          "purpose": "Shows entering query parameters in Swagger UI."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 28,
+      "heading": "# 9. FastAPI – Query Parameters",
+      "heading_level": 1,
+      "body_text": "FastAPI – Python Web Framework\nScreenshot of FastAPI Swagger UI showing a GET request to /hello with parameters name=Ravi and age=20, and a successful 200 response with JSON body {\"name\": \"Ravi\", \"age\": 20}\n# Example\nYou can use Python’s type hints for the parameters of the function to be decorated. In this case, define name as str and age as int.\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n```\n",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "from fastapi import FastAPI\n\napp = FastAPI()",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_query_parameter_response",
+          "source_page": 28,
+          "figure_index_on_page": 1,
+          "document_figure_index": 13,
+          "full_description": "A screenshot of FastAPI Swagger UI showing a GET request to /hello with parameters name=Ravi and age=20, and a successful 200 response with a JSON body containing {\"name\": \"Ravi\", \"age\": 20}. The source text explicitly identifies the successful response and the query parameter values. The screenshot is used to show the endpoint after execution in the Swagger UI. It includes the result panel with a 200 status and returned JSON. The purpose is to demonstrate the completed query-parameter request and response.",
+          "purpose": "Shows the successful Swagger UI response for query parameters."
+        }
+      ],
+      "tables": null
+    },
+    {
+      "section_index": 29,
+      "heading": "# 9. FastAPI – Query Parameters",
+      "heading_level": 1,
+      "body_text": "```python\n@app.get(\"/hello/{name}\")\nasync def hello(name:str,age:int):\n    return {\"name\": name, \"age\":age}\n```\nTry entering \nhttp://localhost:8000/docs\n as the URL. This will open the Swagger UI (OpenAPI) documentation. The parameter 'name' is a path parameter and 'age' is a query parameter.\nScreenshot of FastAPI Swagger UI showing the /hello/{name} GET endpoint with path and query parameters",
+      "code_blocks": [
+        {
+          "block_index": 1,
+          "language": "python",
+          "code": "@app.get(\"/hello/{name}\")\nasync def hello(name:str,age:int):\n    return {\"name\": name, \"age\":age}",
+          "caption": null,
+          "is_reconstructed": false
+        }
+      ],
+      "images": [
+        {
+          "image_index": 1,
+          "image_type": "screenshot",
+          "figure_label": "",
+          "semantic_name": "fastapi_swagger_ui_mixed_parameters",
+          "source_page": 30,
+          "figure_index_on_page": 1,
+          "document_figure_index": 14,
+          "full_description": "A screenshot of FastAPI Swagger UI showing the /hello/{name} GET endpoint with both path and query parameters. The source text states that the parameter name is a path parameter and age is a query parameter. The screenshot is meant to display how the documentation distinguishes these parameter locations. The visible content is the endpoint documentation page for this mixed-parameter route. The purpose is to illustrate the combination of path and query parameters in Swagger UI.",
+          "purpose": "Shows a mixed path-and-query parameter endpoint in Swagger UI."
+        }
+      ],
+      "tables": null
+    }
+  ],
+  "unsectioned_content": null,
+  "extraction_notes": []
+}

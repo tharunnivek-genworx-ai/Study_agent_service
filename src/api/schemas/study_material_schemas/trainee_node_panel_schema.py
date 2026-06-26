@@ -13,6 +13,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import (
+    TraineeTopicResourceOut,
+)
+
 NodePanelType = Literal["pure-parent", "mixed-parent", "leaf-available", "leaf-locked"]
 SubtopicBadgeKind = Literal["available", "in_progress", "completed", "locked"]
 QuizBadgeKind = Literal["none", "not_taken", "in_progress", "completed"]
@@ -59,6 +63,7 @@ class QuizPanelActionsOut(BaseModel):
     quiz_button_variant: QuizButtonVariant = "secondary"
     show_attempts_button: bool = False
     attempts_button_label: str = "View attempts"
+    review_notice: str | None = None
 
 
 class StudyMaterialSummaryOut(BaseModel):
@@ -87,6 +92,14 @@ class OverallProgressOut(BaseModel):
     label: str
 
 
+class ArchiveSummaryOut(BaseModel):
+    """Lightweight archive hint for the topic detail panel."""
+
+    has_previous_versions: bool = False
+    archived_version_count: int = 0
+    show_upgrade_banner: bool = False
+
+
 class TraineeNodePanelOut(BaseModel):
     """Top-level response for the trainee topic detail panel."""
 
@@ -105,3 +118,7 @@ class TraineeNodePanelOut(BaseModel):
     default_tab: MixedParentTab | None = None
     all_subtopics_locked: bool = False
     is_fully_complete: bool = False
+    archive_summary: ArchiveSummaryOut | None = None
+    topic_resources: list[TraineeTopicResourceOut] = Field(default_factory=list)
+    topic_resources_section_title: str = "Topic resources"
+    topic_resources_empty_message: str = "No supplementary materials for this topic."

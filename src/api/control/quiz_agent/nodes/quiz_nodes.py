@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.config.dbconfig import settings
+from src.api.config.llm_config import llm_settings
 from src.api.control.quiz_agent.prompts.quiz_prompt import build_quiz_prompt
 from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
 from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
@@ -31,7 +31,12 @@ from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepo
 from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: E501
     StudyMaterialRepository,
 )
-from src.api.utils.LLM_utils.groq_retry import invoke_llm_rotating
+from src.api.schemas.common.generation_diagnostics_schema import QcInfraErrorType
+from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
+from src.api.utils.LLM_utils.llm_failure_diagnostics import (
+    build_llm_failure_qc_result,
+    build_qc_infra_error_result,
+)
 from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
 )
@@ -89,7 +94,9 @@ async def load_generation_context(
 
     study_repo = StudyMaterialRepository(session)
     version = await study_repo.get_published_version(state["node_id"])
-    if version is None:
+    if version is None or not (version.content or "").strip():
+        version = await study_repo.get_active_version(state["node_id"])
+    if version is None or not (version.content or "").strip():
         raise QuizHasNoPublishedStudyMaterialException()
 
     from uuid import UUID  # noqa: PLC0415
@@ -137,6 +144,8 @@ async def load_existing_quiz_if_regenerate(
 
 
 async def build_quiz_prompt_payload(state: QuizGraphState) -> QuizGraphState:
+    qc_attempt = state.get("qc_attempt") or 0
+    qc_feedback = (state.get("qc_feedback") or "").strip() if qc_attempt > 0 else None
     prompt_input = build_quiz_prompt(
         node_title=state.get("node_title"),
         study_material_content=state.get("study_material_content"),
@@ -145,6 +154,8 @@ async def build_quiz_prompt_payload(state: QuizGraphState) -> QuizGraphState:
         mode=state.get("mode", "generate"),
         existing_quiz_questions=state.get("existing_quiz_questions"),
         mentor_feedback=state.get("mentor_feedback"),
+        qc_feedback=qc_feedback,
+        failed_qc_feedback=state.get("failed_qc_feedback"),
     )
     return {**state, "prompt_input": prompt_input}
 
@@ -154,25 +165,38 @@ async def invoke_quiz_llm(state: QuizGraphState) -> QuizGraphState:
     if not prompt_input:
         return {**state, "error": "Missing prompt input for quiz generation."}
 
-    try:
-        raw, model, token_usage = await invoke_llm_rotating(
-            messages=[
-                SystemMessage(content=prompt_input["system_prompt"]),
-                HumanMessage(content=prompt_input["user_message"]),
-            ],
-            model=settings.llm_model,
-            temperature=0.4,
-            timeout=120,
+    result = await call_groq_with_rotation(
+        messages=[
+            SystemMessage(content=prompt_input["system_prompt"]),
+            HumanMessage(content=prompt_input["user_message"]),
+        ],
+        model=llm_settings.llm_model,
+        temperature=0.4,
+        timeout=120,
+        graph_node="quiz_generator",
+    )
+    if not result.ok:
+        logger.error(
+            "Groq quiz generation failed: %s",
+            result.error_type,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Quiz LLM invocation failed after retries")
-        return {**state, "error": f"Quiz generation failed: {exc}"}
+        return {
+            **state,
+            "terminal_llm_failure": True,
+            "llm_error_type": result.error_type,
+            "provider_meta": result.provider_meta,
+            "next_llm_retry_at": result.next_llm_retry_at,
+            "qc_failed_permanently": True,
+            "qc_result": build_llm_failure_qc_result(result),
+            "validated_questions": [],
+            "quiz_title": f"{state.get('node_title') or 'Quiz'} — Quiz",
+        }
 
     return {
         **state,
-        "raw_llm_output": raw,
-        "llm_model_used": model,
-        "token_usage": token_usage,
+        "raw_llm_output": result.content or "",
+        "llm_model_used": result.model or llm_settings.llm_model,
+        "token_usage": result.token_usage,
     }
 
 
@@ -318,6 +342,28 @@ async def validate_quiz_structure(state: QuizGraphState) -> QuizGraphState:
     return {**state, "validated_questions": parsed}
 
 
+def _resolve_qc_result_for_persist(
+    state: QuizGraphState,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return ``(qc_failed_permanently, qc_result_dict)`` for DB persistence."""
+    if state.get("terminal_llm_failure"):
+        return True, state.get("qc_result")
+
+    qc_failed_permanently = bool(state.get("qc_failed_permanently"))
+    raw = state.get("qc_result")
+
+    if qc_failed_permanently and isinstance(raw, dict):
+        return True, raw
+
+    if isinstance(raw, dict) and raw.get("qcInfraError"):
+        return False, raw
+
+    if qc_failed_permanently:
+        return True, raw if isinstance(raw, dict) else None
+
+    return False, None
+
+
 async def persist_quiz_draft(
     state: QuizGraphState, config: RunnableConfig
 ) -> QuizGraphState:
@@ -325,20 +371,37 @@ async def persist_quiz_draft(
     repo = QuizRepository(session)
     validated = state.get("validated_questions") or []
 
-    qc_failed_permanently = bool(state.get("qc_failed_permanently"))
-    qc_result = state.get("qc_result") if qc_failed_permanently else None
+    qc_failed_permanently, qc_result = _resolve_qc_result_for_persist(state)
+    next_llm_retry_at = state.get("next_llm_retry_at")
+    title = state.get("quiz_title") or "Quiz"
+    difficulty = state["difficulty"]
 
-    quiz_id = await repo.create_quiz_draft_with_questions(
-        node_id=state["node_id"],
-        space_id=state["space_id"],  # type: ignore[arg-type]
-        study_material_version_id=state["study_material_version_id"],  # type: ignore[arg-type]
-        title=state.get("quiz_title") or "Quiz",
-        difficulty=state["difficulty"],
-        created_by=state["mentor_id"],
-        questions=validated,
-        qc_failed_permanently=qc_failed_permanently,
-        qc_result=qc_result,
-    )
+    replace_quiz_id = state.get("quiz_id")
+    if replace_quiz_id is not None:
+        quiz_id = await repo.replace_quiz_draft_with_questions(
+            quiz_id=replace_quiz_id,
+            node_id=state["node_id"],
+            title=title,
+            difficulty=difficulty,
+            questions=validated,
+            qc_failed_permanently=qc_failed_permanently,
+            qc_result=qc_result,
+            study_material_version_id=state.get("study_material_version_id"),
+            next_llm_retry_at=next_llm_retry_at,
+        )
+    else:
+        quiz_id = await repo.create_quiz_draft_with_questions(
+            node_id=state["node_id"],
+            space_id=state["space_id"],  # type: ignore[arg-type]
+            study_material_version_id=state["study_material_version_id"],  # type: ignore[arg-type]
+            title=title,
+            difficulty=difficulty,
+            created_by=state["mentor_id"],
+            questions=validated,
+            qc_failed_permanently=qc_failed_permanently,
+            qc_result=qc_result,
+            next_llm_retry_at=next_llm_retry_at,
+        )
 
     return {**state, "created_quiz_id": quiz_id}
 
@@ -422,6 +485,17 @@ async def quality_check_node(
     """
     current_attempt = state.get("qc_attempt") or 0
 
+    # ── Skip QC on terminal LLM failure (diagnostics already set) ─
+    if state.get("terminal_llm_failure"):
+        logger.info("Skipping QC: terminal LLM failure")
+        return {
+            "qc_passed": True,
+            "qc_result": state.get("qc_result"),
+            "qc_feedback": "",
+            "qc_attempt": current_attempt,
+            "qc_failed_permanently": bool(state.get("qc_failed_permanently")),
+        }
+
     # ── Skip QC if there's an error or no generated questions ─────
     if state.get("error") or not state.get("validated_questions"):
         logger.info("Skipping QC: error or no generated questions")
@@ -468,33 +542,57 @@ async def quality_check_node(
     ]
 
     # ── Call LLM ────────────────────────────────────────────────
-    try:
-        raw_response, _, _ = await invoke_llm_rotating(
-            messages=messages,
-            model=settings.llm_model,
-            temperature=0.0,
-            timeout=90,
+    llm_result = await call_groq_with_rotation(
+        messages=messages,
+        model=llm_settings.qc_llm_model,
+        temperature=0.0,
+        timeout=90,
+        max_tokens=llm_settings.qc_llm_max_tokens,
+        graph_node="quality_check",
+    )
+    new_attempt = current_attempt + 1
+
+    if not llm_result.ok:
+        logger.error(
+            "Quiz QC LLM call failed (%s) — defaulting to pass (fail-open)",
+            llm_result.error_type,
         )
-    except Exception as exc:
-        logger.exception("Quiz QC LLM call failed — defaulting to pass (fail-open)")
+        qc_err_type: QcInfraErrorType = "llm_infra_error"
+        if llm_result.error_type in (
+            "llm_infra_error",
+            "rate_limited",
+            "token_limit",
+            "llm_key_pool_exhausted",
+            "qc_extraction_failed",
+            "qc_verification_failed",
+        ):
+            qc_err_type = cast(QcInfraErrorType, llm_result.error_type)
+        infra_qc_result = build_qc_infra_error_result(
+            provider_meta=llm_result.provider_meta,
+            retry_after_seconds=llm_result.retry_after_seconds,
+            next_llm_retry_at=llm_result.next_llm_retry_at,
+            error_type=qc_err_type,
+        )
         return {
             "qc_passed": True,
-            "qc_result": None,
+            "qc_result": infra_qc_result,
             "qc_feedback": "",
-            "qc_attempt": current_attempt + 1,
+            "qc_attempt": new_attempt,
             "qc_failed_permanently": False,
-            "error": f"Quality check LLM call failed (content accepted): {exc}",
+            "next_llm_retry_at": llm_result.next_llm_retry_at,
         }
+
+    raw_response = llm_result.content or ""
 
     # ── Parse response ──────────────────────────────────────────
     qc_result = _parse_qc_response(raw_response)
-    new_attempt = current_attempt + 1
 
     if qc_result is None:
         logger.warning("Quiz QC JSON parse failed — defaulting to pass (fail-open)")
+        infra_qc_result = build_qc_infra_error_result(error_type="llm_infra_error")
         return {
             "qc_passed": True,
-            "qc_result": None,
+            "qc_result": infra_qc_result,
             "qc_feedback": "",
             "qc_attempt": new_attempt,
             "qc_failed_permanently": False,

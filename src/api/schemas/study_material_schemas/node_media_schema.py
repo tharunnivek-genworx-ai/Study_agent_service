@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
-NodeMediaType = Literal["image", "video_url", "article_link"]
+NodeMediaType = Literal["image", "pdf", "video_url", "article_link"]
 
 
 # ── Request Schemas ──────────────────────────────────────────────────────────
@@ -35,10 +35,9 @@ NodeMediaType = Literal["image", "video_url", "article_link"]
 
 class NodeMediaAttachRequest(BaseModel):
     """
-    Body for POST /nodes/:id/media.
-    For 'image' type: file bytes arrive via multipart UploadFile;
-    this body carries the metadata fields only.
-    For 'video_url' and 'article_link': url is required; no file upload.
+    Body for POST /nodes/:id/media (multipart form fields).
+    For 'image' / 'pdf': file bytes arrive via UploadFile; url is omitted.
+    For 'video_url' / 'article_link': url is required; no file upload.
     """
 
     media_type: NodeMediaType

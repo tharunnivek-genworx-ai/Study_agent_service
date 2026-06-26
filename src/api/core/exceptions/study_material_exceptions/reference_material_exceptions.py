@@ -24,7 +24,7 @@ class ReferenceMaterialNotFoundForDeleteException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Reference material not found or already removed.",
+            detail="That reference PDF was not found or has already been removed.",
         )
 
 
@@ -39,8 +39,8 @@ class ReferenceMaterialNodeScopeMismatchException(HTTPException):
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Scope/node_id mismatch: "
-                "scope='node' requires a node_id; scope='space' must omit node_id."
+                "Topic-level reference PDFs must be attached to a specific topic. "
+                "Space-wide references cannot be tied to a single topic."
             ),
         )
 
@@ -57,7 +57,7 @@ class NodeMediaNotFoundException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Media item not found.",
+            detail="That media item was not found on this topic.",
         )
 
 
@@ -72,7 +72,7 @@ class NodeMediaReorderIncompleteException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reorder payload must include all active media items for this node.",
+            detail="To reorder topic resources, include every active item in your list.",
         )
 
 
@@ -88,7 +88,6 @@ class InvalidMediaTypePayloadException(HTTPException):
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Invalid media payload: 'image' type requires a file upload; "
-                "'video_url' and 'article_link' types require a url."
+                "Images require a file upload. Video and article links require a URL."
             ),
         )

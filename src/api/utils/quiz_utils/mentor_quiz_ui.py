@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from src.api.utils.study_agent_utils.version_labels import build_version_display_label
-
 if TYPE_CHECKING:
     from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
     from src.api.schemas.quiz_schemas.quiz_schema import QuizOut
@@ -19,61 +17,42 @@ class _PublishedVersionLike:
     content: str | None
 
 
-def _tooltip_study_material_not_published(version_label: str) -> str:
-    return f"Study material {version_label} is not published"
-
-
 def compute_mentor_quiz_ui_flags(
     *,
     published: _PublishedVersionLike | None,
+    source_sm: _PublishedVersionLike | None = None,
     quiz_out: QuizOut | None = None,
     quiz_row: Quiz | None = None,
     hints_status: str | None = None,
-    linked_version_number: int | None = None,
-    linked_generation_type: str | None = None,
+    has_other_live_quiz: bool = False,
+    live_sm_version_id: UUID | None = None,
+    quiz_sm_version_label: str | None = None,
 ) -> dict[str, bool | str | None]:
-    """Derive mentor quiz tab flags from published study material and quiz state."""
+    """Derive mentor quiz tab flags from published study material and quiz state.
+
+    The nudge uses version-ID comparison rather than timestamps: the quiz's
+    study_material_version_id is compared against the live SM version.  This
+    means publishing an outdated quiz without regenerating it does NOT clear
+    the nudge — the nudge persists until the quiz is regenerated from the
+    current live SM.
+    """
+    resolved_source_sm = source_sm or published
     can_generate_quiz = bool(
-        published is not None and (published.content or "").strip()
+        resolved_source_sm is not None and (resolved_source_sm.content or "").strip()
     )
     generate_disabled_tooltip: str | None = None
     if not can_generate_quiz:
-        generate_disabled_tooltip = (
-            "Publish study material for trainees before generating a quiz."
-        )
+        generate_disabled_tooltip = "Generate study material first."
 
     is_published = bool(
         (quiz_out and quiz_out.is_published) or (quiz_row and quiz_row.is_published)
     )
     total_questions = 0
-    study_material_version_id: UUID | None = None
 
     if quiz_out is not None:
         total_questions = quiz_out.total_questions
-        study_material_version_id = quiz_out.study_material_version_id
     elif quiz_row is not None:
         total_questions = quiz_row.total_questions
-        study_material_version_id = quiz_row.study_material_version_id
-
-    linked_version_label: str | None = None
-    if linked_version_number is not None and linked_generation_type is not None:
-        linked_version_label = build_version_display_label(
-            linked_version_number, linked_generation_type
-        )
-
-    current_published_version_label: str | None = None
-    if published is not None:
-        current_published_version_label = build_version_display_label(
-            published.version_number, published.generation_type
-        )
-
-    is_linked_version_published = False
-    if published is not None and study_material_version_id is not None:
-        is_linked_version_published = published.version_id == study_material_version_id
-
-    is_stale_version = bool(
-        study_material_version_id is not None and not is_linked_version_published
-    )
 
     has_quiz_questions = total_questions > 0
     can_access_hints = has_quiz_questions
@@ -81,16 +60,9 @@ def compute_mentor_quiz_ui_flags(
     hints_locked = is_published
     hints_locked_tooltip: str | None = None
     if hints_locked:
-        hints_locked_tooltip = "Unpublish the quiz to edit hints"
+        hints_locked_tooltip = "Remove the quiz from students to edit hints"
 
-    version_blocked = is_stale_version and linked_version_label is not None
-    version_block_tooltip = (
-        _tooltip_study_material_not_published(linked_version_label)
-        if version_blocked
-        else None
-    )
-
-    can_generate_hints = has_quiz_questions and not hints_locked and not version_blocked
+    can_generate_hints = has_quiz_questions and not hints_locked
     can_regenerate_hints = can_generate_hints
 
     resolved_hints_status = hints_status
@@ -99,12 +71,8 @@ def compute_mentor_quiz_ui_flags(
 
     can_publish_quiz = False
     publish_disabled_tooltip: str | None = None
-    if not is_published and study_material_version_id is not None:
-        if version_blocked and linked_version_label:
-            publish_disabled_tooltip = _tooltip_study_material_not_published(
-                linked_version_label
-            )
-        elif published is None:
+    if not is_published:
+        if published is None:
             publish_disabled_tooltip = (
                 "Publish study material for trainees before publishing the quiz."
             )
@@ -113,41 +81,32 @@ def compute_mentor_quiz_ui_flags(
         else:
             can_publish_quiz = True
 
-    can_edit_questions = has_quiz_questions and not is_published and not version_blocked
-    can_regenerate_quiz = (
-        has_quiz_questions and not is_published and not version_blocked
+    can_edit_questions = has_quiz_questions and not is_published
+    can_regenerate_quiz = has_quiz_questions and not is_published
+
+    # Soft nudge only — no blocking.  Show when the quiz's SM version ID
+    # differs from the currently live SM version ID, regardless of publish
+    # timestamps.  Publishing an outdated quiz without regenerating it will
+    # NOT clear this flag.
+    quiz_sm_version_id: UUID | None = None
+    if quiz_out is not None and quiz_out.study_material_version_id:
+        try:
+            quiz_sm_version_id = UUID(str(quiz_out.study_material_version_id))
+        except (ValueError, AttributeError):
+            pass
+    elif quiz_row is not None and quiz_row.study_material_version_id:
+        quiz_sm_version_id = quiz_row.study_material_version_id
+
+    show_update_quiz_nudge = bool(
+        live_sm_version_id is not None
+        and quiz_sm_version_id is not None
+        and live_sm_version_id != quiz_sm_version_id
     )
 
-    edit_question_disabled_tooltip = version_block_tooltip
-    regenerate_quiz_disabled_tooltip = version_block_tooltip
-
-    generate_new_quiz_cta_label: str | None = None
-    if is_stale_version and current_published_version_label:
-        generate_new_quiz_cta_label = (
-            f"Generate New Quiz for {current_published_version_label.split(' ')[0]}"
-        )
-
-    stale_helper_text: str | None = None
-    if is_stale_version and linked_version_label:
-        if current_published_version_label:
-            stale_helper_text = (
-                f"Generated from {linked_version_label.split(' ')[0]} · "
-                f"Current published version is "
-                f"{current_published_version_label.split(' ')[0]}"
-            )
-        else:
-            stale_helper_text = (
-                f"Generated from {linked_version_label.split(' ')[0]} · "
-                "No study material is currently published"
-            )
-
-    quiz_title_with_version: str | None = None
-    if quiz_out is not None and linked_version_label:
-        short_label = linked_version_label.split(" ")[0]
-        quiz_title_with_version = f"{quiz_out.title} ({short_label}) — Quiz"
-    elif quiz_row is not None and linked_version_label:
-        short_label = linked_version_label.split(" ")[0]
-        quiz_title_with_version = f"{quiz_row.title} ({short_label}) — Quiz"
+    publish_quiz_button_label = (
+        "Replace live quiz" if has_other_live_quiz else "Make quiz live for students"
+    )
+    unpublish_quiz_button_label = "Remove quiz from students"
 
     return {
         "can_generate_quiz": can_generate_quiz,
@@ -160,18 +119,14 @@ def compute_mentor_quiz_ui_flags(
         "can_publish_quiz": can_publish_quiz,
         "publish_disabled_tooltip": publish_disabled_tooltip,
         "published_study_material_version_id": (  # type: ignore[dict-item]
-            published.version_id if published else None
+            resolved_source_sm.version_id if resolved_source_sm else None
         ),
-        "study_material_version_id": study_material_version_id,  # type: ignore[dict-item]
-        "is_linked_version_published": is_linked_version_published,
-        "is_stale_version": is_stale_version,
-        "linked_version_label": linked_version_label,
-        "current_published_version_label": current_published_version_label,
-        "stale_helper_text": stale_helper_text,
-        "generate_new_quiz_cta_label": generate_new_quiz_cta_label,
-        "quiz_title_with_version": quiz_title_with_version,
         "can_edit_questions": can_edit_questions,
         "can_regenerate_quiz": can_regenerate_quiz,
-        "edit_question_disabled_tooltip": edit_question_disabled_tooltip,
-        "regenerate_quiz_disabled_tooltip": regenerate_quiz_disabled_tooltip,
+        "show_update_quiz_nudge": show_update_quiz_nudge,
+        "quiz_sm_version_label": quiz_sm_version_label
+        if show_update_quiz_nudge
+        else None,
+        "publish_quiz_button_label": publish_quiz_button_label,
+        "unpublish_quiz_button_label": unpublish_quiz_button_label,
     }

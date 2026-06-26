@@ -18,7 +18,7 @@ class QuizHasNoQuestionsException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Quiz has no active questions. Generate quiz questions first.",
+            detail="Create quiz questions before generating hints.",
         )
 
 
@@ -32,8 +32,8 @@ class HintsAlreadyCompleteException(HTTPException):
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "All active questions already have hints. "
-                "Use hint regeneration to overwrite specific questions."
+                "Every question already has hints. Use Regenerate hints to replace "
+                "hints for specific questions."
             ),
         )
 
@@ -48,8 +48,8 @@ class HintsCannotGenerateOnPublishedQuizException(HTTPException):
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Hints cannot be generated or regenerated on a published quiz. "
-                "Create a new quiz generation instead."
+                "You cannot change hints on a quiz that is already live for students. "
+                "Create a new quiz draft first."
             ),
         )
 

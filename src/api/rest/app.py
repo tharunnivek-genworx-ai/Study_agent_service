@@ -1,4 +1,10 @@
+# ruff: noqa: E402
 from pathlib import Path
+
+from src.api.observability.tracing import init_langsmith_tracing
+
+# Initialize LangSmith tracing environment variables on startup
+init_langsmith_tracing()
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles

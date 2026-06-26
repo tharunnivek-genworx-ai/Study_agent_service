@@ -6,7 +6,7 @@ class StudyMaterialNotFoundException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Study material version not found.",
+            detail="We could not find that study material version.",
         )
 
 
@@ -14,7 +14,10 @@ class StudyMaterialNoActiveVersionException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="No active study material version exists for this node.",
+            detail=(
+                "This topic has no active draft to work on. "
+                "Generate a new draft or restore one from your archive."
+            ),
         )
 
 
@@ -22,7 +25,7 @@ class StudyMaterialNoPublishedVersionException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No published study material is available for this node.",
+            detail="No published study material is available for students on this topic yet.",
         )
 
 
@@ -30,7 +33,7 @@ class StudyMaterialVersionAlreadyPublishedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This study material version is already published.",
+            detail="This version is already live for students.",
         )
 
 
@@ -41,8 +44,9 @@ class StudyMaterialPublishBlockedSpaceUnpublishedException(HTTPException):
             detail={
                 "error_code": "ESPACE_NOT_PUBLISHED",
                 "message": (
-                    "Re-publish this space first to make content visible to trainees. "
-                    "Individual content cannot be published while the space is unpublished."
+                    "Publish this course space first before making topic content "
+                    "visible to students. Individual topics cannot go live while "
+                    "the space is unpublished."
                 ),
             },
         )
@@ -52,7 +56,7 @@ class StudyMaterialVersionNotPublishedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This study material version is not published.",
+            detail="This version is not live for students, so it cannot be removed from them.",
         )
 
 
@@ -60,7 +64,7 @@ class StudyMaterialVersionMismatchException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Study material version does not belong to this node.",
+            detail="That study material version does not belong to this topic.",
         )
 
 
@@ -76,7 +80,7 @@ class StudyMaterialVersionAlreadyArchivedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This study material version is already archived.",
+            detail="This draft is already in your archive.",
         )
 
 
@@ -84,7 +88,7 @@ class StudyMaterialVersionNotArchivedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This study material version is not archived.",
+            detail="This draft is not in your archive, so it cannot be restored from there.",
         )
 
 
@@ -92,7 +96,38 @@ class StudyMaterialCannotArchivePublishedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Published versions cannot be archived. Unpublish is not supported.",
+            detail=(
+                "You cannot archive material that is live for students. "
+                "Remove it from students first if you no longer want it visible."
+            ),
+        )
+
+
+class StudyMaterialCannotArchiveNonDraftException(HTTPException):
+    """M12: mentor archive applies only to WIP drafts, not student-history rows."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Only unpublished drafts can be moved to your archive. "
+                "Older versions that students can still read in Previous versions "
+                "cannot be archived this way—use Remove from students instead."
+            ),
+        )
+
+
+class StudyMaterialCannotUnarchiveTraineeHistoryException(HTTPException):
+    """M12: trainee lifecycle archive rows must not re-enter the mentor workspace."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This version is kept for students in Previous versions and "
+                "cannot be restored to your working drafts. Publish it again if "
+                "you want students to see it as the live version."
+            ),
         )
 
 
@@ -101,8 +136,8 @@ class StudyMaterialReferenceParseMissingException(HTTPException):
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Reference material was used for this node but parsed content is not "
-                "stored. Run a fresh generate with the reference PDF first."
+                "A reference PDF was attached, but its text is not available yet. "
+                "Run Generate again with the reference PDF attached."
             ),
         )
 
@@ -113,8 +148,8 @@ class StudyMaterialClearDraftsBlockedByQuizException(HTTPException):
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"This topic has {quiz_count} {noun}. "
-                "Delete the quiz first before clearing study material drafts."
+                f"This topic still has {quiz_count} {noun}. "
+                "Delete or unpublish the quiz before discarding study material drafts."
             ),
         )
 
@@ -123,7 +158,10 @@ class StudyMaterialNoDraftsException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No study material drafts exist for this topic.",
+            detail=(
+                "There are no unpublished drafts to discard. "
+                "Restore a draft from your archive or generate new material."
+            ),
         )
 
 
@@ -153,7 +191,7 @@ class StudyMaterialPdfGenerationFailedException(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate study material PDF. Please try again.",
+            detail="We could not create the PDF. Please try again.",
         )
 
 
@@ -161,13 +199,40 @@ class StudyMaterialPublishBlockedReferenceMaterialRequiredException(HTTPExceptio
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot publish a study material version that requires reference material.",
+            detail=(
+                "This draft still needs a reference PDF before it can go live "
+                "for students. Add the reference and generate the material first."
+            ),
         )
 
 
 class StudyMaterialModificationBlockedReferenceMaterialRequiredException(HTTPException):
     def __init__(self, action: str = "modify") -> None:
+        verb = action.replace("_", " ")
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot {action} study material when reference material is required. Please upload reference material first.",
+            detail=(
+                f"You cannot {verb} this study material yet because a reference PDF "
+                "is required. Upload the reference PDF and generate the material first."
+            ),
+        )
+
+
+class StudyMaterialArchiveNotAvailableException(HTTPException):
+    """Raised when archive access is blocked (no active SM on node)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="There are no previous versions for students to view on this topic.",
+        )
+
+
+class StudyMaterialVersionNotInStudentArchiveException(HTTPException):
+    """Raised when a trainee requests a version that is not in Previous versions."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That version is not available in Previous versions for students.",
         )

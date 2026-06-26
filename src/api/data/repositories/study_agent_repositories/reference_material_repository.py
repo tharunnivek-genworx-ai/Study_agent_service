@@ -27,7 +27,7 @@ from src.api.data.models.postgres.e_learning_content.reference_materials import 
     ReferenceMaterial,
 )
 
-NodeMediaType = Literal["image", "video_url", "article_link"]
+NodeMediaType = Literal["image", "pdf", "video_url", "article_link"]
 ReferenceMaterialScope = Literal["space", "node"]
 
 
@@ -175,9 +175,10 @@ class ReferenceMaterialRepository:
         file_url: str | None,
         order_index: int,
         uploaded_by: UUID,
+        media_id: UUID | None = None,
     ) -> NodeMedia:
         media = NodeMedia(
-            media_id=uuid4(),
+            media_id=media_id or uuid4(),
             node_id=node_id,
             space_id=space_id,
             media_type=media_type,

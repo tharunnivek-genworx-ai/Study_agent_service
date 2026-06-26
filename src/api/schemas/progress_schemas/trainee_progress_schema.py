@@ -10,11 +10,12 @@ Progress model (TDD §3.2.4):
     - completion_status:
         'not_started'  — neither component started.
         'in_progress'  — at least one component partially or fully satisfied.
-        'completed'    — both study_material_completed=True AND quiz_passed=True.
+        'completed'    — all current requirements satisfied (see EC-21 when no quiz).
 
   Space-level (trainee_space_progress):
     - total_nodes  = active nodes with >= 1 published study material version.
-    - completed_nodes = nodes where completion_status='completed' for this trainee.
+    - completed_nodes = eligible nodes where live completion derivation is
+      ``completed`` for this trainee (not stale stored status).
     - Recomputed on tree changes and publish/unpublish events.
 
 API endpoints covered (TDD §3.5.3 & §3.5.4):
@@ -29,8 +30,9 @@ Edge cases (TDD §3.6):
   EC-20 — New quiz resets completion: quiz_passed=False, completion_status
            rolls back to 'in_progress' when a new quiz is published
            (handled by service on publish; not a trainee-triggered update).
-  EC-21 — Study material done but no quiz: progress=50%, completion_status
-           remains 'in_progress'. Valid state; no error.
+  EC-21 — Study material done but no published quiz: counts as fully complete
+           (progress_percentage=100, completion_status='completed').
+           Once a quiz is published, both reading and a passing score are required.
   EC-22 — quiz_best_score=MAX() across attempts; quiz_passed stays True
            once achieved even if later attempts score lower.
   EC-23 — Space progress recomputed by service on tree/publish changes;
@@ -178,7 +180,9 @@ class TraineeNodeProgressSummaryOut(BaseModel):
     so the frontend can render the tree without a secondary lookup.
 
     is_active=False means the node was archived after the trainee started it;
-    the frontend renders it with an '(Archived)' label (EC-3).
+    the frontend renders it with an '(Archived)' label (EC-3). Archived nodes
+    are excluded from both total_nodes and completed_nodes when space progress
+    is calculated (live rollup treats them as removed from the course).
     """
 
     model_config = ConfigDict(from_attributes=True)

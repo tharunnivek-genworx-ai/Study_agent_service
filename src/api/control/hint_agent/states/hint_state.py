@@ -5,7 +5,8 @@ Both state classes are plain ``TypedDict`` (no Pydantic, no dataclasses) and use
 merges into the running state.
 """
 
-from typing import TypedDict
+from datetime import datetime
+from typing import Any, TypedDict
 from uuid import UUID
 
 
@@ -24,3 +25,8 @@ class HintGraphState(TypedDict, total=False):
     token_usage: int | None
     llm_model_used: str | None
     error: str | None
+
+    # ── Hint generation diagnostics ───────────────────────────────
+    terminal_llm_failure: bool
+    hint_generation_diagnostics: dict[str, Any] | None
+    next_llm_retry_at: datetime | None

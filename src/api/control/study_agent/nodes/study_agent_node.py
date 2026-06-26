@@ -1,160 +1,214 @@
 # src/api/control/study_agent/nodes/study_agent_node.py
-"""Generate, regenerate, or improve study material using Groq."""
+"""Generate, regenerate, or improve study material using Groq Llama 70B."""
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.dbconfig import settings
-from src.api.control.study_agent.prompts import (
+from src.api.config.llm_config import llm_settings
+from src.api.control.study_agent.prompts.generation import (
     generation_prompt,
     improve_prompt,
     regeneration_prompt,
 )
+from src.api.control.study_agent.prompts.section import (
+    section_insert_prompt,
+    section_rework_prompt,
+)
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.utils.LLM_utils.groq_retry import invoke_llm_rotating
+from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
+from src.api.utils.study_agent_utils.generation.study_generation_json import (
+    canonicalize_generation_json,
+    is_reference_required_response,
+    parse_generation_document,
+)
+from src.api.utils.study_agent_utils.graph import node_helpers as helpers
+from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
+    build_document_outline,
+    merge_full_regeneration_preserving_passing,
+)
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_INSTRUCTION = (
-    "No specific teaching instruction provided. Write for a new IT hire "
-    "who knows basic programming but is unfamiliar with the topic."
-)
-
-_NO_REFERENCE_PLACEHOLDER = "no reference material provided."
-
-
-def _teaching_instruction(state: StudyMaterialGraphState) -> str:
-    return state.get("effective_instruction") or _DEFAULT_INSTRUCTION
-
-
-def _has_reference_material(state: StudyMaterialGraphState) -> bool:
-    """True when meaningful reference text is available for this run."""
-    text = (state.get("extracted_reference_text") or "").strip()
-    if not text or text.lower() == _NO_REFERENCE_PLACEHOLDER:
-        return False
-    return bool(
-        state.get("has_reference_material")
-        or state.get("reference_material_id") is not None
-    )
-
-
-def _reference_text(state: StudyMaterialGraphState) -> str:
-    return (state.get("extracted_reference_text") or "").strip()
-
-
-def _build_qc_feedback_block(state: StudyMaterialGraphState) -> str:
-    """Build QC feedback + reference material block for retry attempts.
-
-    Only returns content when qc_attempt > 0 (i.e. this is a retry after QC failure).
-    When reference material exists, it is re-included so the writer can correct
-    against the source.
-    """
-    qc_attempt = state.get("qc_attempt") or 0
-    if qc_attempt == 0:
-        return ""
-
-    qc_feedback = (state.get("qc_feedback") or "").strip()
-    if not qc_feedback:
-        return ""
-
-    parts: list[str] = [
-        "\n<quality_check_feedback>",
-        "IMPORTANT: Your previous output failed quality evaluation. "
-        "You MUST address ALL issues listed below in this revision.",
-        "",
-        qc_feedback,
-        "</quality_check_feedback>",
-    ]
-
-    # Re-include reference material for reference-based retries
-    has_reference = _has_reference_material(state)
-    if has_reference:
-        ref_text = _reference_text(state)
-        if ref_text:
-            parts.append("\n<reference_material_for_correction>")
-            parts.append(ref_text)
-            parts.append("</reference_material_for_correction>")
-
-    return "\n".join(parts)
-
-
-def _build_previous_failed_qc_feedback_block(state: StudyMaterialGraphState) -> str:
-    """Build a prompt block for the previously failed QC feedback from database.
-
-    Only applies to regenerate/improve mode runs when starting from a draft
-    that failed QC.
-    """
-    failed_feedback = state.get("failed_qc_feedback")
-    if not failed_feedback:
-        return ""
-
-    return (
-        "\n<previous_failed_quality_check_feedback>\n"
-        "IMPORTANT: The draft you are editing failed a previous quality evaluation. "
-        "Make sure to address the following issues in your new output:\n\n"
-        f"{failed_feedback.strip()}\n"
-        "</previous_failed_quality_check_feedback>"
-    )
-
 
 def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
+    """Return system prompt and user message for a JSON study document response."""
+    retry_mode = helpers.qc_retry_mode(state)
     mode = state.get("generation_mode") or "generate"
-    teaching_instruction = _teaching_instruction(state)
-    has_reference = _has_reference_material(state)
-    reference_text = _reference_text(state) if has_reference else ""
+    teaching_instruction = helpers.teaching_instruction(state)
+    has_reference = helpers.has_reference_material(state)
+    reference_text = helpers.reference_text(state) if has_reference else ""
+    reference_block = helpers.format_reference_block(has_reference, reference_text)
+
+    must_cover_block = helpers.build_must_cover_block(state)
+    topic_split_block = helpers.build_topic_split_block(state)
+    domain_block = helpers.build_domain_block(state)
+    qc_block = helpers.build_qc_feedback_block(state)
+    previous_failed_qc_block = helpers.build_previous_failed_qc_feedback_block(state)
+
+    if retry_mode == "full_regeneration" or mode == "generate":
+        user_message = generation_prompt.build_user_message(
+            topic_title=state.get("node_title", ""),
+            teaching_instruction_text=teaching_instruction,
+            must_cover_block=must_cover_block,
+            topic_split_block=topic_split_block,
+            domain_block=domain_block,
+            reference_block=reference_block,
+            qc_fix_block=qc_block,
+        )
+        return (
+            generation_prompt.build_system_prompt(has_reference=has_reference),
+            user_message,
+        )
 
     if mode == "regenerate":
         goal = (state.get("mentor_feedback") or "").strip()
         if not goal:
             goal = "Produce a meaningfully improved rewrite addressing gaps in the prior draft."
-        user_message = regeneration_prompt.USER_MESSAGE_TEMPLATE.format(
+        user_message = regeneration_prompt.build_user_message(
             topic_title=state.get("node_title", ""),
             teaching_instruction_text=teaching_instruction,
             mentor_regeneration_goal=goal,
             current_draft_content=state.get("current_draft_content") or "",
-            reference_block=regeneration_prompt.format_reference_user_block(
-                reference_text, has_reference=has_reference
-            ),
+            reference_block=reference_block,
+            must_cover_block=must_cover_block,
+            topic_split_block=topic_split_block,
+            domain_block=domain_block,
+            previous_failed_qc_block=previous_failed_qc_block,
+            qc_fix_block=qc_block,
         )
         return (
             regeneration_prompt.build_system_prompt(has_reference=has_reference),
-            user_message
-            + _build_previous_failed_qc_feedback_block(state)
-            + _build_qc_feedback_block(state),
+            user_message,
         )
 
-    if mode == "improve":
-        user_message = improve_prompt.USER_MESSAGE_TEMPLATE.format(
-            topic_title=state.get("node_title", ""),
-            teaching_instruction_text=teaching_instruction,
-            mentor_feedback_text=state.get("mentor_feedback") or "",
-            current_draft_content=state.get("current_draft_content") or "",
-            reference_block=improve_prompt.format_reference_user_block(
-                reference_text, has_reference=has_reference
-            ),
-        )
-        return (
-            improve_prompt.build_system_prompt(has_reference=has_reference),
-            user_message
-            + _build_previous_failed_qc_feedback_block(state)
-            + _build_qc_feedback_block(state),
-        )
-
-    user_message = generation_prompt.USER_MESSAGE_TEMPLATE.format(
+    user_message = improve_prompt.build_user_message(
         topic_title=state.get("node_title", ""),
         teaching_instruction_text=teaching_instruction,
-        reference_block=generation_prompt.format_reference_user_block(
-            reference_text, has_reference=has_reference
-        ),
+        mentor_feedback_text=state.get("mentor_feedback") or "",
+        current_draft_content=state.get("current_draft_content") or "",
+        reference_block=reference_block,
+        must_cover_block=must_cover_block,
+        topic_split_block=topic_split_block,
+        domain_block=domain_block,
+        previous_failed_qc_block=previous_failed_qc_block,
+        qc_fix_block=qc_block,
     )
     return (
-        generation_prompt.build_system_prompt(has_reference=has_reference),
-        user_message + _build_qc_feedback_block(state),
+        improve_prompt.build_system_prompt(has_reference=has_reference),
+        user_message,
+    )
+
+
+def _build_section_patch_messages(
+    state: StudyMaterialGraphState,
+    document: dict[str, Any],
+) -> tuple[str, str]:
+    has_reference = helpers.has_reference_material(state)
+    reference_block = section_rework_prompt.format_reference_block(
+        helpers.reference_text(state),
+        has_reference=has_reference,
+    )
+    section_failures = state.get("qc_section_failures") or []
+    patch_section_ids = helpers.section_ids_from_failures(section_failures)
+    user_message = section_rework_prompt.build_user_message(
+        topic_title=state.get("node_title", ""),
+        teaching_instruction=helpers.teaching_instruction(state),
+        document_outline=build_document_outline(document),
+        section_failures=section_failures,
+        document=document,
+        domain=state.get("domain") or "",
+        topic_split_block=helpers.build_scoped_topic_split_block(
+            state,
+            section_ids=patch_section_ids,
+        ),
+        reference_block=reference_block,
+        must_cover_checklist=state.get("must_cover_checklist") or [],
+        patch_section_ids=patch_section_ids,
+    )
+    return (
+        section_rework_prompt.build_system_prompt(has_reference=has_reference),
+        user_message,
+    )
+
+
+def _build_section_insert_messages(
+    state: StudyMaterialGraphState,
+    document: dict[str, Any],
+) -> tuple[str, str]:
+    missing_ids = set(state.get("qc_missing_checklist_ids") or [])
+    checklist = state.get("must_cover_checklist") or []
+    topic_split = state.get("topic_split") or []
+    topic_split_by_id = {
+        str(entry.get("id", "")).strip(): entry
+        for entry in topic_split
+        if isinstance(entry, dict) and str(entry.get("id", "")).strip()
+    }
+
+    missing_items = [item for item in checklist if item.get("id") in missing_ids]
+    for missing_id in sorted(missing_ids):
+        if any(item.get("id") == missing_id for item in missing_items):
+            continue
+        entry = topic_split_by_id.get(missing_id)
+        if entry is None:
+            continue
+        missing_items.append(
+            {
+                "id": missing_id,
+                "section_id": missing_id,
+                "concept": str(entry.get("heading") or missing_id),
+                "requirement": str(
+                    entry.get("purpose") or entry.get("coverage_notes") or ""
+                ),
+                "priority": "required",
+            }
+        )
+
+    has_reference = helpers.has_reference_material(state)
+    reference_block = section_insert_prompt.format_reference_block(
+        helpers.reference_text(state),
+        has_reference=has_reference,
+    )
+    user_message = section_insert_prompt.build_user_message(
+        topic_title=state.get("node_title", ""),
+        teaching_instruction=helpers.teaching_instruction(state),
+        document_outline=build_document_outline(document),
+        missing_checklist_items=missing_items,
+        topic_split=helpers.topic_split_for_targets(
+            topic_split,
+            missing_checklist_ids=sorted(missing_ids),
+            checklist=checklist,
+        ),
+        domain=state.get("domain") or "",
+        reference_block=reference_block,
+    )
+    return (
+        section_insert_prompt.build_system_prompt(has_reference=has_reference),
+        user_message,
+    )
+
+
+async def _call_study_generator(
+    *,
+    system_prompt: str,
+    user_message: str,
+) -> Any:
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_message),
+    ]
+    return await call_groq_with_rotation(
+        messages=messages,
+        model=llm_settings.llm_model,
+        temperature=0.2,
+        timeout=120,
+        graph_node="study_generator",
+        response_format={"type": "json_object"},
     )
 
 
@@ -162,61 +216,107 @@ async def study_agent_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    api_keys_configured = any(
-        [
-            settings.groq_api_key,
-            settings.groq_api_key_2,
-            settings.groq_api_key_3,
-            settings.groq_api_key_4,
-        ]
-    )
-    if not api_keys_configured:
+    if not helpers.groq_api_keys_configured():
         return {"error": "No GROQ API keys are configured."}
 
+    retry_mode = helpers.qc_retry_mode(state)
+    previous_document = (
+        helpers.parse_current_document(state)
+        if retry_mode == "full_regeneration"
+        else None
+    )
+    rewrite_section_ids = set(state.get("qc_reverify_section_ids") or [])
+
+    if retry_mode in helpers.SECTION_RETRY_MODES:
+        return await helpers.run_section_retry(
+            state,
+            retry_mode,
+            call_llm=_call_study_generator,
+            build_patch_messages=_build_section_patch_messages,
+            build_insert_messages=_build_section_insert_messages,
+        )
+
     system_prompt, user_message = _build_user_message(state)
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_message),
-    ]
     prompt_snapshot = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_message}"
 
-    try:
-        content, llm_model_used, token_usage = await invoke_llm_rotating(
-            messages=messages,
-            model=settings.llm_model,
-            temperature=0.3,
-            timeout=120,
+    result = await _call_study_generator(
+        system_prompt=system_prompt,
+        user_message=user_message,
+    )
+    if not result.ok:
+        logger.error(
+            "Groq study material generation failed: %s",
+            result.error_type,
         )
-    except Exception as exc:
-        logger.exception("Groq study material generation failed")
-        return {"error": f"Study material generation failed: {exc}"}
+        return helpers.study_llm_failure_return(
+            state,
+            result=result,
+            prompt_snapshot=prompt_snapshot,
+        )
 
-    raw_content = str(content).strip()
-    cleaned_content = raw_content
-    if cleaned_content.startswith("---"):
-        cleaned_content = cleaned_content[3:].strip()
+    llm_model_used = result.model or llm_settings.llm_model
+    token_usage = result.token_usage
+    raw_content = result.content or ""
 
-    improve_status = None
-    regenerate_status = None
+    try:
+        cleaned_content = helpers.normalize_generator_output(raw_content)
+    except ValueError as exc:
+        logger.error("Generator returned invalid JSON: %s", exc)
+        return {
+            "generated_content": raw_content.strip(),
+            "prompt_snapshot": prompt_snapshot,
+            "token_usage": token_usage,
+            "llm_model_used": llm_model_used,
+            "llm_output_content": raw_content.strip(),
+            "error": "Generator returned invalid JSON.",
+        }
 
     mode = state.get("generation_mode") or "generate"
-    if mode == "improve":
-        if cleaned_content.startswith("IMPROVE STATUS:"):
-            improve_status = "vague"
-        else:
-            improve_status = "generated"
-    elif mode == "regenerate":
-        if cleaned_content.startswith("REGENERATE STATUS:"):
-            regenerate_status = "vague"
-        else:
-            regenerate_status = "generated"
+    doc = parse_generation_document(cleaned_content)
+    if doc and is_reference_required_response(doc):
+        cleaned_content = canonicalize_generation_json(cleaned_content)
+    elif (
+        retry_mode == "full_regeneration"
+        and previous_document
+        and doc
+        and rewrite_section_ids
+        and not is_reference_required_response(doc)
+    ):
+        merged = merge_full_regeneration_preserving_passing(
+            doc,
+            previous_document,
+            rewrite_section_ids=rewrite_section_ids,
+            topic_split=state.get("topic_split") or [],
+        )
+        cleaned_content = canonicalize_generation_json(json.dumps(merged))
+        doc = merged
+        if rewrite_section_ids:
+            logger.info(
+                "Full regeneration merge preserved %d passing section(s); rewrote %s",
+                len(previous_document.get("sections") or []) - len(rewrite_section_ids),
+                ", ".join(sorted(rewrite_section_ids)),
+            )
+
+    improve_status, regenerate_status = helpers.resolve_mode_status(mode, doc)
+
+    helpers.log_study_output(
+        state,
+        generation_type=mode,
+        result=result,
+        cleaned_content=cleaned_content,
+        prompt_snapshot=prompt_snapshot,
+        llm_model_used=llm_model_used,
+        token_usage=token_usage,
+        improve_status=improve_status,
+        regenerate_status=regenerate_status,
+    )
 
     return {
-        "generated_content": str(content),
+        "generated_content": cleaned_content,
         "prompt_snapshot": prompt_snapshot,
         "token_usage": token_usage,
         "llm_model_used": llm_model_used,
         "improve_status": improve_status,
         "regenerate_status": regenerate_status,
-        "llm_output_content": str(content),
+        "llm_output_content": cleaned_content,
     }

@@ -42,17 +42,30 @@ from src.api.data.repositories.trainee_study_repositories.trainee_study_reposito
     TraineeStudyRepository,
 )
 from src.api.schemas.quiz_schemas.quiz_schema import (
+    ArchivedQuizReviewOut,
     PublishedQuizDiscoveryOut,
     QuizAttemptOut,
     QuizAttemptStartRequest,
     QuizAttemptSubmitRequest,
     QuizQuestionResponseOut,
     QuizQuestionResponseRequest,
+    TraineeArchivedQuizGroupOut,
+    TraineeArchivedQuizItemOut,
+    TraineeArchivedQuizListOut,
     TraineeQuizAttemptListOut,
     TraineeQuizAttemptSummaryOut,
     TraineeQuizOut,
     TraineeQuizQuestionOut,
 )
+from src.api.utils.content_lifecycle import (
+    list_trainee_archive_quizzes,
+    list_trainee_archive_sm,
+)
+from src.api.utils.content_lifecycle.archive_gates import (
+    assert_archive_list_gate,
+    assert_trainee_archive_context,
+)
+from src.api.utils.content_lifecycle.constants import LIFECYCLE_ACTIVE, LIFECYCLE_HIDDEN
 from src.api.utils.quiz_utils.study_material_link import (
     validate_study_material_is_currently_published_for_node,
 )
@@ -68,6 +81,9 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _assert_space_access,
     _assert_trainee,
     _get_node_and_assert_space_access,
+)
+from src.api.utils.study_agent_utils.version.version_labels import (
+    build_version_display_label,
 )
 
 
@@ -94,6 +110,24 @@ def _format_attempt_label(
     if status == "in_progress":
         return f"Attempt {attempt_number} · In progress · Started {formatted}"
     return f"Attempt {attempt_number} · {formatted}"
+
+
+def _pick_archive_review_attempt(
+    attempts: list[QuizAttempt],
+) -> QuizAttempt | None:
+    """Prefer submitted, then frozen/abandoned partial, then any attempt."""
+    if not attempts:
+        return None
+    for attempt in attempts:
+        if attempt.status == "submitted":
+            return attempt
+    for attempt in attempts:
+        if attempt.status == "abandoned":
+            return attempt
+    for attempt in attempts:
+        if attempt.status == "in_progress":
+            return attempt
+    return attempts[0]
 
 
 class TraineeQuizService:
@@ -186,17 +220,39 @@ class TraineeQuizService:
         )
 
     async def _get_quiz_for_attempt(self, attempt: QuizAttempt) -> Quiz:
-        quiz = await self.repo.get_published_quiz_by_node(attempt.node_id)
-        if quiz is None or quiz.quiz_id != attempt.quiz_id:
-            from src.api.data.repositories.quiz_repositories.quiz_repository import (
-                QuizRepository,  # noqa: PLC0415
+        quiz = await self.repo.get_quiz_by_id(attempt.quiz_id)
+        if quiz is None:
+            raise QuizNotFoundException()
+        if quiz.is_published and quiz.lifecycle_status == LIFECYCLE_ACTIVE:
+            return quiz
+        if quiz.lifecycle_status == LIFECYCLE_HIDDEN:
+            attempts = await self.repo.list_attempts_by_quiz_and_trainee(
+                quiz.quiz_id, attempt.trainee_id
             )
+            if attempts:
+                return quiz
+        raise QuizNotFoundException()
 
-            quiz_rep = QuizRepository(self.session)
-            quiz = await quiz_rep.get_quiz_by_id(attempt.quiz_id)
-            if quiz is None:
-                raise QuizNotFoundException()
-        return quiz
+    async def _resolve_quiz_for_trainee_access(
+        self,
+        *,
+        node_id: UUID,
+        quiz_id: UUID,
+        trainee_id: UUID,
+    ) -> Quiz:
+        """Allow published quizzes or hidden quizzes the trainee already attempted."""
+        quiz = await self.repo.get_quiz_by_id(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
+        if quiz.is_published and quiz.lifecycle_status == LIFECYCLE_ACTIVE:
+            return quiz
+        if quiz.lifecycle_status == LIFECYCLE_HIDDEN:
+            attempts = await self.repo.list_attempts_by_quiz_and_trainee(
+                quiz_id, trainee_id
+            )
+            if attempts:
+                return quiz
+        raise QuizNotFoundException()
 
     # ── Quiz attempt management ──────────────────────────────────────
 
@@ -212,7 +268,38 @@ class TraineeQuizService:
 
         quiz = await self.repo.get_published_quiz_by_node(node_id)
         if quiz is None:
-            return PublishedQuizDiscoveryOut()
+            hidden = await self.repo.get_hidden_quiz_with_trainee_attempts(
+                node_id, user_id
+            )
+            if hidden is None:
+                return PublishedQuizDiscoveryOut()
+            active_attempt = await self.repo.get_active_attempt_by_quiz_and_trainee(
+                hidden.quiz_id, user_id
+            )
+            submitted_count = (
+                await self.repo.count_submitted_attempts_by_quiz_and_trainee(
+                    hidden.quiz_id, user_id
+                )
+            )
+            return PublishedQuizDiscoveryOut(
+                quiz_id=hidden.quiz_id,
+                title=hidden.title,
+                difficulty=hidden.difficulty,
+                total_questions=hidden.total_questions,
+                has_in_progress_attempt=active_attempt is not None,
+                active_attempt_id=(
+                    active_attempt.attempt_id if active_attempt else None
+                ),
+                submitted_attempt_count=submitted_count,
+                can_start_new_attempt=False,
+                can_view_previous_attempts=submitted_count > 0
+                or active_attempt is not None,
+                is_review_only=True,
+                review_notice=(
+                    "This quiz was unpublished by your mentor. "
+                    "You can review your past attempts but cannot start a new one."
+                ),
+            )
 
         active_attempt = await self.repo.get_active_attempt_by_quiz_and_trainee(
             quiz.quiz_id, user_id
@@ -244,9 +331,9 @@ class TraineeQuizService:
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
 
-        quiz = await self.repo.get_published_quiz_by_node(node_id)
-        if quiz is None or quiz.quiz_id != quiz_id:
-            raise QuizNotFoundException()
+        quiz = await self._resolve_quiz_for_trainee_access(
+            node_id=node_id, quiz_id=quiz_id, trainee_id=user_id
+        )
 
         attempts = await self.repo.list_attempts_by_quiz_and_trainee(quiz_id, user_id)
         total = len(attempts)
@@ -350,7 +437,10 @@ class TraineeQuizService:
         if attempt.status == "submitted":
             raise AttemptAlreadySubmittedException()
         if attempt.status == "abandoned":
-            raise AttemptAbandonedException()
+            raise AttemptAbandonedException(
+                node_id=attempt.node_id,
+                quiz_id=attempt.quiz_id,
+            )
 
         if request.selected_option is None:
             raise InvalidSkipPayloadException(
@@ -471,7 +561,10 @@ class TraineeQuizService:
         if attempt.status == "submitted":
             raise AttemptAlreadySubmittedException()
         if attempt.status == "abandoned":
-            raise AttemptAbandonedException()
+            raise AttemptAbandonedException(
+                node_id=attempt.node_id,
+                quiz_id=attempt.quiz_id,
+            )
 
         responses = await self.repo.get_all_responses_for_attempt(attempt_id)
         active_questions = await self.repo.get_active_questions_by_quiz(attempt.quiz_id)
@@ -530,6 +623,12 @@ class TraineeQuizService:
 
         _assert_trainee_owns_attempt(attempt.trainee_id, user_id)
 
+        if attempt.status == "abandoned":
+            raise AttemptAbandonedException(
+                node_id=attempt.node_id,
+                quiz_id=attempt.quiz_id,
+            )
+
         quiz = await self._get_quiz_for_attempt(attempt)
         questions = await self.repo.get_all_questions_by_quiz(attempt.quiz_id)
         responses_map = await self.repo.get_responses_map(attempt_id)
@@ -539,4 +638,143 @@ class TraineeQuizService:
             attempt=attempt,
             questions=questions,
             responses_map=responses_map,
+        )
+
+    async def list_archived_quizzes(
+        self,
+        node_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> TraineeArchivedQuizListOut:
+        """List archived quizzes grouped by superseded SM version."""
+        await assert_trainee_archive_context(
+            self.session, node_id=node_id, user_id=user_id, role=role
+        )
+        if not await assert_archive_list_gate(self.session, node_id=node_id):
+            return TraineeArchivedQuizListOut(node_id=node_id, groups=[])
+
+        archived_versions = await list_trainee_archive_sm(self.session, node_id)
+        groups: list[TraineeArchivedQuizGroupOut] = []
+        for version in archived_versions:
+            quizzes = await list_trainee_archive_quizzes(
+                self.session,
+                node_id,
+                study_material_version_id=version.version_id,
+            )
+            if not quizzes:
+                continue
+            quiz_items: list[TraineeArchivedQuizItemOut] = []
+            for quiz in quizzes:
+                attempts = await self.repo.list_attempts_by_quiz_and_trainee(
+                    quiz.quiz_id, user_id
+                )
+                best_score = None
+                for attempt in attempts:
+                    if attempt.score is not None:
+                        pct = _score_percent(attempt.score)
+                        if pct is not None and (best_score is None or pct > best_score):
+                            best_score = pct
+                quiz_items.append(
+                    TraineeArchivedQuizItemOut(
+                        quiz_id=quiz.quiz_id,
+                        study_material_version_id=quiz.study_material_version_id,
+                        title=quiz.title,
+                        difficulty=quiz.difficulty,
+                        total_questions=quiz.total_questions,
+                        published_at=quiz.published_at,
+                        has_trainee_attempt=len(attempts) > 0,
+                        best_score_percent=best_score,
+                    )
+                )
+            groups.append(
+                TraineeArchivedQuizGroupOut(
+                    study_material_version_id=version.version_id,
+                    version_number=version.version_number,
+                    version_label=build_version_display_label(
+                        version.version_number, version.generation_type
+                    ),
+                    quizzes=quiz_items,
+                )
+            )
+
+        return TraineeArchivedQuizListOut(node_id=node_id, groups=groups)
+
+    async def review_archived_quiz(
+        self,
+        node_id: UUID,
+        quiz_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> ArchivedQuizReviewOut:
+        """Read-only review of an archived quiz with answers and explanations."""
+        await assert_trainee_archive_context(
+            self.session, node_id=node_id, user_id=user_id, role=role
+        )
+        if not await assert_archive_list_gate(self.session, node_id=node_id):
+            raise QuizNotFoundException()
+
+        quiz = await self.repo.get_archived_quiz_by_id(node_id, quiz_id)
+        if quiz is None:
+            raise QuizNotFoundException()
+
+        from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: PLC0415
+            StudyMaterialRepository,
+        )
+
+        sm_repo = StudyMaterialRepository(self.session)
+        sm_version = await sm_repo.get_version_by_id(quiz.study_material_version_id)
+        version_label = (
+            build_version_display_label(
+                sm_version.version_number, sm_version.generation_type
+            )
+            if sm_version is not None
+            else "Previous version"
+        )
+
+        attempts = await self.repo.list_attempts_by_quiz_and_trainee(quiz_id, user_id)
+        review_attempt = _pick_archive_review_attempt(attempts)
+
+        questions = await self.repo.get_all_questions_by_quiz(quiz_id)
+        responses_map: dict[UUID, QuizQuestionResponse] = {}
+        if review_attempt is not None:
+            responses_map = await self.repo.get_responses_map(review_attempt.attempt_id)
+
+        attempt_submitted = (
+            review_attempt is not None and review_attempt.status == "submitted"
+        )
+        is_partial_attempt = review_attempt is not None and review_attempt.status in (
+            "abandoned",
+            "in_progress",
+        )
+        review_questions = [
+            self._build_question_out(
+                q,
+                responses_map.get(q.question_id),
+                attempt_submitted=attempt_submitted or is_partial_attempt,
+            )
+            for q in questions
+        ]
+        # Archive review always shows correct answers and explanations
+        for q_out in review_questions:
+            orig = next(q for q in questions if q.question_id == q_out.question_id)
+            q_out.correct_option = orig.correct_option
+            q_out.explanation = orig.explanation
+
+        return ArchivedQuizReviewOut(
+            quiz_id=quiz.quiz_id,
+            node_id=quiz.node_id,
+            title=quiz.title,
+            difficulty=quiz.difficulty,
+            total_questions=quiz.total_questions,
+            study_material_version_id=quiz.study_material_version_id,
+            version_label=version_label,
+            attempt_id=review_attempt.attempt_id if review_attempt else None,
+            attempt_status=review_attempt.status if review_attempt else None,
+            is_partial_attempt=is_partial_attempt,
+            score_percent=(
+                _score_percent(review_attempt.score) if review_attempt else None
+            ),
+            total_correct=review_attempt.total_correct if review_attempt else None,
+            total_skipped=review_attempt.total_skipped if review_attempt else None,
+            questions=review_questions,
         )

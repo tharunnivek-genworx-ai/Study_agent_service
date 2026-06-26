@@ -1,16 +1,16 @@
-# src/api/core/services/content_service/study_material_service.py
+# src/api/core/services/study_agent_services/study_material_service.py
 """
-Study material service: all business logic for study_material_versions.
+Study material service: business logic for study_material_versions.
 
-Flow per TDD §3.2.1:
-  GENERATE            → access guard → LangGraph (resolver → llamaparse? → agent)
-                        → persist vN → deactivate previous active
-  REGENERATE          → load active draft + mentor goal → LangGraph (no llamaparse)
-                        → persist vN+1 with based_on_version_id
-  IMPROVE             → load active draft + mentor feedback → LangGraph (no llamaparse)
-                        → persist vN+1 with based_on_version_id
-  MANUAL EDIT         → access guard → insert new version row (no LLM)
-  PUBLISH / ACTIVATE / LIST / GET — unchanged
+Generation flow:
+  GENERATE   → access guard → LangGraph → persist vN → deactivate previous active
+  REGENERATE → load active draft + mentor goal → LangGraph → persist vN+1
+  IMPROVE    → load active draft + mentor feedback → LangGraph → persist vN+1
+  MANUAL EDIT → access guard → insert new version row (no LLM)
+
+Publish / unpublish (Option B): SM lifecycle is independent of quiz lifecycle on
+the node — publishing or superseding study material does not auto-publish,
+unpublish, or retire quizzes.
 """
 
 from typing import Any
@@ -23,13 +23,14 @@ from src.api.control.study_agent.graph.runner import (
     run_study_material_improve,
     run_study_material_regeneration,
 )
-from src.api.control.study_agent.nodes.quality_check_node import format_qc_feedback
-from src.api.control.study_agent.utils.instruction_snapshot import (
+from src.api.control.study_agent.utils.instructions.instruction_snapshot import (
     embed_effective_instruction_snapshot,
     extract_effective_instruction_snapshot,
 )
 from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
+    StudyMaterialCannotArchiveNonDraftException,
     StudyMaterialCannotArchivePublishedException,
+    StudyMaterialCannotUnarchiveTraineeHistoryException,
     StudyMaterialClearDraftsBlockedByQuizException,
     StudyMaterialModificationBlockedReferenceMaterialRequiredException,
     StudyMaterialNoActiveVersionException,
@@ -47,18 +48,29 @@ from src.api.core.services.study_agent_services.study_material_publish_ops impor
     execute_publish_version_cascade,
     execute_unpublish_version_cascade,
 )
-from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
+from src.api.data.models.postgres.e_learning_content.study_material_versions import (
+    StudyMaterialVersion,
+)
+from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+    MentorProgressRepository,
+)
 from src.api.data.repositories.space_node_repository.node_repository import (
     NodeRepository,
 )
 from src.api.data.repositories.study_agent_repositories.study_material_repository import (
     StudyMaterialRepository,
 )
+from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
+    TraineeQuizRepository,
+)
+from src.api.schemas.common.generation_diagnostics_schema import QualityCheckItemOut
+from src.api.schemas.qc_schemas.qc_check_schema import parse_qc_check_item
 from src.api.schemas.study_material_schemas.study_material_schema import (
     PublishedResourceTopicSummary,
     QualityCheckResultOut,
     QualityCheckScoresOut,
     RepublishChecklistNodeOut,
+    RetentionMode,
     SpacePublishedResourcesResponse,
     SpaceRepublishChecklistOut,
     StudyMaterialActivateRequest,
@@ -73,9 +85,23 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialPublishRequest,
     StudyMaterialRegenerateRequest,
     StudyMaterialUnpublishPreviewOut,
+    StudyMaterialUnpublishRequest,
     StudyMaterialVersionHistoryOut,
     StudyMaterialVersionOut,
     StudyMaterialVersionSummary,
+)
+from src.api.utils.content_lifecycle import (
+    count_blocking_quizzes_for_clear_drafts,
+    is_discarded,
+    is_mentor_accessible_sm,
+    is_mentor_discardable_sm,
+    is_mentor_openable_sm,
+    is_mentor_visible_sm,
+    is_trainee_live_sm,
+)
+from src.api.utils.content_lifecycle.constants import (
+    LIFECYCLE_ARCHIVED,
+    LIFECYCLE_DRAFT,
 )
 from src.api.utils.space_node_utils.build_node import (
     format_effective_instruction,
@@ -87,17 +113,84 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
 )
-from src.api.utils.study_agent_utils.publish_cascade import (
-    get_quizzes_linked_to_study_material_version,
-    partition_quizzes_by_publish_state,
-)
-from src.api.utils.study_agent_utils.study_material_artifacts import (
+from src.api.utils.study_agent_utils.artifacts.study_material_artifacts import (
     log_study_material_version,
 )
-from src.api.utils.study_agent_utils.version_actions import (
+from src.api.utils.study_agent_utils.generation.study_generation_json import (
+    content_for_persistence,
+)
+from src.api.utils.study_agent_utils.mentor.mentor_student_visibility import (
+    build_mentor_student_visibility,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
+    format_qc_feedback,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.results.scoring import (
+    public_scores,
+)
+from src.api.utils.study_agent_utils.version.version_actions import (
     compute_version_allowed_actions,
 )
-from src.api.utils.study_agent_utils.version_labels import build_version_display_label
+from src.api.utils.study_agent_utils.version.version_labels import (
+    build_version_display_label,
+)
+
+
+def _clear_drafts_block_reason_no_discardable_versions(
+    *,
+    versions: list[StudyMaterialVersion],
+    blocking_quiz_count: int,
+) -> str:
+    """Explain why clear-all-drafts is unavailable when nothing is discardable."""
+    live_sm_count = sum(1 for v in versions if is_trainee_live_sm(v))
+    accessible_count = sum(1 for v in versions if is_mentor_openable_sm(v))
+    mentor_archived_count = sum(
+        1
+        for v in versions
+        if v.is_archived and not is_discarded(lifecycle_status=v.lifecycle_status)
+    )
+
+    if live_sm_count > 0 and blocking_quiz_count > 0:
+        return (
+            "Study material and a quiz are live for trainees. "
+            "Unpublish both before regenerating from scratch."
+        )
+    if live_sm_count > 0:
+        return (
+            "Study material is live for trainees. "
+            "Unpublish it before regenerating from scratch."
+        )
+    if blocking_quiz_count > 0:
+        noun = "quiz" if blocking_quiz_count == 1 else "quizzes"
+        return (
+            f"This topic has {blocking_quiz_count} live or active draft {noun}. "
+            "Delete or unpublish them before regenerating from scratch."
+        )
+    if accessible_count > 0:
+        return (
+            "There are no unpublished drafts to discard—only live or student-archive "
+            "versions remain. Open existing material to edit or improve it."
+        )
+    if mentor_archived_count > 0:
+        return (
+            "Your drafts are in the archive. Restore one from the Archive panel, "
+            "or use Generate draft to create new material."
+        )
+    return "No study material has been generated for this topic yet."
+
+
+def _build_check_items(raw_checks: list[Any] | None) -> list[QualityCheckItemOut]:
+    """Map raw check dicts from graph state into typed schema items."""
+    if not raw_checks:
+        return []
+    items: list[QualityCheckItemOut] = []
+    for check in raw_checks:
+        if not isinstance(check, dict):
+            continue
+        parsed = parse_qc_check_item(check)
+        if parsed is not None:
+            items.append(parsed.to_quality_check_item_out())
+    return items
 
 
 def _build_qc_result_out(
@@ -108,26 +201,168 @@ def _build_qc_result_out(
     if raw is None or not isinstance(raw, dict):
         return None
     try:
-        scores_raw = raw.get("scores", {})
+        scores_raw = public_scores(raw.get("scores", {}))
         scores = QualityCheckScoresOut(
-            structure=scores_raw.get("structure"),
             content_accuracy=scores_raw.get("content_accuracy"),
             code_quality=scores_raw.get("code_quality"),
             section_depth=scores_raw.get("section_depth"),
-            readability=scores_raw.get("readability"),
             teaching_alignment=scores_raw.get("teaching_alignment"),
         )
+        checks = _build_check_items(raw.get("checks"))
         return QualityCheckResultOut(
             overall_status=raw.get("overall_status", "fail"),
             is_refusal=raw.get("is_refusal", False),
             hallucination_risk=raw.get("hallucination_risk", "none"),
             scores=scores,
+            checks=checks,
             issues=raw.get("issues", []),
             corrective_instructions=raw.get("corrective_instructions", ""),
             summary=raw.get("summary", ""),
+            must_cover_checklist=(
+                graph_result.get("must_cover_checklist")
+                or raw.get("must_cover_checklist")
+            ),
+            qc_llm_model_used=(
+                graph_result.get("qc_llm_model_used") or raw.get("qc_llm_model_used")
+            ),
+            qc_llm_models_used=(
+                graph_result.get("qc_llm_models_used") or raw.get("qc_llm_models_used")
+            ),
+            checklist_llm_model_used=(
+                graph_result.get("checklist_llm_model_used")
+                or raw.get("checklist_llm_model_used")
+            ),
+            qc_extraction=(
+                graph_result.get("qc_extraction") or raw.get("qc_extraction")
+            ),
         )
     except Exception:
         return None
+
+
+def _enrich_qc_result_dict(
+    raw: dict[str, Any],
+    graph_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach graph-level QC metadata to the persisted qc_result payload."""
+    enriched = dict(raw)
+    if graph_result.get("must_cover_checklist") is not None:
+        enriched.setdefault(
+            "must_cover_checklist", graph_result.get("must_cover_checklist")
+        )
+    if graph_result.get("qc_llm_model_used"):
+        enriched.setdefault("qc_llm_model_used", graph_result.get("qc_llm_model_used"))
+    if graph_result.get("qc_llm_models_used"):
+        enriched.setdefault(
+            "qc_llm_models_used", graph_result.get("qc_llm_models_used")
+        )
+    if graph_result.get("checklist_llm_model_used"):
+        enriched.setdefault(
+            "checklist_llm_model_used",
+            graph_result.get("checklist_llm_model_used"),
+        )
+    if graph_result.get("qc_extraction") is not None:
+        enriched.setdefault("qc_extraction", graph_result.get("qc_extraction"))
+    if graph_result.get("qc_verification_mode"):
+        enriched.setdefault(
+            "verification_mode", graph_result.get("qc_verification_mode")
+        )
+    scores = enriched.get("scores")
+    if isinstance(scores, dict):
+        enriched["scores"] = public_scores(scores)
+    return enriched
+
+
+def _strip_internal_scores_from_qc_dict(qc_dict: dict[str, Any]) -> dict[str, Any]:
+    """Remove routing-only score dimensions before API/DB persistence."""
+    result = dict(qc_dict)
+    scores = result.get("scores")
+    if isinstance(scores, dict):
+        result["scores"] = public_scores(scores)
+    return result
+
+
+def _build_concept_plan_from_graph(
+    graph_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Serialize concept checklist fields for conceptplan JSONB."""
+    must_cover = graph_result.get("must_cover_checklist")
+    topic_split = graph_result.get("topic_split")
+    domain = graph_result.get("domain")
+    if not must_cover and not topic_split and not domain:
+        return None
+    return {
+        "domain": domain or "",
+        "topic_split": topic_split or [],
+        "must_cover_checklist": must_cover or [],
+    }
+
+
+def _hydration_from_active_version(
+    active: StudyMaterialVersion,
+) -> tuple[dict[str, Any], str | None]:
+    """Build graph initial-state hydration from a persisted version row."""
+    hydration: dict[str, Any] = {}
+    # Concept plan is regenerated on every improve/regenerate run; only pass the
+    # previous plan as revision context so mentor_feedback can reshape it.
+    concept_plan = active.concept_plan
+    if isinstance(concept_plan, dict):
+        if concept_plan.get("must_cover_checklist"):
+            hydration["must_cover_checklist"] = concept_plan["must_cover_checklist"]
+        if concept_plan.get("topic_split"):
+            hydration["topic_split"] = concept_plan["topic_split"]
+        if concept_plan.get("domain"):
+            hydration["domain"] = concept_plan["domain"]
+    elif isinstance(active.qc_result, dict):
+        checklist = active.qc_result.get("must_cover_checklist")
+        if checklist:
+            hydration["must_cover_checklist"] = checklist
+
+    if active.qc_frozen_check_ids:
+        hydration["qc_frozen_check_ids"] = active.qc_frozen_check_ids
+    if active.qc_frozen_section_keys:
+        hydration["qc_frozen_section_keys"] = active.qc_frozen_section_keys
+
+    failed_qc_feedback: str | None = None
+    if isinstance(active.qc_result, dict):
+        feedback = format_qc_feedback(active.qc_result)
+        if feedback.strip():
+            failed_qc_feedback = feedback
+
+    return hydration, failed_qc_feedback
+
+
+def _resolve_qc_result_for_persist(
+    graph_result: dict[str, Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return ``(qc_failed_permanently, qc_result_dict)`` for DB persistence."""
+    qc_attempt = graph_result.get("qc_attempt") or 0
+
+    if graph_result.get("terminal_llm_failure"):
+        raw = graph_result.get("qc_result")
+        if isinstance(raw, dict):
+            return True, _strip_internal_scores_from_qc_dict(
+                _enrich_qc_result_dict(raw, graph_result)
+            )
+        return True, raw
+
+    if qc_attempt == 0:
+        return False, None
+
+    qc_failed_permanently = bool(graph_result.get("qc_failed_permanently"))
+    raw = graph_result.get("qc_result")
+
+    if isinstance(raw, dict):
+        if raw.get("errorType") or raw.get("error_type"):
+            return qc_failed_permanently, _strip_internal_scores_from_qc_dict(raw)
+        if raw.get("qcInfraError"):
+            return qc_failed_permanently, _strip_internal_scores_from_qc_dict(raw)
+        return qc_failed_permanently, _enrich_qc_result_dict(raw, graph_result)
+
+    qc_result_out = _build_qc_result_out(graph_result)
+    if qc_result_out:
+        return qc_failed_permanently, qc_result_out.model_dump(exclude_none=True)
+    return qc_failed_permanently, None
 
 
 class StudyMaterialService:
@@ -150,20 +385,21 @@ class StudyMaterialService:
         next_version = await repo.get_next_version_number(node_id)
 
         active = await repo.get_active_version(node_id)
-        if active is not None:
-            await repo.deactivate_version(active)
 
-        qc_failed_permanently = bool(graph_result.get("qc_failed_permanently"))
-        qc_result_out = (
-            _build_qc_result_out(graph_result) if qc_failed_permanently else None
+        qc_failed_permanently, qc_result_dict = _resolve_qc_result_for_persist(
+            graph_result
         )
-        qc_result_dict = qc_result_out.model_dump() if qc_result_out else None
+        next_llm_retry_at = graph_result.get("next_llm_retry_at")
+        qc_attempt_count = graph_result.get("qc_attempt") or 0
 
-        version = await repo.create_version(
+        content = content_for_persistence(graph_result["generated_content"])
+
+        version = await repo.create_version_with_deactivate(
+            active_version=active,
             node_id=node_id,
             space_id=space_id,
             version_number=next_version,
-            content=graph_result["generated_content"],
+            content=content,
             generation_type=generation_type,
             mentor_feedback_used=mentor_feedback_used,
             reference_material_id=reference_material_id,
@@ -174,10 +410,18 @@ class StudyMaterialService:
                 graph_result.get("effective_instruction"),
             ),
             token_usage=graph_result.get("token_usage"),
-            is_active=True,
             created_by=user_id,
             qc_failed_permanently=qc_failed_permanently,
             qc_result=qc_result_dict,
+            qc_passed=bool(graph_result.get("qc_passed")),
+            qc_attempt_count=qc_attempt_count,
+            generation_run_id=graph_result.get("artifact_run_id"),
+            concept_plan=_build_concept_plan_from_graph(graph_result),
+            checklist_llm_model_used=graph_result.get("checklist_llm_model_used"),
+            qc_verification_mode=graph_result.get("qc_verification_mode"),
+            qc_frozen_check_ids=graph_result.get("qc_frozen_check_ids"),
+            qc_frozen_section_keys=graph_result.get("qc_frozen_section_keys"),
+            next_llm_retry_at=next_llm_retry_at,
         )
         topic_title = graph_result.get("node_title") or str(node_id)
         log_study_material_version(
@@ -186,7 +430,7 @@ class StudyMaterialService:
             generation_type=generation_type,
             version_id=str(version.version_id),
             node_id=str(node_id),
-            content=graph_result["generated_content"],
+            content=content,
             graph_result=graph_result,
             mentor_feedback_used=mentor_feedback_used,
         )
@@ -264,9 +508,7 @@ class StudyMaterialService:
         based_on_version_id = active.version_id
         current_draft_content = active.content
 
-        failed_qc_feedback = None
-        if active.qc_failed_permanently and active.qc_result:
-            failed_qc_feedback = format_qc_feedback(active.qc_result)
+        hydration, failed_qc_feedback = _hydration_from_active_version(active)
 
         graph_result = await run_study_material_regeneration(
             session=self.session,
@@ -275,6 +517,7 @@ class StudyMaterialService:
             mentor_regeneration_goal=request.mentor_regeneration_goal,
             reference_material_id=reference_material_id,
             user_id=user_id,
+            hydration=hydration,
             failed_qc_feedback=failed_qc_feedback,
         )
         graph_result["node_title"] = node_title
@@ -342,9 +585,7 @@ class StudyMaterialService:
         based_on_version_id = active.version_id
         current_draft_content = active.content
 
-        failed_qc_feedback = None
-        if active.qc_failed_permanently and active.qc_result:
-            failed_qc_feedback = format_qc_feedback(active.qc_result)
+        hydration, failed_qc_feedback = _hydration_from_active_version(active)
 
         graph_result = await run_study_material_improve(
             session=self.session,
@@ -353,6 +594,7 @@ class StudyMaterialService:
             mentor_feedback=request.mentor_feedback,
             reference_material_id=reference_material_id,
             user_id=user_id,
+            hydration=hydration,
             failed_qc_feedback=failed_qc_feedback,
         )
         graph_result["node_title"] = node_title
@@ -492,9 +734,7 @@ class StudyMaterialService:
             version.version_number, version.generation_type
         )
 
-        has_draft_quizzes = False
-        has_published_quizzes = False
-        draft_quiz_count = 0
+        will_reset_trainee_read_progress = False
         previous_label: str | None = None
         current_published_label: str | None = None
         is_republishing_older = False
@@ -505,30 +745,18 @@ class StudyMaterialService:
             )
             current_published_label = previous_label
             is_republishing_older = version.version_number < previous.version_number
+            will_reset_trainee_read_progress = previous.version_id != version.version_id
 
-            if previous.version_id != version.version_id:
-                linked = await get_quizzes_linked_to_study_material_version(
-                    self.session,
-                    node_id=node_id,
-                    study_material_version_id=previous.version_id,
-                )
-                draft_quizzes, published_quizzes = partition_quizzes_by_publish_state(
-                    linked
-                )
-                has_draft_quizzes = len(draft_quizzes) > 0
-                has_published_quizzes = len(published_quizzes) > 0
-                draft_quiz_count = len(draft_quizzes)
-
-        requires_confirmation = has_draft_quizzes or has_published_quizzes
+        requires_confirmation = previous is not None
+        is_replacing_live_version = previous is not None
         return StudyMaterialPublishPreviewOut(
             requires_confirmation=requires_confirmation,
-            has_draft_quizzes=has_draft_quizzes,
-            has_published_quizzes=has_published_quizzes,
-            draft_quiz_count=draft_quiz_count,
             previous_version_label=previous_label,
             new_version_label=new_label,
             is_republishing_older=is_republishing_older,
             current_published_version_label=current_published_label,
+            will_reset_trainee_read_progress=will_reset_trainee_read_progress,
+            is_replacing_live_version=is_replacing_live_version,
         )
 
     async def publish_study_material(
@@ -538,20 +766,28 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
     ) -> StudyMaterialVersionOut:
-        """Publish a version with atomic quiz cascade when switching versions."""
+        """Publish a version; quiz lifecycle on the node is unchanged (Option B)."""
         _, version, repo = await self._load_publish_target(
             node_id, request.version_id, user_id, role
         )
         previous = await repo.get_published_version(node_id)
 
-        published = await execute_publish_version_cascade(
+        superseded_retention_mode = (
+            request.superseded_retention_mode or RetentionMode.keep_for_review
+        )
+
+        await execute_publish_version_cascade(
             self.session,
             node_id=node_id,
             target_version=version,
             previous_published_version=previous,
             published_by=user_id,
+            superseded_retention_mode=superseded_retention_mode,
         )
-        return StudyMaterialVersionOut.model_validate(published)
+        fresh = await repo.get_version_by_id(request.version_id)
+        if fresh is None:
+            raise StudyMaterialNotFoundException()
+        return StudyMaterialVersionOut.model_validate(fresh)
 
     async def preview_unpublish_study_material(
         self,
@@ -560,9 +796,9 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
     ) -> StudyMaterialUnpublishPreviewOut:
-        """Return pre-unpublish confirmation requirements without writing."""
+        """Return pre-unpublish info with engagement counts without writing."""
         _assert_mentor(role)
-        await _get_node_and_assert_space_access(
+        node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
 
@@ -573,31 +809,40 @@ class StudyMaterialService:
         if not version.is_published:
             raise StudyMaterialVersionNotPublishedException()
 
-        linked = await get_quizzes_linked_to_study_material_version(
-            self.session,
-            node_id=node_id,
-            study_material_version_id=version.version_id,
-        )
-        draft_quizzes, published_quizzes = partition_quizzes_by_publish_state(linked)
         version_label = build_version_display_label(
             version.version_number, version.generation_type
         )
 
+        progress_repo = MentorProgressRepository(self.session)
+        trainees_read_count = await progress_repo.count_trainees_with_read_progress(
+            node_id, node.space_id
+        )
+        trainees_quiz_attempt_count = (
+            await progress_repo.count_trainees_with_quiz_attempts(node_id)
+        )
+
+        quiz_repo = TraineeQuizRepository(self.session)
+        live_quiz = await quiz_repo.get_published_quiz_by_node(node_id)
+        has_live_quiz = live_quiz is not None
+        live_quiz_title = live_quiz.title if live_quiz is not None else None
+
         return StudyMaterialUnpublishPreviewOut(
             requires_confirmation=True,
-            has_draft_quizzes=len(draft_quizzes) > 0,
-            has_published_quizzes=len(published_quizzes) > 0,
             version_label=version_label,
+            trainees_read_count=trainees_read_count,
+            trainees_quiz_attempt_count=trainees_quiz_attempt_count,
+            has_live_quiz=has_live_quiz,
+            live_quiz_title=live_quiz_title,
         )
 
     async def unpublish_study_material(
         self,
         node_id: UUID,
-        request: StudyMaterialPublishRequest,
+        request: StudyMaterialUnpublishRequest,
         user_id: UUID,
         role: str,
     ) -> StudyMaterialVersionOut:
-        """Unpublish version; cascade-unpublish linked quizzes; retain drafts."""
+        """Unpublish version with a retention choice; quiz lifecycle is unchanged."""
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
@@ -610,12 +855,16 @@ class StudyMaterialService:
         if not version.is_published:
             raise StudyMaterialVersionNotPublishedException()
 
-        unpublished = await execute_unpublish_version_cascade(
+        await execute_unpublish_version_cascade(
             self.session,
             node_id=node_id,
             version=version,
+            retention_mode=request.retention_mode,
         )
-        return StudyMaterialVersionOut.model_validate(unpublished)
+        fresh = await repo.get_version_by_id(request.version_id)
+        if fresh is None:
+            raise StudyMaterialNotFoundException()
+        return StudyMaterialVersionOut.model_validate(fresh)
 
     # ── activate ───────────────────────────────────────────────────────
 
@@ -646,6 +895,9 @@ class StudyMaterialService:
             and current_active.version_id != target.version_id
         ):
             await repo.deactivate_version(current_active)
+            target = await repo.get_version_by_id(request.version_id)
+            if target is None or target.node_id != node_id:
+                raise StudyMaterialVersionMismatchException()
 
         target = await repo.activate_version(target)
         return StudyMaterialVersionOut.model_validate(target)
@@ -659,7 +911,13 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
     ) -> StudyMaterialVersionOut:
-        """Soft-hide a version from the working history shelf."""
+        """Move a WIP draft to the mentor archive shelf (``is_archived``).
+
+        Orthogonal to trainee ``lifecycle_status``: shelf-archived rows are never
+        trainee-visible regardless of lifecycle. Only ``lifecycle_status='draft'``
+        WIP versions may be shelved — superseded trainee history and published
+        layers use lifecycle transitions instead.
+        """
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
@@ -673,9 +931,14 @@ class StudyMaterialService:
             raise StudyMaterialVersionAlreadyArchivedException()
         if version.is_published:
             raise StudyMaterialCannotArchivePublishedException()
+        if version.lifecycle_status != LIFECYCLE_DRAFT:
+            raise StudyMaterialCannotArchiveNonDraftException()
 
         version = await repo.archive_version(version, archived_by=user_id)
-        return StudyMaterialVersionOut.model_validate(version)
+        archived = await repo.get_version_by_id(version_id)
+        if archived is None:
+            raise StudyMaterialVersionMismatchException()
+        return StudyMaterialVersionOut.model_validate(archived)
 
     async def unarchive_study_material_version(
         self,
@@ -684,7 +947,12 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
     ) -> StudyMaterialVersionOut:
-        """Restore an archived version to the working history shelf."""
+        """Restore a shelf-archived WIP draft to the mentor working history.
+
+        Does not publish or change ``lifecycle_status`` — the version returns to
+        the draft workflow only. Trainee lifecycle archive rows cannot be
+        restored to the working shelf.
+        """
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
@@ -696,9 +964,28 @@ class StudyMaterialService:
             raise StudyMaterialVersionMismatchException()
         if not version.is_archived:
             raise StudyMaterialVersionNotArchivedException()
+        if version.lifecycle_status == LIFECYCLE_ARCHIVED:
+            raise StudyMaterialCannotUnarchiveTraineeHistoryException()
 
         version = await repo.unarchive_version(version)
-        return StudyMaterialVersionOut.model_validate(version)
+
+        current_active = await repo.get_active_version(node_id)
+        if (
+            current_active is not None
+            and current_active.version_id != version.version_id
+        ):
+            await repo.deactivate_version(current_active)
+            version = await repo.get_version_by_id(version_id)
+            if version is None or version.node_id != node_id:
+                raise StudyMaterialVersionMismatchException()
+
+        if not version.is_active:
+            version = await repo.activate_version(version)
+
+        restored = await repo.get_version_by_id(version_id)
+        if restored is None:
+            raise StudyMaterialVersionMismatchException()
+        return StudyMaterialVersionOut.model_validate(restored)
 
     # ── list versions ──────────────────────────────────────────────────
 
@@ -709,6 +996,7 @@ class StudyMaterialService:
         role: str,
         *,
         archived: bool = False,
+        viewing_version_id: UUID | None = None,
     ) -> StudyMaterialVersionHistoryOut:
         """Returns versions ordered by version_number DESC.
 
@@ -728,7 +1016,9 @@ class StudyMaterialService:
         version_lookup = {v.version_id: v for v in all_versions}
         summaries = [
             StudyMaterialVersionSummary.from_version_row(
-                v, version_lookup=version_lookup
+                v,
+                version_lookup=version_lookup,
+                viewing_version_id=viewing_version_id,
             )
             for v in versions
         ]
@@ -801,7 +1091,8 @@ class StudyMaterialService:
         sm_repo = StudyMaterialRepository(self.session)
         all_versions = await sm_repo.get_all_versions(node_id, archived=None)
         active = await sm_repo.get_active_version(node_id)
-        has_versions = len(all_versions) > 0
+        has_versions = any(is_mentor_visible_sm(v) for v in all_versions)
+        has_workspace_versions = any(is_mentor_openable_sm(v) for v in all_versions)
 
         generation_snapshot: str | None = None
         instruction_changed = False
@@ -823,7 +1114,6 @@ class StudyMaterialService:
                 displayed_version = compute_version_allowed_actions(
                     version_id=target.version_id,
                     version_number=target.version_number,
-                    generation_type=target.generation_type,
                     is_active=target.is_active,
                     is_published=target.is_published,
                     is_archived=target.is_archived,
@@ -833,22 +1123,27 @@ class StudyMaterialService:
                     published_version_number=(
                         published.version_number if published else None
                     ),
-                    published_generation_type=(
-                        published.generation_type if published else None
-                    ),
                     space_is_published=space_is_published,
                     content=target.content,
                 )
 
         can_access_quiz = bool(
             space_is_published
-            and published is not None
-            and (published.content or "").strip()
+            and has_workspace_versions
+            and any(
+                is_mentor_accessible_sm(version) and (version.content or "").strip()
+                for version in all_versions
+            )
+        )
+
+        student_visibility = await build_mentor_student_visibility(
+            self.session, node_id
         )
 
         return StudyMaterialMentorUiStateOut(
             node_id=node_id,
             has_versions=has_versions,
+            has_workspace_versions=has_workspace_versions,
             active_version_id=active.version_id if active else None,
             published_version_id=published.version_id if published else None,
             can_access_study_material=has_versions,
@@ -857,6 +1152,7 @@ class StudyMaterialService:
             current_effective_instruction=current_instruction,
             generation_instruction_snapshot=generation_snapshot,
             displayed_version_actions=displayed_version,
+            student_visibility=student_visibility,
         )
 
     # ── clear all drafts ───────────────────────────────────────────────
@@ -864,48 +1160,54 @@ class StudyMaterialService:
     async def get_clear_drafts_eligibility(
         self, node_id: UUID, user_id: UUID, role: str
     ) -> StudyMaterialClearDraftsEligibilityOut:
-        """Check whether all study material drafts can be cleared for a node."""
+        """Check whether draft study material can be discarded for a node."""
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
 
         sm_repo = StudyMaterialRepository(self.session)
-        quiz_repo = QuizRepository(self.session)
         versions = await sm_repo.get_all_versions(node_id, archived=None)
-        version_count = len(versions)
-        quiz_count = await quiz_repo.count_quizzes_for_node(node_id)
+        discardable_versions = [v for v in versions if is_mentor_discardable_sm(v)]
+        version_count = len(discardable_versions)
+        blocking_quiz_count = await count_blocking_quizzes_for_clear_drafts(
+            self.session,
+            node_id,
+        )
 
         if version_count == 0:
             return StudyMaterialClearDraftsEligibilityOut(
                 can_clear=False,
                 version_count=0,
-                quiz_count=quiz_count,
-                block_reason="No study material drafts exist for this topic.",
-            )
-
-        if quiz_count > 0:
-            noun = "quiz" if quiz_count == 1 else "quizzes"
-            return StudyMaterialClearDraftsEligibilityOut(
-                can_clear=False,
-                version_count=version_count,
-                quiz_count=quiz_count,
-                block_reason=(
-                    f"This topic has {quiz_count} {noun}. "
-                    "Delete the quiz before clearing study material drafts."
+                quiz_count=blocking_quiz_count,
+                block_reason=_clear_drafts_block_reason_no_discardable_versions(
+                    versions=versions,
+                    blocking_quiz_count=blocking_quiz_count,
                 ),
             )
 
-        published_count = sum(1 for v in versions if v.is_published)
-        if published_count > 0:
-            noun = "version is" if published_count == 1 else "versions are"
+        if blocking_quiz_count > 0:
+            noun = "quiz" if blocking_quiz_count == 1 else "quizzes"
+            return StudyMaterialClearDraftsEligibilityOut(
+                can_clear=False,
+                version_count=version_count,
+                quiz_count=blocking_quiz_count,
+                block_reason=(
+                    f"This topic has {blocking_quiz_count} live or active draft {noun}. "
+                    "Delete or unpublish them before discarding study material drafts."
+                ),
+            )
+
+        live_sm_count = sum(1 for v in versions if is_trainee_live_sm(v))
+        if live_sm_count > 0:
+            noun = "version is" if live_sm_count == 1 else "versions are"
             return StudyMaterialClearDraftsEligibilityOut(
                 can_clear=False,
                 version_count=version_count,
                 quiz_count=0,
                 block_reason=(
-                    f"{published_count} published {noun} visible to trainees. "
-                    "Unpublish before clearing drafts."
+                    f"{live_sm_count} live study material {noun} visible to trainees. "
+                    "Unpublish before discarding drafts."
                 ),
             )
 
@@ -919,7 +1221,7 @@ class StudyMaterialService:
     async def clear_all_drafts(
         self, node_id: UUID, user_id: UUID, role: str
     ) -> StudyMaterialClearDraftsOut:
-        """Delete all study material versions so the mentor can generate fresh content."""
+        """Discard draft study material versions (and linked draft quizzes) for a node."""
         eligibility = await self.get_clear_drafts_eligibility(node_id, user_id, role)
         if not eligibility.can_clear:
             if eligibility.quiz_count > 0:
@@ -929,10 +1231,10 @@ class StudyMaterialService:
             raise StudyMaterialNoDraftsException()
 
         sm_repo = StudyMaterialRepository(self.session)
-        deleted_count = await sm_repo.delete_all_versions_for_node(node_id)
+        discarded_count = await sm_repo.discard_draft_versions_for_node(node_id)
         return StudyMaterialClearDraftsOut(
             node_id=node_id,
-            deleted_count=deleted_count,
+            discarded_count=discarded_count,
         )
 
     async def get_space_published_resources(

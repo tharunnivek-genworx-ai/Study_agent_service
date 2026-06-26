@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,9 +41,11 @@ async def _load_persisted_reference(
     if pdf_row is None:
         raise StudyMaterialReferenceParseMissingException()
 
-    images = await repo.list_images_for_pdf(pdf_row.llamaparse_pdf_id)
-    structured_data = build_parsed_reference_data(pdf_row.structured_json, images)
-    return pdf_row.formatted_text or "", structured_data
+    images = await repo.list_images_for_pdf(cast(UUID, pdf_row.llamaparse_pdf_id))
+    structured_data = build_parsed_reference_data(
+        cast(dict[str, Any], pdf_row.structured_json), images
+    )
+    return str(pdf_row.formatted_text or ""), structured_data
 
 
 def _cleanup_temp_reference(result: StudyMaterialGraphState) -> None:
@@ -85,6 +88,15 @@ async def _run_graph(
                 result.get("node_title"),
             )
 
+    if result.get("terminal_llm_failure"):
+        logger.warning(
+            "Study material LLM generation failed (%s) for node '%s' — "
+            "persisting placeholder draft with diagnostics.",
+            result.get("llm_error_type"),
+            result.get("node_title"),
+        )
+        return result
+
     if result.get("error"):
         detail = str(result["error"])
         logger.error("Study material generation failed: %s", detail)
@@ -125,6 +137,8 @@ async def run_study_material_regeneration(
     mentor_regeneration_goal: str,
     reference_material_id: UUID | None,
     user_id: UUID,
+    *,
+    hydration: dict[str, Any] | None = None,
     failed_qc_feedback: str | None = None,
 ) -> StudyMaterialGraphState:
     """Regenerate from active draft + mentor feedback. Skips LlamaParse when persisted."""
@@ -149,6 +163,8 @@ async def run_study_material_regeneration(
         "parsed_reference_data": parsed_data,
         "failed_qc_feedback": failed_qc_feedback,
     }
+    if hydration:
+        cast(dict[str, Any], initial_state).update(hydration)
     return await _run_graph(session, initial_state, user_id)
 
 
@@ -159,6 +175,8 @@ async def run_study_material_improve(
     mentor_feedback: str,
     reference_material_id: UUID | None,
     user_id: UUID,
+    *,
+    hydration: dict[str, Any] | None = None,
     failed_qc_feedback: str | None = None,
 ) -> StudyMaterialGraphState:
     """Improve active draft surgically. Skips LlamaParse when persisted reference exists."""
@@ -183,4 +201,6 @@ async def run_study_material_improve(
         "parsed_reference_data": parsed_data,
         "failed_qc_feedback": failed_qc_feedback,
     }
+    if hydration:
+        cast(dict[str, Any], initial_state).update(hydration)
     return await _run_graph(session, initial_state, user_id)

@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.data.models.postgres.e_learning_content.quiz_attempts import QuizAttempt
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
@@ -316,3 +317,36 @@ class MentorProgressRepository:
             .order_by(TopicNode.level, TopicNode.order_index)
         )
         return list(result.scalars().all())
+
+    # ── Unpublish engagement counts ───────────────────────────────────────────
+
+    async def count_trainees_with_read_progress(
+        self, node_id: UUID, space_id: UUID
+    ) -> int:
+        """Count distinct enrolled trainees who have read at least 1 % of the node's
+        study material (study_material_read_percent > 0).
+
+        Used to populate the engagement impact block in the SM unpublish preview.
+        """
+        result = await self.db.execute(
+            select(func.count(TraineeNodeProgress.trainee_id.distinct())).where(
+                and_(
+                    TraineeNodeProgress.node_id == node_id,
+                    TraineeNodeProgress.space_id == space_id,
+                    TraineeNodeProgress.study_material_read_percent > 0,
+                )
+            )
+        )
+        return int(result.scalar() or 0)
+
+    async def count_trainees_with_quiz_attempts(self, node_id: UUID) -> int:
+        """Count distinct trainees with any quiz attempt on the node (live or historical).
+
+        Used to populate the engagement impact block in SM and quiz unpublish previews.
+        """
+        result = await self.db.execute(
+            select(func.count(QuizAttempt.trainee_id.distinct())).where(
+                QuizAttempt.node_id == node_id
+            )
+        )
+        return int(result.scalar() or 0)
