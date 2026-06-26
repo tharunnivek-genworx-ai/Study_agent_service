@@ -47,10 +47,10 @@ class TraineeSpaceProgressRepository:
         return cast(TraineeSpaceProgress | None, result.scalars().first())
 
     async def count_completed_nodes(self, *, trainee_id: UUID, space_id: UUID) -> int:
-        """Active, published-material nodes where this trainee's
-        completion_status = 'completed'. Mirrors the filter in
-        MentorProgressRepository.count_total_nodes, narrowed to this
-        trainee via an inner join on trainee_node_progress.
+        """Legacy count based on stored ``completion_status``.
+
+        Prefer ``compute_trainee_space_rollup`` for reads and cache recompute —
+        it derives completion live from published content state.
         """
         result = await self.db.execute(
             select(func.count(TopicNode.node_id.distinct()))

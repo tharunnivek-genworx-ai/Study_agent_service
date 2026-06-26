@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.control.study_agent.utils.llama_parse_extractor import (
+from src.api.control.study_agent.utils.parsing.llama_parse_extractor import (
     LlamaParseExtractionResult,
     ParseImageRecord,
 )

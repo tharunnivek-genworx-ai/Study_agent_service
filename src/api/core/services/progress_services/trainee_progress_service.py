@@ -151,7 +151,27 @@ class TraineeProgressService:
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
 
-        await self.repo.mark_study_material_viewed(user_id, node_id, node.space_id)
+        existing = await self.repo.get_by_trainee_and_node(user_id, node_id)
+        has_published_quiz = (
+            await self.quiz_repo.get_published_quiz_by_node(node_id) is not None
+        )
+        completion_status = compute_completion_status(
+            study_material_completed=(
+                existing.study_material_completed if existing else False
+            ),
+            quiz_passed=existing.quiz_passed if existing else False,
+            study_material_read_percent=(
+                existing.study_material_read_percent if existing else 0
+            ),
+            quiz_attempt_count=existing.quiz_attempt_count if existing else 0,
+            has_published_quiz=has_published_quiz,
+        )
+        await self.repo.mark_study_material_viewed(
+            user_id,
+            node_id,
+            node.space_id,
+            completion_status=completion_status,
+        )
         await self.session.commit()
 
     async def update_study_material_progress(
@@ -169,11 +189,13 @@ class TraineeProgressService:
         if node is None or not node.is_active:
             raise NodeNotActiveException()
 
-        space = await self.guard_repo.get_space_by_id(node.space_id)
+        space_id = node.space_id
+
+        space = await self.guard_repo.get_space_by_id(space_id)
         if space is None or not space.is_published or not space.is_active:
             raise SpaceNotPublishedException()
 
-        is_member = await self.guard_repo.is_active_member(node.space_id, user_id)
+        is_member = await self.guard_repo.is_active_member(space_id, user_id)
         if not is_member:
             raise TraineeNotEnrolledInSpaceException()
 
@@ -201,7 +223,7 @@ class TraineeProgressService:
         progress_row = await self.guard_repo.upsert_node_progress(
             trainee_id=user_id,
             node_id=node_id,
-            space_id=node.space_id,
+            space_id=space_id,
             read_percent=payload.read_percent,
             study_material_completed=study_material_completed,
             has_published_quiz=has_published_quiz,
@@ -209,7 +231,7 @@ class TraineeProgressService:
         space_progress_service = TraineeSpaceProgressService(self.session)
         await space_progress_service.recompute_after_node_update(
             trainee_id=user_id,
-            space_id=node.space_id,
+            space_id=space_id,
         )
         # Refresh progress_row since the downstream recompute committed and expired it
         await self.session.refresh(progress_row)
@@ -257,11 +279,33 @@ class TraineeProgressService:
 
         Also refreshes the space-level rollup to keep trainee-space progress in sync.
         """
+        existing = await self.repo.get_by_trainee_and_node(trainee_id, node_id)
+        prior_best = existing.quiz_best_score if existing else None
+        best_score = score if prior_best is None else max(prior_best, score)
+        quiz_passed = existing.quiz_passed if existing else False
+        if best_score >= 0.70:
+            quiz_passed = True
+        prior_attempts = existing.quiz_attempt_count if existing else 0
+        has_published_quiz = (
+            await self.quiz_repo.get_published_quiz_by_node(node_id) is not None
+        )
+        completion_status = compute_completion_status(
+            study_material_completed=(
+                existing.study_material_completed if existing else False
+            ),
+            quiz_passed=quiz_passed,
+            study_material_read_percent=(
+                existing.study_material_read_percent if existing else 0
+            ),
+            quiz_attempt_count=prior_attempts + 1,
+            has_published_quiz=has_published_quiz,
+        )
         await self.repo.record_quiz_attempt_submission(
             trainee_id=trainee_id,
             node_id=node_id,
             space_id=space_id,
             score=score,
+            completion_status=completion_status,
         )
         space_progress_service = TraineeSpaceProgressService(self.session)
         await space_progress_service.recompute_after_node_update(

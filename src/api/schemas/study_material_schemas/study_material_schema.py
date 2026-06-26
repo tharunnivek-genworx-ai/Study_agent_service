@@ -36,12 +36,21 @@ for that — FastAPI's StreamingResponse handles it directly.
 """
 
 from datetime import datetime
-from typing import Literal, Protocol
+from enum import StrEnum
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from src.api.utils.study_agent_utils.version_labels import (
+from src.api.schemas.common.generation_diagnostics_schema import (
+    GenerationDiagnosticsOut,
+    QualityCheckItemOut,
+)
+from src.api.utils.study_agent_utils.mentor.mentor_display_badge import (
+    compute_mentor_display_badge,
+    compute_student_visibility_hint,
+)
+from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
     truncate_feedback,
 )
@@ -50,11 +59,9 @@ from src.api.utils.study_agent_utils.version_labels import (
 class QualityCheckScoresOut(BaseModel):
     """Individual dimension scores from the QC evaluator."""
 
-    structure: int | None = None
     content_accuracy: int | None = None
     code_quality: int | None = None
     section_depth: int | None = None
-    readability: int | None = None
     teaching_alignment: int | None = None
 
 
@@ -69,14 +76,31 @@ class QualityCheckResultOut(BaseModel):
     is_refusal: bool = False
     hallucination_risk: Literal["none", "low", "medium", "high"]
     scores: QualityCheckScoresOut
+    checks: list[QualityCheckItemOut] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     corrective_instructions: str = ""
     summary: str = ""
+    must_cover_checklist: list[dict[str, Any]] | None = None
+    qc_llm_model_used: str | None = None
+    qc_llm_models_used: dict[str, str | None] | None = None
+    checklist_llm_model_used: str | None = None
+    qc_extraction: dict[str, Any] | None = None
 
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
 GenerationType = Literal["generate", "regenerate", "improve", "manual_edit"]
+
+
+class RetentionMode(StrEnum):
+    """How to treat content after unpublishing.
+
+    remove_completely — hides the version entirely (not in Previous versions).
+    keep_for_review   — archives the version so trainees can still open it.
+    """
+
+    remove_completely = "remove_completely"
+    keep_for_review = "keep_for_review"
 
 
 class _VersionRowLike(Protocol):
@@ -93,6 +117,7 @@ class _VersionRowLike(Protocol):
     is_archived: bool
     archived_at: datetime | None
     published_at: datetime | None
+    lifecycle_status: str
     created_by: UUID
     created_at: datetime
 
@@ -189,28 +214,55 @@ class StudyMaterialPublishRequest(BaseModel):
         ...,
         description="The study_material_versions.version_id to publish.",
     )
+    superseded_retention_mode: RetentionMode | None = Field(
+        default=None,
+        description=(
+            "When replacing a live version, controls the superseded edition. "
+            "keep_for_review — moves it to Previous versions. "
+            "remove_completely — hides it from students (not in Previous versions). "
+            "Defaults to keep_for_review when omitted."
+        ),
+    )
 
 
 class StudyMaterialPublishPreviewOut(BaseModel):
     """Pre-publish check returned before committing."""
 
     requires_confirmation: bool
-    has_draft_quizzes: bool
-    has_published_quizzes: bool
-    draft_quiz_count: int
     previous_version_label: str | None = None
     new_version_label: str
     is_republishing_older: bool = False
     current_published_version_label: str | None = None
+    will_reset_trainee_read_progress: bool = False
+    is_replacing_live_version: bool = False
+
+
+class StudyMaterialUnpublishRequest(BaseModel):
+    """Body for PATCH /nodes/:id/study-material/unpublish."""
+
+    version_id: UUID = Field(..., description="The version_id to unpublish.")
+    retention_mode: RetentionMode = Field(
+        ...,
+        description=(
+            "remove_completely — hidden from students, not in Previous versions. "
+            "keep_for_review — archived, accessible in Previous versions."
+        ),
+    )
 
 
 class StudyMaterialUnpublishPreviewOut(BaseModel):
-    """Pre-unpublish check returned before committing."""
+    """Pre-unpublish check returned before committing.
+
+    Engagement counts are always present (zero when no activity yet) so the
+    frontend can always render the impact block consistently.
+    """
 
     requires_confirmation: bool
-    has_draft_quizzes: bool
-    has_published_quizzes: bool
     version_label: str
+    trainees_read_count: int = 0
+    trainees_quiz_attempt_count: int = 0
+    has_live_quiz: bool = False
+    live_quiz_title: str | None = None
 
 
 class VersionLineageItem(BaseModel):
@@ -278,7 +330,16 @@ class StudyMaterialVersionOut(BaseModel):
 
     # ── Quality-Check fields (populated only on LLM-generated versions) ──
     qc_failed_permanently: bool = False
-    qc_result: QualityCheckResultOut | None = None
+    qc_result: GenerationDiagnosticsOut | None = None
+    qc_passed: bool = False
+    qc_attempt_count: int = 0
+    generation_run_id: str | None = None
+    concept_plan: dict[str, Any] | None = None
+    checklist_llm_model_used: str | None = None
+    qc_verification_mode: Literal["full", "targeted"] | None = None
+    qc_frozen_check_ids: list[str] | None = None
+    qc_frozen_section_keys: list[str] | None = None
+    next_llm_retry_at: datetime | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -309,6 +370,9 @@ class StudyMaterialVersionSummary(BaseModel):
     is_archived: bool = False
     archived_at: datetime | None = None
     published_at: datetime | None
+    lifecycle_status: str = "draft"
+    mentor_display_badge: str
+    student_visibility_hint: str | None = None
     created_by: UUID
     created_at: datetime
 
@@ -323,6 +387,7 @@ class StudyMaterialVersionSummary(BaseModel):
         version: _VersionRowLike,
         *,
         version_lookup: dict[UUID, _VersionRowLike] | None = None,
+        viewing_version_id: UUID | None = None,
     ) -> "StudyMaterialVersionSummary":
         """Build summary with mentor-friendly display fields and lineage."""
         based_on_id = version.based_on_version_id
@@ -364,6 +429,23 @@ class StudyMaterialVersionSummary(BaseModel):
             "is_archived": version.is_archived,
             "archived_at": version.archived_at,
             "published_at": version.published_at,
+            "lifecycle_status": version.lifecycle_status,
+            "mentor_display_badge": compute_mentor_display_badge(
+                is_published=version.is_published,
+                lifecycle_status=version.lifecycle_status,
+                is_archived=version.is_archived,
+                published_at=version.published_at,
+            ),
+            "student_visibility_hint": compute_student_visibility_hint(
+                is_published=version.is_published,
+                lifecycle_status=version.lifecycle_status,
+                is_archived=version.is_archived,
+                published_at=version.published_at,
+                is_viewing=(
+                    viewing_version_id is not None
+                    and viewing_version_id == version.version_id
+                ),
+            ),
             "created_by": version.created_by,
             "created_at": version.created_at,
         }
@@ -394,7 +476,7 @@ class StudyMaterialClearDraftsOut(BaseModel):
     """Returned after DELETE /nodes/:id/study-material/drafts."""
 
     node_id: UUID
-    deleted_count: int
+    discarded_count: int
 
 
 class VersionAllowedActionsOut(BaseModel):
@@ -405,9 +487,21 @@ class VersionAllowedActionsOut(BaseModel):
     can_edit_active_draft: bool
     is_viewing_non_active: bool
     is_viewing_archived: bool
-    publish_button_label: str = "Publish for trainees"
+    publish_button_label: str = "Make live for students"
     publish_disabled_tooltip: str | None = None
+    unpublish_button_label: str = "Remove from students"
+    unpublish_tooltip: str | None = None
     unpublish_disabled_tooltip: str | None = None
+
+
+class MentorStudentVisibilityOut(BaseModel):
+    """What students currently see on this topic."""
+
+    live_material_label: str | None = None
+    live_material_version_id: UUID | None = None
+    previous_version_count: int = 0
+    previous_version_labels: list[str] = Field(default_factory=list)
+    live_quiz_title: str | None = None
 
 
 class StudyMaterialMentorUiStateOut(BaseModel):
@@ -415,6 +509,7 @@ class StudyMaterialMentorUiStateOut(BaseModel):
 
     node_id: UUID
     has_versions: bool
+    has_workspace_versions: bool = False
     active_version_id: UUID | None
     published_version_id: UUID | None = None
     can_access_study_material: bool
@@ -423,6 +518,7 @@ class StudyMaterialMentorUiStateOut(BaseModel):
     current_effective_instruction: str
     generation_instruction_snapshot: str | None
     displayed_version_actions: VersionAllowedActionsOut | None
+    student_visibility: MentorStudentVisibilityOut
 
 
 class TraineeStudyMaterialOut(BaseModel):
@@ -452,6 +548,42 @@ class TraineeStudyMaterialOut(BaseModel):
     published_at: datetime | None
     study_material_read_percent: int = Field(default=0, ge=0, le=100)
     study_material_completed: bool = False
+
+
+class TraineeArchivedSmItemOut(BaseModel):
+    """Metadata for one superseded study material version in trainee archive."""
+
+    version_id: UUID
+    version_number: int
+    version_label: str
+    published_at: datetime | None
+    superseded_at: datetime | None = None
+    you_read_this: bool = False
+    has_archived_quiz: bool = False
+    archived_quiz_id: UUID | None = None
+    is_current_version: bool = False
+
+
+class TraineeArchivedSmListOut(BaseModel):
+    """List of superseded SM versions for GET .../study-material/archive."""
+
+    node_id: UUID
+    versions: list[TraineeArchivedSmItemOut] = Field(default_factory=list)
+
+
+class TraineeArchivedStudyMaterialOut(BaseModel):
+    """Read-only archived SM body — no progress writes on this view."""
+
+    version_id: UUID
+    node_id: UUID
+    space_id: UUID
+    version_number: int
+    version_label: str
+    content: str
+    reference_material_id: UUID | None = None
+    published_at: datetime | None
+    superseded_at: datetime | None = None
+    is_archived_reference: bool = True
 
 
 class PublishedResourceTopicSummary(BaseModel):
@@ -494,4 +626,5 @@ class StudyMaterialFeedbackResponse(BaseModel):
 
     # ── Quality-Check fields ──────────────────────────────────────
     qc_failed_permanently: bool = False
-    qc_result: QualityCheckResultOut | None = None
+    qc_result: GenerationDiagnosticsOut | None = None
+    next_llm_retry_at: datetime | None = None

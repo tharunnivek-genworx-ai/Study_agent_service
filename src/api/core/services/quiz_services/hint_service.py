@@ -38,7 +38,7 @@ from src.api.schemas.quiz_schemas.hint_schema import (
 from src.api.schemas.quiz_schemas.quiz_schema import QuizOut, QuizQuestionOut
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.study_material_link import (
-    validate_quiz_linked_version_is_published,
+    require_mentor_quiz_study_material_source,
 )
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
@@ -69,11 +69,7 @@ class HintService:
         if quiz.is_published:
             raise HintsCannotGenerateOnPublishedQuizException()
         sm_repo = StudyMaterialRepository(self.session)
-        await validate_quiz_linked_version_is_published(
-            sm_repo,
-            node_id=node_id,
-            study_material_version_id=quiz.study_material_version_id,
-        )
+        await require_mentor_quiz_study_material_source(sm_repo, node_id=node_id)
         return repo, quiz
 
     async def _build_quiz_out(self, quiz_id: UUID, quiz) -> QuizOut:  # type: ignore[no-untyped-def]
@@ -126,6 +122,8 @@ class HintService:
 
         quiz_repo = QuizRepository(self.session)
         updated_quiz = await quiz_repo.get_quiz_by_id(quiz_id)
+        if updated_quiz is None:
+            raise HintGenerationFailedException()
         return await self._build_quiz_out(quiz_id, updated_quiz)
 
     async def regenerate_hints(
@@ -173,6 +171,8 @@ class HintService:
 
         quiz_repo = QuizRepository(self.session)
         updated_quiz = await quiz_repo.get_quiz_by_id(quiz_id)
+        if updated_quiz is None:
+            raise HintGenerationFailedException()
         return await self._build_quiz_out(quiz_id, updated_quiz)
 
     async def delete_hints_draft(

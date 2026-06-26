@@ -25,7 +25,9 @@ _compiled_graph = None
 
 def _route_after_invoke(
     state: HintGraphState,
-) -> Literal["parse_hint_output", "__end__"]:
+) -> Literal["parse_hint_output", "persist_hint_failure_diagnostics", "__end__"]:
+    if state.get("terminal_llm_failure"):
+        return "persist_hint_failure_diagnostics"
     if state.get("error"):
         return "__end__"
     return "parse_hint_output"
@@ -57,6 +59,10 @@ def build_hint_generation_graph() -> Any:
     graph.add_node("parse_hint_output", hint_nodes.parse_hint_output)
     graph.add_node("validate_hint_quality", hint_nodes.validate_hint_quality)
     graph.add_node("persist_hints_to_questions", hint_nodes.persist_hints_to_questions)
+    graph.add_node(
+        "persist_hint_failure_diagnostics",
+        hint_nodes.persist_hint_failure_diagnostics,
+    )
 
     graph.set_entry_point("load_hint_context")
     graph.add_edge("load_hint_context", "build_hint_prompt_payload")
@@ -65,6 +71,7 @@ def build_hint_generation_graph() -> Any:
     graph.add_conditional_edges("parse_hint_output", _route_after_parse)
     graph.add_conditional_edges("validate_hint_quality", _route_after_validate)
     graph.add_edge("persist_hints_to_questions", END)
+    graph.add_edge("persist_hint_failure_diagnostics", END)
 
     return graph.compile()
 

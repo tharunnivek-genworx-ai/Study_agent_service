@@ -18,6 +18,10 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 )
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
+from src.api.utils.content_lifecycle.constants import (
+    LIFECYCLE_ARCHIVED,
+    LIFECYCLE_HIDDEN,
+)
 
 
 class TraineeQuizRepository:
@@ -35,6 +39,47 @@ class TraineeQuizRepository:
                     Quiz.is_published.is_(True),
                 )
             )
+        )
+        return cast(Quiz | None, result.scalars().first())
+
+    async def get_archived_quiz_by_id(
+        self, node_id: UUID, quiz_id: UUID
+    ) -> Quiz | None:
+        """Find an archived quiz for trainee reference review."""
+        result = await self.db.execute(
+            select(Quiz).where(
+                and_(
+                    Quiz.node_id == node_id,
+                    Quiz.quiz_id == quiz_id,
+                    Quiz.lifecycle_status == LIFECYCLE_ARCHIVED,
+                )
+            )
+        )
+        return cast(Quiz | None, result.scalars().first())
+
+    async def get_quiz_by_id(self, quiz_id: UUID) -> Quiz | None:
+        result = await self.db.execute(select(Quiz).where(Quiz.quiz_id == quiz_id))
+        return cast(Quiz | None, result.scalars().first())
+
+    async def get_hidden_quiz_with_trainee_attempts(
+        self, node_id: UUID, trainee_id: UUID
+    ) -> Quiz | None:
+        """Return the newest hidden quiz this trainee has attempt history on."""
+        result = await self.db.execute(
+            select(Quiz)
+            .join(QuizAttempt, QuizAttempt.quiz_id == Quiz.quiz_id)
+            .where(
+                and_(
+                    Quiz.node_id == node_id,
+                    Quiz.lifecycle_status == LIFECYCLE_HIDDEN,
+                    QuizAttempt.trainee_id == trainee_id,
+                )
+            )
+            .order_by(
+                QuizAttempt.submitted_at.desc().nullslast(),
+                QuizAttempt.started_at.desc(),
+            )
+            .limit(1)
         )
         return cast(Quiz | None, result.scalars().first())
 
@@ -108,6 +153,16 @@ class TraineeQuizRepository:
             )
         )
         return int(result.scalar() or 0)
+
+    async def abandon_in_progress_attempts_for_quizzes(
+        self, quiz_ids: list[UUID]
+    ) -> int:
+        """Abandon all in-progress attempts for the given quizzes."""
+        from src.api.utils.content_lifecycle.attempt_freeze import (  # noqa: PLC0415
+            abandon_in_progress_attempts_for_quizzes,
+        )
+
+        return await abandon_in_progress_attempts_for_quizzes(self.db, quiz_ids)
 
     async def create_attempt(
         self,

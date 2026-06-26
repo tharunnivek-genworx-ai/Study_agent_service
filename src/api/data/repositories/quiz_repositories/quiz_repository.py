@@ -32,6 +32,19 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
 from src.api.schemas.quiz_schemas.quiz_schema import QuizQuestionUpdateRequest
+from src.api.utils.content_lifecycle import (
+    transition_quiz_to_active,
+    transition_quiz_to_archived,
+    transition_quiz_to_hidden,
+)
+from src.api.utils.content_lifecycle.attempt_freeze import (
+    abandon_in_progress_attempts_for_quizzes,
+)
+from src.api.utils.content_lifecycle.constants import (
+    LIFECYCLE_DISCARDED,
+    LIFECYCLE_DRAFT,
+)
+from src.api.utils.content_lifecycle.visibility import exclude_discarded
 
 
 class QuizRepository:
@@ -45,18 +58,39 @@ class QuizRepository:
         return cast(Quiz | None, result.scalars().first())
 
     async def get_quizzes_by_node(self, node_id: UUID) -> list[Quiz]:
-        """All quizzes for a node ordered by created_at DESC (newest first)."""
+        """All workspace-visible quizzes for a node ordered by created_at DESC."""
         result = await self.db.execute(
-            select(Quiz).where(Quiz.node_id == node_id).order_by(Quiz.created_at.desc())
+            select(Quiz)
+            .where(
+                and_(
+                    Quiz.node_id == node_id,
+                    exclude_discarded(Quiz.lifecycle_status),
+                )
+            )
+            .order_by(Quiz.created_at.desc())
         )
         return list(result.scalars().all())
 
-    async def count_quizzes_for_node(self, node_id: UUID) -> int:
-        """Return how many quizzes exist for a node (any publish state)."""
+    async def get_active_quiz_draft_for_node(self, node_id: UUID) -> Quiz | None:
+        """Return the most-recent non-discarded draft quiz for a node, if any.
+
+        Node-scoped (not version-scoped) so the one-draft-per-node rule holds
+        regardless of which SM version the draft was generated from.
+        """
         result = await self.db.execute(
-            select(func.count()).select_from(Quiz).where(Quiz.node_id == node_id)
+            select(Quiz)
+            .where(
+                and_(
+                    Quiz.node_id == node_id,
+                    Quiz.lifecycle_status == LIFECYCLE_DRAFT,
+                    exclude_discarded(Quiz.lifecycle_status),
+                    Quiz.is_published.is_(False),
+                )
+            )
+            .order_by(Quiz.created_at.desc())
+            .limit(1)
         )
-        return int(result.scalar() or 0)
+        return cast(Quiz | None, result.scalars().first())
 
     # ── Quiz Writes ───────────────────────────────────────────────────
 
@@ -73,6 +107,7 @@ class QuizRepository:
         source: str = "ai_generated",
         qc_failed_permanently: bool = False,
         qc_result: dict | None = None,
+        next_llm_retry_at: datetime | None = None,
     ) -> UUID:
         """Create a quiz and all questions in a single transaction."""
         now = datetime.now(UTC)
@@ -92,6 +127,7 @@ class QuizRepository:
             updated_at=now,
             qc_failed_permanently=qc_failed_permanently,
             qc_result=qc_result,
+            next_llm_retry_at=next_llm_retry_at,
         )
         self.db.add(quiz)
         await self.db.flush()
@@ -125,10 +161,81 @@ class QuizRepository:
         await self.db.commit()
         return quiz_id
 
+    async def replace_quiz_draft_with_questions(
+        self,
+        *,
+        quiz_id: UUID,
+        node_id: UUID,
+        title: str,
+        difficulty: str,
+        questions: list[dict],
+        source: str = "ai_generated",
+        qc_failed_permanently: bool = False,
+        qc_result: dict | None = None,
+        study_material_version_id: UUID | None = None,
+        next_llm_retry_at: datetime | None = None,
+    ) -> UUID:
+        """Replace an existing draft quiz's questions in-place (M10 one-draft rule)."""
+        existing = await self.get_quiz_by_id(quiz_id)
+        if existing is None:
+            raise ValueError(f"Quiz {quiz_id} not found for in-place regeneration")
+
+        now = datetime.now(UTC)
+        update_values: dict = {
+            "title": title,
+            "total_questions": len(questions),
+            "difficulty": difficulty,
+            "lifecycle_status": LIFECYCLE_DRAFT,
+            "published_at": None,
+            "qc_failed_permanently": qc_failed_permanently,
+            "qc_result": qc_result,
+            "updated_at": now,
+        }
+        if next_llm_retry_at is not None:
+            update_values["next_llm_retry_at"] = next_llm_retry_at
+        if study_material_version_id is not None:
+            update_values["study_material_version_id"] = study_material_version_id
+
+        await self.db.execute(
+            update(Quiz).where(Quiz.quiz_id == quiz_id).values(**update_values)
+        )
+        await self.db.execute(
+            delete(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
+        )
+        for q in questions:
+            q_id = q.get("question_id")
+            if isinstance(q_id, str):
+                q_id = UUID(q_id)
+            elif not isinstance(q_id, UUID):
+                q_id = uuid4()
+
+            self.db.add(
+                QuizQuestion(
+                    question_id=q_id,
+                    quiz_id=quiz_id,
+                    node_id=node_id,
+                    question_text=q["question_text"],
+                    option_a=q["option_a"],
+                    option_b=q["option_b"],
+                    option_c=q.get("option_c"),
+                    option_d=q.get("option_d"),
+                    correct_option=q["correct_option"],
+                    hint_1=None,
+                    hint_2=None,
+                    hint_3=None,
+                    explanation=q.get("explanation"),
+                    order_index=q["order_index"],
+                    is_active=True,
+                    source=source,
+                )
+            )
+        await self.db.commit()
+        return quiz_id
+
     async def unpublish_other_quizzes(
-        self, node_id: UUID, except_quiz_id: UUID
+        self, node_id: UUID, except_quiz_id: UUID, *, commit: bool = True
     ) -> None:
-        """Clear publish flags on all other quizzes for this node."""
+        """Archive all other published quizzes for this node (quiz swap path)."""
         result = await self.db.execute(
             select(Quiz).where(
                 and_(
@@ -138,44 +245,73 @@ class QuizRepository:
                 )
             )
         )
-        now = datetime.now(UTC)
-        for other in result.scalars().all():
-            other.is_published = False
-            other.published_at = None
-            other.updated_at = now
-        await self.db.commit()
+        others = list(result.scalars().all())
+        archived_ids = [other.quiz_id for other in others]
+        for other in others:
+            transition_quiz_to_archived(other)
+        if archived_ids:
+            await abandon_in_progress_attempts_for_quizzes(self.db, archived_ids)
+        if commit:
+            await self.db.commit()
 
     async def publish_quiz(self, quiz: Quiz, published_by: UUID) -> Quiz:  # noqa: ARG002
-        """Set is_published=True and published_at."""
+        """Publish quiz and archive any other published quiz on the node."""
         await self.unpublish_other_quizzes(quiz.node_id, quiz.quiz_id)
-        now = datetime.now(UTC)
-        quiz.is_published = True
-        quiz.published_at = now
-        quiz.updated_at = now
+        transition_quiz_to_active(quiz)
         await self.db.commit()
         await self.db.refresh(quiz)
         return quiz
 
     async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = True) -> Quiz:
-        """Clear is_published and published_at."""
-        now = datetime.now(UTC)
-        quiz.is_published = False
-        quiz.published_at = None
-        quiz.updated_at = now
+        """Hide quiz from trainees while retaining publish metadata."""
+        transition_quiz_to_hidden(quiz)
         if commit:
             await self.db.commit()
             await self.db.refresh(quiz)
         return quiz
 
-    async def delete_quiz(self, quiz: Quiz, *, commit: bool = True) -> None:
-        """Hard-delete an unpublished quiz draft and all its questions."""
-        quiz_id = quiz.quiz_id
-        await self.db.execute(
-            delete(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
+    async def discard_quiz(self, quiz_id: UUID, *, commit: bool = True) -> int:
+        """Soft-discard a quiz from the mentor workspace; row and questions retained."""
+        now = datetime.now(UTC)
+        result = await self.db.execute(
+            update(Quiz)
+            .where(Quiz.quiz_id == quiz_id)
+            .values(
+                lifecycle_status=LIFECYCLE_DISCARDED,
+                is_published=False,
+                updated_at=now,
+            )
         )
-        await self.db.execute(delete(Quiz).where(Quiz.quiz_id == quiz_id))
         if commit:
             await self.db.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def discard_drafts_for_sm_versions(
+        self, sm_version_ids: list[UUID], *, commit: bool = True
+    ) -> int:
+        """Soft-discard draft quizzes linked to the given study material versions."""
+        if not sm_version_ids:
+            return 0
+
+        now = datetime.now(UTC)
+        result = await self.db.execute(
+            update(Quiz)
+            .where(
+                and_(
+                    Quiz.study_material_version_id.in_(sm_version_ids),
+                    Quiz.lifecycle_status == LIFECYCLE_DRAFT,
+                )
+            )
+            .values(
+                lifecycle_status=LIFECYCLE_DISCARDED,
+                is_published=False,
+                study_material_version_id=None,
+                updated_at=now,
+            )
+        )
+        if commit:
+            await self.db.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def increment_total_questions(self, quiz_id: UUID) -> None:
         """Increment counter via SQL UPDATE (safe after other commits expire ORM state)."""

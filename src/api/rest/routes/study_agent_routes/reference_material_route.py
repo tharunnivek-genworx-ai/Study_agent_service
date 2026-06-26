@@ -38,6 +38,7 @@ from src.api.schemas.study_material_schemas.node_media_schema import (
     NodeMediaListOut,
     NodeMediaOut,
     NodeMediaReorderRequest,
+    NodeMediaType,
 )
 from src.api.schemas.study_material_schemas.reference_material_schema import (
     ReferenceImageListOut,
@@ -181,18 +182,28 @@ async def delete_reference_material(
 )
 async def attach_node_media(
     node_id: UUID,
-    payload: NodeMediaAttachRequest,
+    media_type: NodeMediaType = Form(...),
+    title: str | None = Form(default=None),
+    url: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> NodeMediaOut:
     """Mentor attaches media to a node.
 
-    media_type='image'        → file upload required; payload.url must be None.
-    media_type='video_url'    → payload.url required; no file upload.
-    media_type='article_link' → payload.url required; no file upload.
+    multipart/form-data fields:
+      media_type — image | pdf | video_url | article_link
+      title      — optional display label
+      url        — required for video_url and article_link
+      file       — required for image and pdf
+
     Cross-field validation is enforced at the service layer.
     """
+    payload = NodeMediaAttachRequest(
+        media_type=media_type,
+        title=title.strip() if title and title.strip() else None,
+        url=url.strip() if url and url.strip() else None,
+    )
     service = ReferenceMaterialService(db)
     return await service.attach_media(
         node_id, payload, file, current_user.sub, current_user.role

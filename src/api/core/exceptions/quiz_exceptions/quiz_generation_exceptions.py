@@ -15,7 +15,9 @@ Edge cases covered (cross-referenced to TDD §3.6):
             no exception raised, frontend renders '(Removed)'.
   EC-11  — Regenerate entire quiz: new row; no exception for the action itself.
   EC-12  — Wrong answer key corrected: update + notification; no exception.
-  EC-20  — New quiz resets node completion: handled by Engagement & Chat Service.
+  EC-20  — New quiz resets node completion: handled by quiz_service +
+            progress_resets + node_event_notifications (see EC-20 in
+            progress_exceptions.py).
 
 Hint generation exceptions live in hint_generation_exceptions.py.
 
@@ -76,66 +78,49 @@ class QuizNotPublishedForUnpublishException(HTTPException):
         )
 
 
-class QuizHasNoPublishedStudyMaterialException(HTTPException):
-    """
-    Raised during quiz generation when the provided
-    study_material_version_id is not published (is_published=False).
-    The Quiz Agent requires a published version as its source context —
-    generating from an unpublished draft is not permitted.
-    """
+class QuizCannotDiscardRetiredException(HTTPException):
+    """Raised when a mentor tries to discard a quiz kept in Previous versions."""
 
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Quiz can only be generated from a published study material version. "
-                "Publish the version first."
+                "This quiz is still in Previous versions for students, so it can't be deleted. "
+                'Unpublish it again and choose "Remove from students" if you want to delete it.'
             ),
+        )
+
+
+class QuizHasNoPublishedStudyMaterialException(HTTPException):
+    """Raised when a mentor quiz action requires live study material on the node."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=("Publish study material for trainees before working on the quiz."),
         )
 
 
 class QuizStudyMaterialNotCurrentPublishedException(HTTPException):
-    """Raised when the requested version is not the node's currently published one."""
+    """Raised when a trainee attempt targets a quiz not tied to the live SM edition."""
 
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Quiz can only be generated from the currently published study material "
-                "version. Publish that version first."
+                "This quiz is not aligned with the study material students see now. "
+                "Start from the current topic content."
             ),
-        )
-
-
-class QuizVersionNotPublishedException(HTTPException):
-    """Raised when quiz actions run against an unpublished study material version."""
-
-    def __init__(
-        self,
-        *,
-        version_label: str,
-        current_published_version_label: str | None,
-    ) -> None:
-        super().__init__(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "QUIZ_VERSION_NOT_PUBLISHED",
-                "version_label": version_label,
-                "current_published_version_label": current_published_version_label,
-            },
         )
 
 
 class QuizCannotPublishWithoutPublishedStudyMaterialException(HTTPException):
-    """Raised when a mentor tries to publish a quiz whose study material is not published."""
+    """Raised when a mentor tries to publish a quiz with no live study material."""
 
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Cannot publish the quiz until its study material version is published "
-                "for trainees."
-            ),
+            detail=("Publish study material for trainees before publishing the quiz."),
         )
 
 
@@ -167,24 +152,10 @@ class QuizGenerationFailedException(HTTPException):
         )
 
 
-class StudyMaterialVersionMismatchException(HTTPException):
-    """
-    Raised when the study_material_version_id provided for quiz generation
-    does not belong to the node in the path parameter. Prevents a quiz from
-    being anchored to a version from a different node.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Study material version does not belong to this node.",
-        )
-
-
 class QuizHintsIncompleteException(AppException):
     def __init__(self):  # type: ignore[no-untyped-def]
         super().__init__(
             status_code=422,
             error_code="QUIZ_HINTS_INCOMPLETE",
-            message="All active questions must have hints generated before publishing.",
+            message=("Generate hints for every question before publishing the quiz."),
         )

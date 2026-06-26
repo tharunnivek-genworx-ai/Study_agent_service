@@ -62,8 +62,12 @@ def build_quiz_panel_actions(
         return None
 
     has_in_progress = discovery.has_in_progress_attempt
+    show_quiz_button = (
+        not discovery.is_review_only
+        and (discovery.can_start_new_attempt or has_in_progress)
+    ) or (discovery.is_review_only and has_in_progress)
     return {
-        "show_quiz_button": True,
+        "show_quiz_button": show_quiz_button,
         "quiz_id": discovery.quiz_id,
         "active_attempt_id": discovery.active_attempt_id,
         "can_start_new_attempt": discovery.can_start_new_attempt,
@@ -77,6 +81,7 @@ def build_quiz_panel_actions(
         "attempts_button_label": build_attempts_button_label(
             submitted_attempt_count=discovery.submitted_attempt_count
         ),
+        "review_notice": discovery.review_notice,
     }
 
 

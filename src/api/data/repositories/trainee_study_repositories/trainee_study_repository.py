@@ -64,8 +64,3 @@ class TraineeStudyRepository:
             .distinct()
         )
         return {row[0] for row in result.all()}
-
-    async def node_has_published_study_material(self, node_id: UUID) -> bool:
-        """Quick existence check — used before accepting scroll-progress writes."""
-        version = await self.get_published_study_material(node_id)
-        return version is not None

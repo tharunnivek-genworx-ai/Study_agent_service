@@ -15,15 +15,26 @@ helpers rather than doing both in a single call (service controls the transactio
 """
 
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
+from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
+from src.api.utils.content_lifecycle import (
+    LIFECYCLE_ACTIVE,
+    LIFECYCLE_DISCARDED,
+    LIFECYCLE_DRAFT,
+    LIFECYCLE_HIDDEN,
+    transition_sm_to_active,
+    transition_sm_to_archived,
+    transition_sm_to_hidden,
+)
+from src.api.utils.content_lifecycle.visibility import exclude_discarded
 
 GenerationType = Literal["generate", "regenerate", "improve", "manual_edit"]
 
@@ -50,6 +61,7 @@ class StudyMaterialRepository:
                     StudyMaterialVersion.node_id == node_id,
                     StudyMaterialVersion.is_active.is_(True),
                     StudyMaterialVersion.is_archived.is_(False),
+                    exclude_discarded(StudyMaterialVersion.lifecycle_status),
                 )
             )
         )
@@ -63,6 +75,7 @@ class StudyMaterialRepository:
                 and_(
                     StudyMaterialVersion.node_id == node_id,
                     StudyMaterialVersion.is_published.is_(True),
+                    exclude_discarded(StudyMaterialVersion.lifecycle_status),
                 )
             )
             .order_by(StudyMaterialVersion.version_number.desc())
@@ -97,7 +110,10 @@ class StudyMaterialRepository:
         archived=False returns active history; archived=True returns archive shelf.
         """
         query = select(StudyMaterialVersion).where(
-            StudyMaterialVersion.node_id == node_id
+            and_(
+                StudyMaterialVersion.node_id == node_id,
+                exclude_discarded(StudyMaterialVersion.lifecycle_status),
+            )
         )
         if archived is not None:
             query = query.where(StudyMaterialVersion.is_archived.is_(archived))
@@ -134,6 +150,17 @@ class StudyMaterialRepository:
         created_by: UUID,
         qc_failed_permanently: bool = False,
         qc_result: dict | None = None,
+        qc_passed: bool = False,
+        qc_attempt_count: int = 0,
+        generation_run_id: str | None = None,
+        concept_plan: dict[str, Any] | None = None,
+        checklist_llm_model_used: str | None = None,
+        qc_verification_mode: str | None = None,
+        qc_frozen_check_ids: list[str] | None = None,
+        qc_frozen_section_keys: list[str] | None = None,
+        next_llm_retry_at: datetime | None = None,
+        *,
+        commit: bool = True,
     ) -> StudyMaterialVersion:
         now = datetime.now(UTC)
         version = StudyMaterialVersion(
@@ -157,16 +184,90 @@ class StudyMaterialRepository:
             created_at=now,
             qc_failed_permanently=qc_failed_permanently,
             qc_result=qc_result,
+            qc_passed=qc_passed,
+            qc_attempt_count=qc_attempt_count,
+            generation_run_id=generation_run_id,
+            concept_plan=concept_plan,
+            checklist_llm_model_used=checklist_llm_model_used,
+            qc_verification_mode=qc_verification_mode,
+            qc_frozen_check_ids=qc_frozen_check_ids,
+            qc_frozen_section_keys=qc_frozen_section_keys,
+            next_llm_retry_at=next_llm_retry_at,
+            lifecycle_status=LIFECYCLE_DRAFT,
         )
         self.db.add(version)
-        await self.db.commit()
-        await self.db.refresh(version)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(version)
+        else:
+            await self.db.flush()
+            await self.db.refresh(version)
         return version
+
+    async def create_version_with_deactivate(
+        self,
+        *,
+        active_version: StudyMaterialVersion | None,
+        node_id: UUID,
+        space_id: UUID,
+        version_number: int,
+        content: str,
+        generation_type: GenerationType,
+        mentor_feedback_used: str | None,
+        reference_material_id: UUID | None,
+        based_on_version_id: UUID | None,
+        llm_model_used: str | None,
+        prompt_snapshot: str | None,
+        token_usage: int | None,
+        created_by: UUID,
+        qc_failed_permanently: bool = False,
+        qc_result: dict | None = None,
+        qc_passed: bool = False,
+        qc_attempt_count: int = 0,
+        generation_run_id: str | None = None,
+        concept_plan: dict[str, Any] | None = None,
+        checklist_llm_model_used: str | None = None,
+        qc_verification_mode: str | None = None,
+        qc_frozen_check_ids: list[str] | None = None,
+        qc_frozen_section_keys: list[str] | None = None,
+        next_llm_retry_at: datetime | None = None,
+    ) -> StudyMaterialVersion:
+        """Deactivate the current active version and insert a new one atomically."""
+        if active_version is not None:
+            active_version.is_active = False
+        return await self.create_version(
+            node_id=node_id,
+            space_id=space_id,
+            version_number=version_number,
+            content=content,
+            generation_type=generation_type,
+            mentor_feedback_used=mentor_feedback_used,
+            reference_material_id=reference_material_id,
+            based_on_version_id=based_on_version_id,
+            llm_model_used=llm_model_used,
+            prompt_snapshot=prompt_snapshot,
+            token_usage=token_usage,
+            is_active=True,
+            created_by=created_by,
+            qc_failed_permanently=qc_failed_permanently,
+            qc_result=qc_result,
+            qc_passed=qc_passed,
+            qc_attempt_count=qc_attempt_count,
+            generation_run_id=generation_run_id,
+            concept_plan=concept_plan,
+            checklist_llm_model_used=checklist_llm_model_used,
+            qc_verification_mode=qc_verification_mode,
+            qc_frozen_check_ids=qc_frozen_check_ids,
+            qc_frozen_section_keys=qc_frozen_section_keys,
+            next_llm_retry_at=next_llm_retry_at,
+            commit=True,
+        )
 
     async def deactivate_version(self, version: StudyMaterialVersion) -> None:
         """Set is_active=False. Called before activating a new version."""
         version.is_active = False
         await self.db.commit()
+        await self.db.refresh(version)
 
     async def activate_version(
         self, version: StudyMaterialVersion
@@ -178,9 +279,14 @@ class StudyMaterialRepository:
         return version
 
     async def unpublish_other_versions(
-        self, node_id: UUID, except_version_id: UUID, *, commit: bool = True
+        self,
+        node_id: UUID,
+        except_version_id: UUID,
+        *,
+        retention_mode: RetentionMode = RetentionMode.keep_for_review,
+        commit: bool = True,
     ) -> None:
-        """Clear publish flags on all other versions for this node."""
+        """Retire other published versions when superseding or re-publishing."""
         result = await self.db.execute(
             select(StudyMaterialVersion).where(
                 and_(
@@ -191,23 +297,29 @@ class StudyMaterialRepository:
             )
         )
         for other in result.scalars().all():
-            other.is_published = False
-            other.published_at = None
-            other.published_by = None
+            if retention_mode == RetentionMode.keep_for_review:
+                transition_sm_to_archived(other)
+            else:
+                transition_sm_to_hidden(other)
         if commit:
             await self.db.commit()
 
     async def publish_version(
-        self, version: StudyMaterialVersion, published_by: UUID, *, commit: bool = True
+        self,
+        version: StudyMaterialVersion,
+        published_by: UUID,
+        *,
+        superseded_retention_mode: RetentionMode = RetentionMode.keep_for_review,
+        commit: bool = True,
     ) -> StudyMaterialVersion:
-        """Set is_published=True, published_at, published_by."""
+        """Publish target version and retire any other published versions."""
         await self.unpublish_other_versions(
-            version.node_id, version.version_id, commit=False
+            version.node_id,
+            version.version_id,
+            retention_mode=superseded_retention_mode,
+            commit=False,
         )
-        now = datetime.now(UTC)
-        version.is_published = True
-        version.published_at = now
-        version.published_by = published_by
+        transition_sm_to_active(version, published_by)
         if commit:
             await self.db.commit()
             await self.db.refresh(version)
@@ -216,10 +328,8 @@ class StudyMaterialRepository:
     async def unpublish_version(
         self, version: StudyMaterialVersion, *, commit: bool = True
     ) -> StudyMaterialVersion:
-        """Clear publish flags on a version."""
-        version.is_published = False
-        version.published_at = None
-        version.published_by = None
+        """Hide a published version from trainees while retaining publish metadata."""
+        transition_sm_to_hidden(version)
         if commit:
             await self.db.commit()
             await self.db.refresh(version)
@@ -228,6 +338,12 @@ class StudyMaterialRepository:
     async def archive_version(
         self, version: StudyMaterialVersion, archived_by: UUID
     ) -> StudyMaterialVersion:
+        """Mentor shelf archive: hide from working history; never touches lifecycle.
+
+        ``is_archived`` is orthogonal to ``lifecycle_status``. Shelf-archived rows
+        remain trainee-invisible regardless of lifecycle (service layer enforces
+        draft-only eligibility before calling this method).
+        """
         now = datetime.now(UTC)
         version.is_archived = True
         version.archived_at = now
@@ -241,6 +357,7 @@ class StudyMaterialRepository:
     async def unarchive_version(
         self, version: StudyMaterialVersion
     ) -> StudyMaterialVersion:
+        """Restore a shelf-archived WIP draft to mentor working history only."""
         version.is_archived = False
         version.archived_at = None
         version.archived_by = None
@@ -248,27 +365,48 @@ class StudyMaterialRepository:
         await self.db.refresh(version)
         return version
 
-    async def delete_all_versions_for_node(self, node_id: UUID) -> int:
-        """Hard-delete all study material versions for a node.
+    async def discard_draft_versions_for_node(self, node_id: UUID) -> int:
+        """Soft-discard mentor workspace study material for a node (workspace trash).
 
-        studymaterialversions.based_on_version_id is a self-referential FK
-        (lineage: Improve/Regenerate point a new draft at its parent). Deleting
-        rows individually lets SQLAlchemy batch them into one DELETE whose row
-        order does not respect that dependency, so deleting a parent that is
-        still referenced by a child raises a ForeignKeyViolationError. Break the
-        lineage links first, then bulk-delete everything for the node.
+        Clears draft and unpublished-hidden rows from the mentor working history.
+        Linked draft quizzes for those versions are discarded in the same transaction.
+        Live published, superseded trainee archive, and shelf-archived rows are untouched.
         """
-        versions = await self.get_all_versions(node_id, archived=None)
-        if not versions:
-            return 0
-        await self.db.execute(
-            update(StudyMaterialVersion)
-            .where(StudyMaterialVersion.node_id == node_id)
-            .where(StudyMaterialVersion.based_on_version_id.is_not(None))
-            .values(based_on_version_id=None)
+        discardable_filter = and_(
+            StudyMaterialVersion.node_id == node_id,
+            StudyMaterialVersion.is_archived.is_(False),
+            or_(
+                StudyMaterialVersion.lifecycle_status.in_(
+                    (LIFECYCLE_DRAFT, LIFECYCLE_HIDDEN)
+                ),
+                and_(
+                    StudyMaterialVersion.lifecycle_status == LIFECYCLE_ACTIVE,
+                    StudyMaterialVersion.is_published.is_(False),
+                ),
+            ),
         )
-        await self.db.execute(
-            delete(StudyMaterialVersion).where(StudyMaterialVersion.node_id == node_id)
+        result = await self.db.execute(
+            select(StudyMaterialVersion.version_id).where(discardable_filter)
+        )
+        draft_ids = list(result.scalars().all())
+        if not draft_ids:
+            return 0
+
+        from src.api.data.repositories.quiz_repositories.quiz_repository import (  # noqa: PLC0415
+            QuizRepository,
+        )
+
+        quiz_repo = QuizRepository(self.db)
+        await quiz_repo.discard_drafts_for_sm_versions(draft_ids, commit=False)
+
+        sm_result = await self.db.execute(
+            update(StudyMaterialVersion)
+            .where(discardable_filter)
+            .values(
+                lifecycle_status=LIFECYCLE_DISCARDED,
+                is_published=False,
+                is_active=False,
+            )
         )
         await self.db.commit()
-        return len(versions)
+        return int(getattr(sm_result, "rowcount", 0) or 0)

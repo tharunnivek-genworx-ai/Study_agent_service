@@ -78,13 +78,31 @@ class AttemptAbandonedException(HTTPException):
     """
     Raised when a trainee tries to interact with an attempt that has
     status='abandoned'. Abandoned attempts cannot be resumed or submitted.
-    A new attempt must be started.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        node_id: UUID | None = None,
+        quiz_id: UUID | None = None,
+    ) -> None:
+        detail: str | dict = "This attempt has been abandoned and cannot be modified."
+        if node_id is not None and quiz_id is not None:
+            detail = {
+                "error_code": "ATTEMPT_ABANDONED",
+                "message": (
+                    "This attempt was abandoned when the quiz was updated. "
+                    "View your saved progress in Previous versions."
+                ),
+                "node_id": str(node_id),
+                "quiz_id": str(quiz_id),
+                "archive_review_path": (
+                    f"/trainee/nodes/{node_id}/quizzes/{quiz_id}/review"
+                ),
+            }
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This attempt has been abandoned and cannot be modified.",
+            detail=detail,
         )
 
 

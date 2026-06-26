@@ -16,6 +16,9 @@ from src.api.core.services.progress_services.trainee_progress_service import (
 from src.api.core.services.trainee_quiz_services.trainee_quiz_service import (
     TraineeQuizService,
 )
+from src.api.core.services.trainee_study_services.trainee_study_service import (
+    TraineeStudyService,
+)
 from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
 from src.api.data.repositories.trainee_study_repositories.trainee_node_panel_repository import (
     TraineeNodePanelRepository,
@@ -24,6 +27,7 @@ from src.api.schemas.progress_schemas.trainee_progress_schema import (
     TraineeNodeProgressBatchItemOut,
 )
 from src.api.schemas.study_material_schemas.trainee_node_panel_schema import (
+    ArchiveSummaryOut,
     BreadcrumbItemOut,
     NavSuggestionOut,
     OverallProgressOut,
@@ -31,6 +35,10 @@ from src.api.schemas.study_material_schemas.trainee_node_panel_schema import (
     StudyMaterialSummaryOut,
     SubtopicPanelItemOut,
     TraineeNodePanelOut,
+)
+from src.api.utils.content_lifecycle import (
+    list_trainee_archive_quizzes,
+    list_trainee_archive_sm,
 )
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_space_access,
@@ -243,6 +251,13 @@ class TraineeNodePanelService:
             )
         )
 
+        archive_summary = await self._build_archive_summary(node_id)
+
+        study_service = TraineeStudyService(self.session)
+        topic_resources_list = await study_service.list_topic_resources(
+            node_id, user_id, role
+        )
+
         return TraineeNodePanelOut(
             panel_type=panel_type,
             title=node.title,
@@ -269,6 +284,31 @@ class TraineeNodePanelService:
             default_tab=default_tab,
             all_subtopics_locked=all_subtopics_locked,
             is_fully_complete=is_fully_complete,
+            archive_summary=archive_summary,
+            topic_resources=topic_resources_list.items,
+            topic_resources_section_title=topic_resources_list.section_title,
+            topic_resources_empty_message=topic_resources_list.empty_message,
+        )
+
+    async def _build_archive_summary(self, node_id: UUID) -> ArchiveSummaryOut | None:
+        """Archive hint when superseded SM versions or archived quizzes exist."""
+        archived_sm = await list_trainee_archive_sm(self.session, node_id)
+        archived_quizzes = await list_trainee_archive_quizzes(self.session, node_id)
+        if not archived_sm and not archived_quizzes:
+            return None
+
+        version_count = len(archived_sm)
+        published_sm = await self.repo.get_published_study_material(node_id)
+        if published_sm is not None and any(
+            quiz.study_material_version_id == published_sm.version_id
+            for quiz in archived_quizzes
+        ):
+            version_count += 1
+
+        return ArchiveSummaryOut(
+            has_previous_versions=True,
+            archived_version_count=version_count,
+            show_upgrade_banner=len(archived_sm) > 0,
         )
 
     async def _build_study_material_summary(

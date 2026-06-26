@@ -1,0 +1,9 @@
+{
+  "topic_title": "FastAPI",
+  "total_chunks": 3,
+  "pages_per_chunk": 10,
+  "fast_model": "llama-3.1-8b-instant",
+  "gen_model": "llama-3.3-70b-versatile",
+  "timestamp": "20260622_154418",
+  "chunk_count": 3
+}

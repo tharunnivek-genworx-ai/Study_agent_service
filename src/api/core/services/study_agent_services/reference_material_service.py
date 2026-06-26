@@ -64,7 +64,7 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
 )
-from src.api.utils.study_agent_utils.media_response import build_node_media_out
+from src.api.utils.study_agent_utils.media.media_response import build_node_media_out
 
 _UPLOAD_ROOT = Path("/app/uploads/reference_materials")
 
@@ -254,18 +254,17 @@ class ReferenceMaterialService:
         )
 
         # Cross-field validation
-        if request.media_type == "image" and file is None:
+        if request.media_type in ("image", "pdf") and file is None:
             raise InvalidMediaTypePayloadException()
         if request.media_type in ("video_url", "article_link") and not request.url:
             raise InvalidMediaTypePayloadException()
 
         file_url: str | None = None
         url: str | None = request.url
+        media_id = uuid4()
 
-        if request.media_type == "image" and file is not None:
-            file_url = (
-                f"https://storage.googleapis.com/studyguru-placeholder/{file.filename}"
-            )
+        if request.media_type in ("image", "pdf") and file is not None:
+            file_url = await _save_file_locally(file, node.space_id, node_id, media_id)
             url = None
 
         repo = ReferenceMaterialRepository(self.session)
@@ -280,6 +279,7 @@ class ReferenceMaterialService:
             file_url=file_url,
             order_index=next_order,
             uploaded_by=user_id,
+            media_id=media_id,
         )
         return build_node_media_out(media)
 

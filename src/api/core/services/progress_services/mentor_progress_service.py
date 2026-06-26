@@ -76,6 +76,9 @@ from src.api.utils.trainee_progress_utils.completion import (
     compute_completion_status,
     compute_progress_percentage,
 )
+from src.api.utils.trainee_progress_utils.space_progress_snapshot import (
+    compute_trainee_space_rollup,
+)
 
 
 def _assert_mentor(role: str) -> None:
@@ -191,18 +194,20 @@ class MentorProgressService:
                     )
                 )
 
-            completed_nodes = (
-                space_progress.completed_nodes if space_progress is not None else 0
+            (
+                _,
+                completed_nodes,
+                overall_progress_pct,
+            ) = await compute_trainee_space_rollup(
+                self.session,
+                trainee_id=trainee.trainee_id,
+                space_id=space_id,
             )
             overall_score_avg = (
                 space_progress.overall_score_avg if space_progress is not None else None
             )
             last_activity_at = (
                 space_progress.last_activity_at if space_progress is not None else None
-            )
-
-            overall_progress_pct = (
-                round((completed_nodes / total_nodes) * 100) if total_nodes > 0 else 0
             )
 
             # Track trainees with zero activity for the dashboard header count

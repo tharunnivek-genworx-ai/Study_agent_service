@@ -39,6 +39,7 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialPublishRequest,
     StudyMaterialRegenerateRequest,
     StudyMaterialUnpublishPreviewOut,
+    StudyMaterialUnpublishRequest,
     StudyMaterialVersionHistoryOut,
     StudyMaterialVersionOut,
 )
@@ -174,11 +175,11 @@ async def preview_unpublish_study_material(
 )
 async def unpublish_study_material(
     node_id: UUID,
-    payload: StudyMaterialPublishRequest,
+    payload: StudyMaterialUnpublishRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> StudyMaterialVersionOut:
-    """Mentor unpublishes a version, hiding it from trainees."""
+    """Mentor unpublishes a version with a retention choice (remove or keep for review)."""
     service = StudyMaterialService(db)
     return await service.unpublish_study_material(
         node_id, payload, current_user.sub, current_user.role
@@ -278,13 +279,18 @@ async def list_study_material_versions(
         default=False,
         description="When true, return archived versions only.",
     ),
+    viewing_version_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> StudyMaterialVersionHistoryOut:
     """Mentor fetches version history or archive shelf for a node, newest first."""
     service = StudyMaterialService(db)
     return await service.list_versions(
-        node_id, current_user.sub, current_user.role, archived=archived
+        node_id,
+        current_user.sub,
+        current_user.role,
+        archived=archived,
+        viewing_version_id=viewing_version_id,
     )
 
 

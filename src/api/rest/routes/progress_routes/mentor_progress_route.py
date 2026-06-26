@@ -7,6 +7,8 @@ Role guards:
               Update scroll read_percent for a node's published study material.
   Mentor  — GET /spaces/:space_id/progress
               Full per-trainee progress breakdown for all enrolled trainees.
+            POST /spaces/:space_id/progress/recompute
+              Fan-out space-level progress cache refresh for all trainees.
 
 current_user is injected by get_current_user which decodes the JWT and
 returns a TokenPayload.
@@ -16,7 +18,7 @@ TDD §3.5.3 (Mentor API) and §3.5.4 (Trainee API).
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.services.progress_services.mentor_progress_service import (
@@ -74,6 +76,29 @@ async def get_space_progress_summary(
     """Mentor retrieves a lightweight summary (total nodes & enrolled trainees) for a space."""
     service = MentorProgressService(db)
     return await service.get_space_progress_summary(
+        space_id=space_id,
+        user_id=current_user.sub,
+        role=current_user.role,
+    )
+
+
+@router.post(
+    "/spaces/{space_id}/progress/recompute",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def recompute_space_progress(
+    space_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> None:
+    """Mentor triggers a space-level progress cache refresh for all trainees.
+
+    Used after Identity-side mutations (node archive, space unpublish) that
+    change eligible learning units without study_agent publish hooks.
+    Per-trainee failures are logged and skipped; returns 204 on acceptance.
+    """
+    service = MentorProgressService(db)
+    await service.recompute_space_progress_for_space(
         space_id=space_id,
         user_id=current_user.sub,
         role=current_user.role,

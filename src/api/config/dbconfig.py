@@ -2,9 +2,14 @@
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.api.observability.tracing import init_langsmith_tracing
+
+# Ensure LangSmith tracing variables are initialized when config is imported
+init_langsmith_tracing()
+
 
 class Settings(BaseSettings):
-    """Database and JWT settings loaded from environment variables."""
+    """Database, auth, and service settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -18,12 +23,6 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     cors_origins: str = "*"
-    groq_api_key: str = ""
-    groq_api_key_2: str = ""
-    groq_api_key_3: str = ""
-    groq_api_key_4: str = ""
-    llama_parse_api_key: str = ""
-    llm_model: str = "llama-3.3-70b-versatile"
     # Public base URL of this service, used to build absolute image URLs that
     # the browser can load directly (must be reachable from the frontend).
     media_base_url: str = "http://localhost:8001"

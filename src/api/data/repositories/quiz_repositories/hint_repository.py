@@ -8,7 +8,7 @@ hint updates — it does not create quiz or question rows.
 """
 
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select, update
@@ -103,6 +103,81 @@ class HintRepository:
             question.hint_3 = hint_3
 
         await self.db.commit()
+
+    def _deep_merge_hint_generation(
+        self,
+        existing: dict[str, Any] | None,
+        patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(existing or {})
+        for key, value in patch.items():
+            if key == "questionErrors" and isinstance(value, list):
+                by_id: dict[str, dict[str, Any]] = {}
+                for err in merged.get("questionErrors") or []:
+                    if not isinstance(err, dict):
+                        continue
+                    qid = str(err.get("questionId") or err.get("question_id"))
+                    by_id[qid] = err
+                for err in value:
+                    if not isinstance(err, dict):
+                        continue
+                    qid = str(err.get("questionId") or err.get("question_id"))
+                    by_id[qid] = err
+                merged["questionErrors"] = list(by_id.values())
+            else:
+                merged[key] = value
+        return merged
+
+    async def merge_quiz_qc_result(
+        self,
+        quiz_id: UUID,
+        patch: dict[str, Any],
+        *,
+        next_llm_retry_at: datetime | None = None,
+    ) -> None:
+        """Read-merge-write quizzes.qc_result, deep-merging hintGeneration."""
+        quiz = await self.get_quiz_by_id(quiz_id)
+        if quiz is None:
+            return
+
+        existing: dict[str, Any] = (
+            dict(quiz.qc_result) if isinstance(quiz.qc_result, dict) else {}
+        )
+        hint_patch = patch.get("hintGeneration")
+        if isinstance(hint_patch, dict):
+            existing_hint = existing.get("hintGeneration")
+            existing["hintGeneration"] = self._deep_merge_hint_generation(
+                existing_hint if isinstance(existing_hint, dict) else None,
+                hint_patch,
+            )
+            patch = {k: v for k, v in patch.items() if k != "hintGeneration"}
+        existing.update(patch)
+        quiz.qc_result = existing
+        if next_llm_retry_at is not None:
+            quiz.next_llm_retry_at = next_llm_retry_at
+        await self.db.commit()
+
+    async def update_question_hints(
+        self,
+        question_id: UUID,
+        hint_1: str,
+        hint_2: str,
+        hint_3: str,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Update hint fields for a single question."""
+        result = await self.db.execute(
+            select(QuizQuestion).where(QuizQuestion.question_id == question_id)
+        )
+        question = result.scalars().first()
+        if question is None:
+            return
+        question.hint_1 = hint_1
+        question.hint_2 = hint_2
+        question.hint_3 = hint_3
+        if commit:
+            await self.db.commit()
 
     async def clear_all_hints_for_quiz(self, quiz_id: UUID) -> int:
         """Clear hint_1/2/3 on all active questions. Returns count of rows updated."""

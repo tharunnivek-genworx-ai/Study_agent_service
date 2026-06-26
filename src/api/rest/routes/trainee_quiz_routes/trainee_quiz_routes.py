@@ -18,12 +18,14 @@ from src.api.data.clients.postgres.database import get_db
 from src.api.rest.routes.dependencies import get_current_user
 from src.api.schemas.identity_schemas.auth_schema import TokenPayload
 from src.api.schemas.quiz_schemas.quiz_schema import (
+    ArchivedQuizReviewOut,
     PublishedQuizDiscoveryOut,
     QuizAttemptOut,
     QuizAttemptStartRequest,
     QuizAttemptSubmitRequest,
     QuizQuestionResponseOut,
     QuizQuestionResponseRequest,
+    TraineeArchivedQuizListOut,
     TraineeQuizAttemptListOut,
     TraineeQuizOut,
 )
@@ -129,3 +131,36 @@ async def get_quiz_attempt(
     """Trainee resumes a mid-progress attempt or reviews details of a submitted one."""
     service = TraineeQuizService(db)
     return await service.get_attempt(attempt_id, current_user.sub, current_user.role)
+
+
+@router.get(
+    "/nodes/{node_id}/quizzes/archive",
+    response_model=TraineeArchivedQuizListOut,
+)
+async def list_archived_quizzes(
+    node_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> TraineeArchivedQuizListOut:
+    """List archived quizzes grouped by superseded study material version."""
+    service = TraineeQuizService(db)
+    return await service.list_archived_quizzes(
+        node_id, current_user.sub, current_user.role
+    )
+
+
+@router.get(
+    "/nodes/{node_id}/quizzes/{quiz_id}/review",
+    response_model=ArchivedQuizReviewOut,
+)
+async def review_archived_quiz(
+    node_id: UUID,
+    quiz_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> ArchivedQuizReviewOut:
+    """Read-only review of an archived quiz with answers and explanations."""
+    service = TraineeQuizService(db)
+    return await service.review_archived_quiz(
+        node_id, quiz_id, current_user.sub, current_user.role
+    )

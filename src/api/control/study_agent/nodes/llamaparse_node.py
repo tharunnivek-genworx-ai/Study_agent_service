@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.dbconfig import settings
+from src.api.config.llm_config import llm_settings
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.data.repositories.space_node_repository.node_repository import (
     NodeRepository,
@@ -38,7 +38,7 @@ async def llamaparse_node(
     if not file_path:
         return {"extracted_reference_text": "", "parsed_reference_data": {}}
 
-    api_key = settings.llama_parse_api_key
+    api_key = llm_settings.llama_parse_api_key
     if not api_key:
         return {"error": "LLAMA_PARSE_API_KEY is not configured."}
 
@@ -96,7 +96,7 @@ async def llamaparse_node(
                 session,
                 reference_material_id=reference_material_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=cast(UUID, node.space_id),
                 parsed_by=UUID(str(user_id)),
                 extraction=extraction,
                 formatted_text=reference_text,

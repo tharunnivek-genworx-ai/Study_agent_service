@@ -62,6 +62,9 @@ from src.api.utils.trainee_progress_utils.completion import (
 from src.api.utils.trainee_progress_utils.space_progress_presenter import (
     to_score_percentage,
 )
+from src.api.utils.trainee_progress_utils.space_progress_snapshot import (
+    compute_trainee_space_rollup,
+)
 
 
 class TraineeSpaceProgressService:
@@ -161,18 +164,18 @@ class TraineeSpaceProgressService:
                 )
             )
 
-        total_nodes = len(eligible_nodes)
-        completed_nodes = sum(
-            1 for item in node_progress if item.completion_status == "completed"
+        (
+            total_nodes,
+            completed_nodes,
+            overall_progress_percentage,
+        ) = await compute_trainee_space_rollup(
+            self.session, trainee_id=user_id, space_id=space_id
         )
         overall_score_avg = await self.space_repo.compute_score_average(
             trainee_id=user_id, space_id=space_id
         )
         last_activity_at = await self.space_repo.get_last_activity_at(
             trainee_id=user_id, space_id=space_id
-        )
-        overall_progress_percentage = (
-            round((completed_nodes / total_nodes) * 100) if total_nodes > 0 else 0
         )
 
         return TraineeOwnSpaceProgressOut(
@@ -201,9 +204,8 @@ class TraineeSpaceProgressService:
         module docstring transaction note.
         """
         try:
-            total_nodes = await self.guard_repo.count_total_nodes(space_id)
-            completed_nodes = await self.space_repo.count_completed_nodes(
-                trainee_id=trainee_id, space_id=space_id
+            total_nodes, completed_nodes, _ = await compute_trainee_space_rollup(
+                self.session, trainee_id=trainee_id, space_id=space_id
             )
             overall_score_avg = await self.space_repo.compute_score_average(
                 trainee_id=trainee_id, space_id=space_id

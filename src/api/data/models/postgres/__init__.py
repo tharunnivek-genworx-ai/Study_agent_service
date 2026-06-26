@@ -25,3 +25,6 @@ from src.api.data.models.postgres.identity_refs import (  # noqa: F401
 from src.api.data.models.postgres.progress_models import (  # noqa: F401
     trainee_node_progress,
 )
+from src.api.data.models.postgres.progress_notification_models import (  # noqa: F401
+    node_event_notifications,
+)

@@ -7,26 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.data.models.postgres.progress_models.trainee_node_progress import (
     TraineeNodeProgress,
 )
+from src.api.schemas.progress_schemas.trainee_progress_schema import CompletionStatus
 from src.api.utils.common_utils.time import utc_now
-
-
-def _derive_completion_status(
-    *,
-    study_material_completed: bool,
-    quiz_passed: bool,
-    study_material_viewed: bool,
-    read_percent: int,
-) -> str:
-    if study_material_completed and quiz_passed:
-        return "completed"
-    if (
-        study_material_completed
-        or quiz_passed
-        or study_material_viewed
-        or read_percent > 0
-    ):
-        return "in_progress"
-    return "not_started"
 
 
 class TraineeNodeProgressRepository:
@@ -80,7 +62,12 @@ class TraineeNodeProgressRepository:
         return row
 
     async def mark_study_material_viewed(
-        self, trainee_id: UUID, node_id: UUID, space_id: UUID
+        self,
+        trainee_id: UUID,
+        node_id: UUID,
+        space_id: UUID,
+        *,
+        completion_status: CompletionStatus,
     ) -> TraineeNodeProgress:
         row = await self.get_or_create(trainee_id, node_id, space_id)
         now = utc_now()
@@ -88,12 +75,7 @@ class TraineeNodeProgressRepository:
             row.study_material_viewed = True
             row.first_viewed_at = now
         row.last_viewed_at = now
-        row.completion_status = _derive_completion_status(
-            study_material_completed=row.study_material_completed,
-            quiz_passed=row.quiz_passed,
-            study_material_viewed=row.study_material_viewed,
-            read_percent=row.study_material_read_percent,
-        )
+        row.completion_status = completion_status
         row.updated_at = now
         await self.db.flush()
         return row
@@ -104,6 +86,8 @@ class TraineeNodeProgressRepository:
         node_id: UUID,
         space_id: UUID,
         score: float,
+        *,
+        completion_status: CompletionStatus,
     ) -> TraineeNodeProgress:
         """Persist quiz contribution to node progress after attempt submission."""
         row = await self.get_or_create(trainee_id, node_id, space_id)
@@ -117,12 +101,7 @@ class TraineeNodeProgressRepository:
         if best_score >= 0.70:
             row.quiz_passed = True
 
-        row.completion_status = _derive_completion_status(
-            study_material_completed=row.study_material_completed,
-            quiz_passed=row.quiz_passed,
-            study_material_viewed=row.study_material_viewed,
-            read_percent=row.study_material_read_percent,
-        )
+        row.completion_status = completion_status
         row.updated_at = now
         await self.db.flush()
         return row

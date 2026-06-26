@@ -26,8 +26,8 @@ class Quiz(Base):
     study_material_version_id = Column(
         "studymaterialversionid",
         UUID(as_uuid=True),
-        ForeignKey("studymaterialversions.versionid", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("studymaterialversions.versionid", ondelete="SET NULL"),
+        nullable=True,
     )
     title = Column(String(300), nullable=False)
     total_questions = Column("totalquestions", Integer, nullable=False)
@@ -37,9 +37,16 @@ class Quiz(Base):
         "qcfailedpermanently", Boolean, nullable=False, default=False
     )
     qc_result = Column("qcresult", JSONB, nullable=True)
+    next_llm_retry_at = Column(
+        "nextllmretryat", TIMESTAMP(timezone=True), nullable=True
+    )
 
     is_published = Column("ispublished", Boolean, nullable=False, default=False)
     published_at = Column("publishedat", TIMESTAMP(timezone=True), nullable=True)
+    lifecycle_status = Column(
+        "lifecyclestatus", String(20), nullable=False, default="draft"
+    )
+    superseded_at = Column("supersededat", TIMESTAMP(timezone=True), nullable=True)
     created_by = Column(
         "createdby",
         UUID(as_uuid=True),

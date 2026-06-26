@@ -70,7 +70,28 @@ class StudyMaterialVersion(Base):
         ForeignKey("mentors.mentorid", ondelete="RESTRICT"),
         nullable=True,
     )
+    lifecycle_status = Column(
+        "lifecyclestatus", String(20), nullable=False, default="draft"
+    )
+    superseded_at = Column("supersededat", TIMESTAMP(timezone=True), nullable=True)
     qc_failed_permanently = Column(
         "qcfailedpermanently", Boolean, nullable=False, default=False
     )
     qc_result = Column("qcresult", JSONB, nullable=True)
+    qc_passed = Column(
+        "qcpassed", Boolean, nullable=False, server_default="false", default=False
+    )
+    qc_attempt_count = Column(
+        "qcattemptcount", Integer, nullable=False, server_default="0", default=0
+    )
+    generation_run_id = Column("generationrunid", String(32), nullable=True)
+    concept_plan = Column("conceptplan", JSONB, nullable=True)
+    checklist_llm_model_used = Column(
+        "checklistllmmodelused", String(100), nullable=True
+    )
+    qc_verification_mode = Column("qcverificationmode", String(20), nullable=True)
+    qc_frozen_check_ids = Column("qcfrozencheckids", JSONB, nullable=True)
+    qc_frozen_section_keys = Column("qcfrozensectionkeys", JSONB, nullable=True)
+    next_llm_retry_at = Column(
+        "nextllmretryat", TIMESTAMP(timezone=True), nullable=True
+    )

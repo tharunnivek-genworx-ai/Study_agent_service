@@ -8,6 +8,7 @@ from typing import Any, Literal
 from langgraph.graph import StateGraph
 
 from src.api.control.study_agent.nodes import (
+    concept_checklist_node,
     llamaparse_node,
     quality_check_node,
     resolve_instruction_node,
@@ -20,38 +21,63 @@ _compiled_graph = None
 
 def _route_after_resolver(
     state: StudyMaterialGraphState,
-) -> Literal["llamaparse", "study_agent", "__end__"]:
+) -> Literal["llamaparse", "concept_checklist", "__end__"]:
     if state.get("error"):
         return "__end__"
     if state.get("skip_llamaparse"):
-        return "study_agent"
+        return "concept_checklist"
     if state.get("has_reference_material") and state.get("reference_file_path"):
         return "llamaparse"
-    return "study_agent"
+    return "concept_checklist"
 
 
 def _route_after_llamaparse(
     state: StudyMaterialGraphState,
+) -> Literal["concept_checklist", "__end__"]:
+    if state.get("error"):
+        return "__end__"
+    return "concept_checklist"
+
+
+def _route_after_concept_checklist(
+    state: StudyMaterialGraphState,
 ) -> Literal["study_agent", "__end__"]:
+    if state.get("terminal_llm_failure"):
+        return "__end__"
     if state.get("error"):
         return "__end__"
     return "study_agent"
 
 
+def _route_after_study_agent(
+    state: StudyMaterialGraphState,
+) -> Literal["quality_check", "__end__"]:
+    if state.get("terminal_llm_failure"):
+        return "__end__"
+    if state.get("error"):
+        return "__end__"
+    return "quality_check"
+
+
 def _route_after_quality_check(
     state: StudyMaterialGraphState,
-) -> Literal["study_agent", "__end__"]:
+) -> Literal["study_agent", "quality_check", "__end__"]:
     """Route after quality check evaluation.
 
-    - Pass  → END (content is good, present to mentor)
-    - Fail + attempts remaining → study_agent (retry with QC feedback)
+    - Pass  → END
+    - Infra failure with attempts remaining → retry QC only (same content)
+    - Deterministic or QC content fail + attempts remaining → study_agent (scoped retry)
     - Fail + permanently failed → END (accept as-is, expose QC result)
     """
     if state.get("qc_passed"):
         return "__end__"
     if state.get("qc_failed_permanently"):
         return "__end__"
-    # QC failed but retries remain — loop back to study_agent
+
+    qc_result = state.get("qc_result") or {}
+    if isinstance(qc_result, dict) and qc_result.get("qcInfraError"):
+        return "quality_check"
+
     return "study_agent"
 
 
@@ -61,13 +87,15 @@ def build_study_material_graph() -> Any:
 
     graph.add_node("resolver", resolve_instruction_node)
     graph.add_node("llamaparse", llamaparse_node)
+    graph.add_node("concept_checklist", concept_checklist_node)
     graph.add_node("study_agent", study_agent_node)
     graph.add_node("quality_check", quality_check_node)
 
     graph.set_entry_point("resolver")
     graph.add_conditional_edges("resolver", _route_after_resolver)
     graph.add_conditional_edges("llamaparse", _route_after_llamaparse)
-    graph.add_edge("study_agent", "quality_check")
+    graph.add_conditional_edges("concept_checklist", _route_after_concept_checklist)
+    graph.add_conditional_edges("study_agent", _route_after_study_agent)
     graph.add_conditional_edges("quality_check", _route_after_quality_check)
 
     return graph.compile()
