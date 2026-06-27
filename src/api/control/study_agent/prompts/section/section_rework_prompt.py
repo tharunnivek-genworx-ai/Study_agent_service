@@ -1,6 +1,4 @@
-# ─────────────────────────────────────────────────────────────────────────────
 # src/api/control/study_agent/prompts/section_rework_prompt.py
-# ─────────────────────────────────────────────────────────────────────────────
 """Section rework prompts — rewrite only the sections that failed QC."""
 
 from __future__ import annotations
@@ -11,6 +9,7 @@ import re
 from src.api.control.study_agent.prompts.generation.generation_prompt import (
     format_reference_user_block,
 )
+from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     checklist_section_id,
     format_must_cover_checklist_line,
@@ -39,18 +38,21 @@ Omit "code_blocks", "formula_blocks", and "subsections" entirely when empty. Omi
 Preserve each section's "id" exactly. The "explanation" field inside every code_block and formula_block is mandatory.
 Equations and derivations belong in formula_blocks at section or subsection level — never inline in "content".\
 """
-
 _SUBSECTION_EVIDENCE_PATTERN = re.compile(
     r"subsection\s+['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
-
-_BASE_SYSTEM = f"""\
+STEM_ACCURACY_BLOCK = """- STEM: equations and reactions belong in formula_blocks and must be correct and dimensionally consistent; worked examples must trace step-by-step to the correct answer; constants must carry correct values and units. Never state a reaction or formula you cannot verify as real. For chemistry: verify the reactants, mechanism, and products are correct for the described reaction type — a correctly formatted but mechanistically wrong reaction is a factual error.
+- STEM DERIVATION RULE: When the section's linked checklist item demands derivation, proof, or step-by-step calculation, write sequential algebraic or logical steps in formula_blocks — one step per entry, each following from the previous. Do NOT provide Python, sympy, scipy, numpy, or any other computational library code as the derivation. The retry QC will fail the section again if code substitutes for formula_block steps."""
+PROGRAMMING_ACCURACY_BLOCK = '- Programming: code must be syntactically valid and run correctly on the demonstrated path; no undefined symbols; verify every API call is real for the stated language/version; every code_block must have a non-empty "explanation" field.'
+CONCEPTUAL_ACCURACY_BLOCK = "- Conceptual: named facts must be accurate; do not introduce code_blocks or formula_blocks; do not invent statistics attributed to named organisations."
+_ACCURACY_RULES_HEADER = """\
+ACCURACY RULES
+- Every claim must be true for the specific language, framework, or field in the topic."""
+_BASE_SYSTEM_PREFIX = f"""\
 You are an expert educator rewriting specific failed sections of a study document.
 Mandate: rewrite ONLY the sections listed in <sections_to_fix>. Do not add, remove, or rename sections.
-
 {SECTION_OUTPUT_SCHEMA}
-
 FAILURE REMEDIATION
 - Address every listed failure at its root cause. Fixing phrasing while leaving the underlying error is NOT a fix.
 - Thin coverage: add new concepts, worked examples, or subsections — do not just expand existing sentences.
@@ -61,21 +63,16 @@ FAILURE REMEDIATION
 - Code, pseudo-code, or a fake "language" used to render an equation or reaction: move that content into a formula_block (for STEM) or remove it entirely and explain the concept in prose (for Conceptual) — do not leave it as a code_block.
 - Python/scipy/sympy used as a derivation where sequential algebraic steps were required: remove the code block and replace with formula_blocks showing each algebraic step explicitly. Code shows computation; it does not demonstrate the reasoning chain and will fail retry QC again.
 - Equation in section or subsection content (document_coherence / det_equation_in_content): when evidence names subsection '<heading>', rewrite THAT subsection's "content" to prose-only — no f'(x)=, no \\frac, no \\lim, no LaTeX, no display-math. Move every equation into "formula_blocks" on that same subsection (preferred) or at section level. Adding section-level formula_blocks while leaving equations in the named subsection's content is NOT a fix and will fail retry QC again.
-
-ACCURACY RULES
-- Every claim must be true for the specific language, framework, or field in the topic.
-- STEM: equations and reactions belong in formula_blocks and must be correct and dimensionally consistent; worked examples must trace step-by-step to the correct answer; constants must carry correct values and units. Never state a reaction or formula you cannot verify as real. For chemistry: verify the reactants, mechanism, and products are correct for the described reaction type — a correctly formatted but mechanistically wrong reaction is a factual error.
-- STEM DERIVATION RULE: When the section's linked checklist item demands derivation, proof, or step-by-step calculation, write sequential algebraic or logical steps in formula_blocks — one step per entry, each following from the previous. Do NOT provide Python, sympy, scipy, numpy, or any other computational library code as the derivation. The retry QC will fail the section again if code substitutes for formula_block steps.
-- Programming: code must be syntactically valid and run correctly on the demonstrated path; no undefined symbols; verify every API call is real for the stated language/version; every code_block must have a non-empty "explanation" field.
-- Conceptual: named facts must be accurate; do not introduce code_blocks or formula_blocks; do not invent statistics attributed to named organisations.
-
+"""
+_SUBSTANCE_RULES_BLOCK = """\
 SUBSTANCE RULES
 - Each rewritten section must deliver: definition + mechanism + concrete example, at genuine teaching depth rather than a brief summary.
 - Naming a concept in a heading or one sentence is not coverage.
 - When a section has a linked checklist item, satisfy its depth_gate — demonstrated, not merely mentioned.
 - When failures reference thin coverage or a `must_cover` gap, add subsections or `formula_blocks` until every `depth_gate` component in `<scoped_must_cover_checklist>` is demonstrably satisfied.
 - Examples must be meaningfully distinct; renamed variables are not a new example.
-
+"""
+_FINAL_CHECK_BLOCK = """\
 FINAL CHECK before outputting (do not print):
 1. Output contains only sections from <sections_to_fix> with preserved ids.
 2. Every listed failure is addressed at its root cause.
@@ -86,20 +83,42 @@ FINAL CHECK before outputting (do not print):
 7. No section or subsection "content" field contains inline equations, derivative shorthand (e.g. f'(x)=), or LaTeX commands — those belong in formula_blocks.
 8. JSON is valid.\
 """
-
 _REFERENCE_ADDENDUM = """
-
 Reference material is provided. Treat it as authoritative when fixing sections. Do not invent facts not in the reference.\
 """
-
 _NO_REFERENCE_ADDENDUM = """
-
 No reference material is provided. Write from authoritative knowledge of the topic.\
 """
 
 
-def build_system_prompt(*, has_reference: bool) -> str:
-    return _BASE_SYSTEM + (
+def build_accuracy_rules_block(domain: str | None) -> str:
+    domain_bullets = merge_domain_blocks(
+        {
+            "STEM": STEM_ACCURACY_BLOCK,
+            "Programming": PROGRAMMING_ACCURACY_BLOCK,
+            "Conceptual": CONCEPTUAL_ACCURACY_BLOCK,
+        },
+        domain,
+        separator="\n",
+    )
+    return _ACCURACY_RULES_HEADER + "\n" + domain_bullets
+
+
+def _build_base_system(domain: str | None) -> str:
+    return (
+        _BASE_SYSTEM_PREFIX
+        + build_accuracy_rules_block(domain)
+        + "\n\n"
+        + _SUBSTANCE_RULES_BLOCK
+        + _FINAL_CHECK_BLOCK
+    )
+
+
+_BASE_SYSTEM = _build_base_system("")
+
+
+def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
+    return _build_base_system(domain) + (
         _REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM
     )
 
@@ -174,7 +193,6 @@ def build_sections_to_fix_block(
         for s in extract_sections_by_ids(document, section_ids)
     }
     subsection_targets = _subsection_remediation_targets(section_failures)
-
     entries: list[dict] = []
     for bundle in section_failures:
         section_id = str(bundle.get("section_id", "")).strip()
@@ -208,7 +226,6 @@ def build_sections_to_fix_block(
                 for heading in subsection_headings
             ]
         entries.append(entry)
-
     payload = json.dumps({"sections_to_fix": entries}, indent=2, ensure_ascii=False)
     return f"\n<sections_to_fix>\n{payload}\n</sections_to_fix>"
 
@@ -250,7 +267,6 @@ def build_user_message(
             must_cover_checklist,
             patch_section_ids,
         )
-
     parts = [
         f"<topic>{topic_title}</topic>",
         f"\n<teaching_instruction>\n{teaching_instruction}\n</teaching_instruction>",

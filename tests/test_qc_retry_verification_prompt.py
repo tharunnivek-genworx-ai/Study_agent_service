@@ -63,13 +63,13 @@ class TestQcRetryVerificationPrompt:
         assert len(parsed["sections"]) == 1
 
     def test_system_prompt_includes_retry_recommendation(self):
-        system = qc_retry_verification_prompt.SYSTEM_PROMPT
+        system = qc_retry_verification_prompt.build_system_prompt(domain="")
         assert "retry_recommendation" in system
         assert "TARGETED" in system
         assert "revised_sections_json" in system
 
     def test_system_prompt_uses_document_outline_not_context(self):
-        system = qc_retry_verification_prompt.SYSTEM_PROMPT
+        system = qc_retry_verification_prompt.build_system_prompt(domain="")
         assert "document_coherence" in system
         assert "document_outline" in system
         assert "document_context" not in system
@@ -87,10 +87,18 @@ class TestQcRetryVerificationPrompt:
         assert "root-cause-fixed" in msg
 
     def test_system_prompt_includes_must_cover_hygiene_rules(self):
-        system = qc_retry_verification_prompt.SYSTEM_PROMPT
+        system = qc_retry_verification_prompt.build_system_prompt(domain="")
         assert "checklist_id exactly" in system
         assert "corrective_hint empty when passed=true" in system
-        assert "only states the final formula, rule, or result" in system
+        assert "only states the final formula/rule/result" in system
+
+    def test_stem_domain_excludes_code_quality_section(self):
+        empty_prompt = qc_retry_verification_prompt.build_system_prompt(domain="")
+        stem_prompt = qc_retry_verification_prompt.build_system_prompt(domain="STEM")
+        assert empty_prompt != stem_prompt
+        assert "④ code_quality" not in stem_prompt
+        assert "⑤ stack_fidelity" not in stem_prompt
+        assert "Programming: trace code execution" not in stem_prompt
 
     def test_user_message_includes_section_id_on_checklist_lines(self):
         checklist = [

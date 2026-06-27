@@ -30,3 +30,6 @@ class HintGraphState(TypedDict, total=False):
     terminal_llm_failure: bool
     hint_generation_diagnostics: dict[str, Any] | None
     next_llm_retry_at: datetime | None
+    artifact_run_id: str | None
+    node_title: str | None
+    domain: str | None

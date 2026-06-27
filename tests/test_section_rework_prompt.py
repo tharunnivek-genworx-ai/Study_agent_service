@@ -61,6 +61,14 @@ class TestSectionReworkPrompt:
         assert "sections_to_fix" in system
         assert "document_context" not in system
 
+    def test_stem_domain_includes_stem_rules_only(self):
+        system = section_rework_prompt.build_system_prompt(
+            has_reference=False, domain="STEM"
+        )
+        assert "STEM DERIVATION RULE" in system
+        assert "Programming: code must be syntactically valid" not in system
+        assert "Conceptual: named facts must be accurate" not in system
+
     def test_sections_to_fix_includes_current_section_json(self):
         msg = section_rework_prompt.build_user_message(
             topic_title="OOPS",

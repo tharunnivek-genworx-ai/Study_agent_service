@@ -29,10 +29,15 @@ from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
 )
 from src.api.data.repositories.quiz_repositories.hint_repository import HintRepository
+from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: E501
+    StudyMaterialRepository,
+)
 from src.api.schemas.common.generation_diagnostics_schema import (
     HintGenerationDiagnosticsOut,
     HintQuestionErrorOut,
 )
+from src.api.utils.artifacts.common import new_artifact_run_id
+from src.api.utils.hint_utils.artifacts.hint_artifacts import log_hint_agent
 from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
 from src.api.utils.LLM_utils.llm_failure_diagnostics import (
     build_hint_invoke_failure_diagnostics,
@@ -44,6 +49,23 @@ from src.api.utils.space_node_utils.node_role_assert import (
 logger = logging.getLogger(__name__)
 
 _BANNED_PHRASES = ("the correct answer is", "the answer is")
+
+
+def _log_hint_artifact(
+    state: HintGraphState,
+    agent: str,
+    payload: dict[str, Any],
+) -> None:
+    run_id = state.get("artifact_run_id")
+    if not run_id:
+        return
+    log_hint_agent(
+        topic_title=state.get("node_title") or str(state.get("node_id")),
+        run_id=run_id,
+        agent=agent,
+        payload=payload,
+        node_id=str(state.get("node_id") or ""),
+    )
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────
@@ -121,9 +143,23 @@ async def load_hint_context(
         if not questions_for_hinting:
             raise QuizHasNoQuestionsException()
 
+    domain: str | None = None
+    if quiz.study_material_version_id is not None:
+        study_repo = StudyMaterialRepository(session)
+        version = await study_repo.get_version_by_id(
+            cast(UUID, quiz.study_material_version_id)
+        )
+        if version is not None:
+            concept_plan = version.concept_plan
+            if isinstance(concept_plan, dict) and concept_plan.get("domain"):
+                domain = str(concept_plan["domain"])
+
     return {
         **state,
         "space_id": cast(UUID, node.space_id),
+        "node_title": cast(str, node.title),
+        "domain": domain,
+        "artifact_run_id": state.get("artifact_run_id") or new_artifact_run_id(),
         "questions_for_hinting": questions_for_hinting,
     }
 
@@ -132,7 +168,8 @@ async def build_hint_prompt_payload(state: HintGraphState) -> HintGraphState:
     is_regeneration = bool(state.get("questions_filter_ids"))
     prompt_input = build_hint_prompt(
         questions_for_hinting=state.get("questions_for_hinting") or [],
-        topic_title=None,
+        topic_title=state.get("node_title"),
+        domain=state.get("domain"),
         is_regeneration=is_regeneration,
         mentor_feedback=state.get("mentor_feedback"),
     )
@@ -159,7 +196,7 @@ async def invoke_hint_llm(state: HintGraphState) -> HintGraphState:
             "Groq hint generation failed: %s",
             result.error_type,
         )
-        return {
+        failure = {
             **state,
             "terminal_llm_failure": True,
             "hint_generation_diagnostics": build_hint_invoke_failure_diagnostics(
@@ -167,13 +204,36 @@ async def invoke_hint_llm(state: HintGraphState) -> HintGraphState:
             ),
             "next_llm_retry_at": result.next_llm_retry_at,
         }
+        _log_hint_artifact(
+            state,
+            "hint_generator",
+            {
+                "prompt_input": prompt_input,
+                "raw_llm_output": result.content,
+                "llm_model_used": result.model or llm_settings.llm_model,
+                "token_usage": result.token_usage,
+                "terminal_llm_failure": True,
+            },
+        )
+        return cast(HintGraphState, failure)
 
-    return {
+    success = {
         **state,
         "raw_llm_output": result.content or "",
         "llm_model_used": result.model or llm_settings.llm_model,
         "token_usage": result.token_usage,
     }
+    _log_hint_artifact(
+        state,
+        "hint_generator",
+        {
+            "prompt_input": prompt_input,
+            "raw_llm_output": success["raw_llm_output"],
+            "llm_model_used": success["llm_model_used"],
+            "token_usage": result.token_usage,
+        },
+    )
+    return cast(HintGraphState, success)
 
 
 async def parse_hint_output(state: HintGraphState) -> HintGraphState:
@@ -243,7 +303,8 @@ async def _regenerate_hints_for_question(
     is_regeneration = bool(state.get("questions_filter_ids"))
     prompt_input = build_hint_prompt(
         questions_for_hinting=[question],
-        topic_title=None,
+        topic_title=state.get("node_title"),
+        domain=state.get("domain"),
         is_regeneration=is_regeneration,
         mentor_feedback=state.get("mentor_feedback"),
     )
@@ -341,11 +402,21 @@ async def validate_hint_quality(state: HintGraphState) -> HintGraphState:
             {"questionErrors": question_errors}
         ).model_dump(by_alias=True, exclude_none=True)
 
-    return {
+    validation_return = {
         **state,
         "validated_hints": validated,
         "hint_generation_diagnostics": diagnostics,
     }
+    _log_hint_artifact(
+        state,
+        "hint_validation",
+        {
+            "validated_hints": validated,
+            "hint_generation_diagnostics": diagnostics,
+            "parsed_hints": parsed,
+        },
+    )
+    return cast(HintGraphState, validation_return)
 
 
 async def persist_hints_to_questions(
@@ -376,6 +447,16 @@ async def persist_hints_to_questions(
         await repo.touch_quiz_updated_at(state["quiz_id"])
     else:
         await session.commit()
+
+    _log_hint_artifact(
+        state,
+        "hint_result",
+        {
+            "quiz_id": str(state["quiz_id"]),
+            "validated_hints": validated,
+            "hint_generation_diagnostics": diagnostics,
+        },
+    )
 
     return state
 

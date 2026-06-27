@@ -31,13 +31,14 @@ responses, labelled '(Removed)' by the frontend using is_active=False flag.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.api.schemas.common.generation_diagnostics_schema import (
     GenerationDiagnosticsOut,
+    QualityCheckItemOut,
 )
 from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
 
@@ -54,6 +55,7 @@ class QuizQualityCheckScoresOut(BaseModel):
     """Individual dimension scores from the quiz QC evaluator."""
 
     answer_correctness: int | None = None
+    question_quality: int | None = None
     topic_relevance: int | None = None
     option_quality: int | None = None
     question_clarity: int | None = None
@@ -75,13 +77,13 @@ class QuizQualityCheckResultOut(BaseModel):
 
     overall_status: Literal["pass", "warn", "fail"]
     wrong_answer_risk: Literal["none", "low", "medium", "high"]
-    scores: QuizQualityCheckScoresOut
-    flagged_questions: list[QuizQualityCheckFlaggedQuestionOut] = Field(
-        default_factory=list
-    )
+    checks: list[QualityCheckItemOut] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     corrective_instructions: str = ""
     summary: str = ""
+    scores: QuizQualityCheckScoresOut | None = None
+    flagged_questions: list[QuizQualityCheckFlaggedQuestionOut] | None = None
+    retry_recommendation: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,9 +174,8 @@ class QuizQuestionCreateRequest(BaseModel):
     Allows mentor to manually add a question to an existing quiz.
     source is forced to 'mentor_manual' at the service layer.
 
-    option_c and option_d are Optional — 3-option questions are supported.
-    correct_option must reference a non-None option (e.g., cannot set
-    correct_option='D' if option_d is None) — validated at service layer.
+    All four options (A–D) are required. correct_option must reference a
+    non-empty option — validated at the service layer.
 
     hint_1, hint_2, hint_3 are the three progressive hints:
       hint_1: subtle nudge (1st wrong attempt)
@@ -186,8 +187,8 @@ class QuizQuestionCreateRequest(BaseModel):
     question_text: str = Field(..., min_length=5)
     option_a: str = Field(..., min_length=1)
     option_b: str = Field(..., min_length=1)
-    option_c: str | None = None
-    option_d: str | None = None
+    option_c: str = Field(..., min_length=1)
+    option_d: str = Field(..., min_length=1)
     correct_option: CorrectOption
     hint_1: str | None = None
     hint_2: str | None = None
@@ -205,6 +206,9 @@ class QuizQuestionUpdateRequest(BaseModel):
     Body for PATCH /nodes/:id/quizzes/:quiz_id/questions/:question_id.
     All fields are Optional — partial updates are supported.
     The service merges only the provided fields onto the existing row.
+
+    If any option field is provided, the merged question must still have all
+    four non-empty options after the update.
 
     Note: updating correct_option on a published quiz triggers a
     quiz_questions_edited node_event_notification (EC-12). The service
@@ -225,6 +229,14 @@ class QuizQuestionUpdateRequest(BaseModel):
     hint_3: str | None = None
     explanation: str | None = None
     order_index: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def reject_blank_option_fields(self) -> Self:
+        for field in ("option_a", "option_b", "option_c", "option_d"):
+            value = getattr(self, field)
+            if value is not None and not str(value).strip():
+                raise ValueError(f"{field} must be non-empty when provided.")
+        return self
 
 
 class QuizQuestionReorderRequest(BaseModel):

@@ -62,7 +62,10 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
             qc_fix_block=qc_block,
         )
         return (
-            generation_prompt.build_system_prompt(has_reference=has_reference),
+            generation_prompt.build_system_prompt(
+                has_reference=has_reference,
+                domain=state.get("domain"),
+            ),
             user_message,
         )
 
@@ -83,7 +86,10 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
             qc_fix_block=qc_block,
         )
         return (
-            regeneration_prompt.build_system_prompt(has_reference=has_reference),
+            regeneration_prompt.build_system_prompt(
+                has_reference=has_reference,
+                domain=state.get("domain"),
+            ),
             user_message,
         )
 
@@ -100,7 +106,10 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
         qc_fix_block=qc_block,
     )
     return (
-        improve_prompt.build_system_prompt(has_reference=has_reference),
+        improve_prompt.build_system_prompt(
+            has_reference=has_reference,
+            domain=state.get("domain"),
+        ),
         user_message,
     )
 
@@ -132,7 +141,10 @@ def _build_section_patch_messages(
         patch_section_ids=patch_section_ids,
     )
     return (
-        section_rework_prompt.build_system_prompt(has_reference=has_reference),
+        section_rework_prompt.build_system_prompt(
+            has_reference=has_reference,
+            domain=state.get("domain"),
+        ),
         user_message,
     )
 
@@ -188,7 +200,10 @@ def _build_section_insert_messages(
         reference_block=reference_block,
     )
     return (
-        section_insert_prompt.build_system_prompt(has_reference=has_reference),
+        section_insert_prompt.build_system_prompt(
+            has_reference=has_reference,
+            domain=state.get("domain"),
+        ),
         user_message,
     )
 

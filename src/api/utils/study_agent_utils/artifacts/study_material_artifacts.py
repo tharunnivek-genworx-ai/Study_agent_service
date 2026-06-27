@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
+from src.api.utils.artifacts.common import (
+    new_artifact_run_id,
+)
+from src.api.utils.artifacts.common import (
+    write_json as _write_json,
+)
 from src.api.utils.study_agent_utils.artifacts.artifact_paths import (
     agent_artifact_path,
-    ensure_dir,
-    ist_timestamp,
     study_material_log_path,
 )
 
@@ -23,14 +25,6 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    ensure_dir(path.parent)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default),
-        encoding="utf-8",
-    )
 
 
 def log_agent_output(
@@ -109,6 +103,4 @@ def log_study_material_version(
         logger.warning("Could not save study material version artifact: %s", exc)
 
 
-def new_artifact_run_id() -> str:
-    """IST timestamp identifying one end-to-end graph execution."""
-    return ist_timestamp()
+__all__ = ["log_agent_output", "log_study_material_version", "new_artifact_run_id"]

@@ -18,7 +18,16 @@ from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 
-from src.api.control.quiz_agent.nodes import quiz_nodes
+from src.api.control.quiz_agent.nodes import (
+    MAX_QC_ATTEMPTS,
+    deterministic_validate_node,
+    load_existing_quiz_if_regenerate,
+    load_generation_context,
+    parse_quiz_output,
+    persist_quiz_draft,
+    quality_check_node,
+    quiz_generator_node,
+)
 from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
 
 _compiled_graph = None
@@ -26,72 +35,94 @@ _compiled_graph = None
 
 def _route_after_load_context(
     state: QuizGraphState,
-) -> Literal["load_existing_quiz_if_regenerate", "build_quiz_prompt_payload"]:
+) -> Literal["load_existing_quiz_if_regenerate", "quiz_generator"]:
     if state.get("mode") == "regenerate":
         return "load_existing_quiz_if_regenerate"
-    return "build_quiz_prompt_payload"
+    return "quiz_generator"
 
 
-def _route_after_invoke(
+def _route_after_quiz_generator(
     state: QuizGraphState,
-) -> Literal["parse_quiz_output", "persist_quiz_draft", "__end__"]:
+) -> Literal[
+    "parse_quiz_output",
+    "deterministic_validate",
+    "persist_quiz_draft",
+    "__end__",
+]:
     if state.get("terminal_llm_failure"):
         return "persist_quiz_draft"
     if state.get("error"):
         return "__end__"
+    if state.get("parsed_questions") is not None:
+        return "deterministic_validate"
     return "parse_quiz_output"
 
 
 def _route_after_parse(
     state: QuizGraphState,
-) -> Literal["validate_quiz_structure", "__end__"]:
+) -> Literal["deterministic_validate", "__end__"]:
     if state.get("error"):
         return "__end__"
-    return "validate_quiz_structure"
+    return "deterministic_validate"
 
 
-def _route_after_validate(
+def _route_after_deterministic_validate(
     state: QuizGraphState,
-) -> Literal["quality_check", "__end__"]:
-    if state.get("error"):
-        return "__end__"
-    return "quality_check"
+) -> Literal["quiz_generator", "quality_check", "persist_quiz_draft"]:
+    if state.get("struct_validation_passed"):
+        return "quality_check"
+    if state.get("qc_failed_permanently"):
+        return "persist_quiz_draft"
+    return "quiz_generator"
 
 
 def _route_after_quality_check(
     state: QuizGraphState,
-) -> Literal["build_quiz_prompt_payload", "persist_quiz_draft"]:
+) -> Literal["quiz_generator", "quality_check", "persist_quiz_draft"]:
     if state.get("qc_passed"):
         return "persist_quiz_draft"
     if state.get("qc_failed_permanently"):
         return "persist_quiz_draft"
-    # Retry: loop back to rebuild the prompt payload with the QC feedback
-    return "build_quiz_prompt_payload"
+
+    qc_result = state.get("qc_result") or {}
+    qc_attempt = state.get("qc_attempt") or 0
+    if (
+        isinstance(qc_result, dict)
+        and qc_result.get("qcInfraError")
+        and qc_attempt < MAX_QC_ATTEMPTS
+    ):
+        return "quality_check"
+
+    return "quiz_generator"
 
 
 def build_quiz_generation_graph() -> Any:
     """Build and compile the quiz draft generation graph."""
     graph = StateGraph(QuizGraphState)
 
-    graph.add_node("load_generation_context", quiz_nodes.load_generation_context)
+    graph.add_node("load_generation_context", load_generation_context)
     graph.add_node(
         "load_existing_quiz_if_regenerate",
-        quiz_nodes.load_existing_quiz_if_regenerate,
+        load_existing_quiz_if_regenerate,
     )
-    graph.add_node("build_quiz_prompt_payload", quiz_nodes.build_quiz_prompt_payload)
-    graph.add_node("invoke_quiz_llm", quiz_nodes.invoke_quiz_llm)
-    graph.add_node("parse_quiz_output", quiz_nodes.parse_quiz_output)
-    graph.add_node("validate_quiz_structure", quiz_nodes.validate_quiz_structure)
-    graph.add_node("quality_check", quiz_nodes.quality_check_node)
-    graph.add_node("persist_quiz_draft", quiz_nodes.persist_quiz_draft)
+    graph.add_node("quiz_generator", quiz_generator_node)
+    graph.add_node("parse_quiz_output", parse_quiz_output)
+    graph.add_node(
+        "deterministic_validate",
+        deterministic_validate_node,
+    )
+    graph.add_node("quality_check", quality_check_node)
+    graph.add_node("persist_quiz_draft", persist_quiz_draft)
 
     graph.set_entry_point("load_generation_context")
     graph.add_conditional_edges("load_generation_context", _route_after_load_context)
-    graph.add_edge("load_existing_quiz_if_regenerate", "build_quiz_prompt_payload")
-    graph.add_edge("build_quiz_prompt_payload", "invoke_quiz_llm")
-    graph.add_conditional_edges("invoke_quiz_llm", _route_after_invoke)
+    graph.add_edge("load_existing_quiz_if_regenerate", "quiz_generator")
+    graph.add_conditional_edges("quiz_generator", _route_after_quiz_generator)
     graph.add_conditional_edges("parse_quiz_output", _route_after_parse)
-    graph.add_conditional_edges("validate_quiz_structure", _route_after_validate)
+    graph.add_conditional_edges(
+        "deterministic_validate",
+        _route_after_deterministic_validate,
+    )
     graph.add_conditional_edges("quality_check", _route_after_quality_check)
     graph.add_edge("persist_quiz_draft", END)
 

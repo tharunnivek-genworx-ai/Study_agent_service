@@ -33,3 +33,11 @@ class TestSectionInsertPrompt:
         system = section_insert_prompt.build_system_prompt(has_reference=False)
         assert "missing_checklist_items" in system
         assert '"sections"' in system
+
+    def test_stem_domain_includes_stem_rules_only(self):
+        system = section_insert_prompt.build_system_prompt(
+            has_reference=False, domain="STEM"
+        )
+        assert "formula_blocks (never code_blocks)" in system
+        assert "Programming: show complete runnable examples" not in system
+        assert "Conceptual: use specific named cases" not in system
