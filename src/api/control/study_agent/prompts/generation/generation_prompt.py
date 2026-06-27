@@ -1,10 +1,9 @@
-# ─────────────────────────────────────────────────────────────────────────────
 # src/api/control/study_agent/prompts/generation_prompt.py
-# ─────────────────────────────────────────────────────────────────────────────
 """Study material generation prompts — JSON output, domain-aware, self-contained."""
 
 from __future__ import annotations
 
+from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     format_must_cover_checklist_line,
 )
@@ -34,19 +33,7 @@ mathematical derivations live ONLY inside "formula_blocks" — never inside "cod
 A formula_block is not source code: never give it a programming-language "language" value, and never put real programming code
 inside one. The "explanation" field inside every code_block and formula_block entry is mandatory and must not be empty.\
 """
-
-SYSTEM_PROMPT = f"""\
-You are an expert educator writing structured study material on any academic or technical subject.
-Return ONLY valid JSON — no markdown fences, no prose outside the JSON.
-
-{JSON_OUTPUT_SCHEMA}
-
-HONESTY GATE
-If the topic is proprietary, internal, or undocumented and you cannot write accurate content from public knowledge, return:
-{{"generation_status": "reference_required", "topic_received": "<topic>", "reason": "<one sentence>", "message": "Provide official documentation, a PDF, or key concepts to proceed."}}
-
-DOMAIN RULES — apply based on <domain> when provided; otherwise infer from the topic
-
+STEM_DOMAIN_RULES_BLOCK = """\
 STEM (mathematics, physics, chemistry, biology, engineering, statistics):
 - Every equation, chemical reaction, or derivation step belongs in a formula_block, not a code_block or inline text.
 - State every equation in standard notation. Define every variable and its unit on first use.
@@ -55,8 +42,8 @@ STEM (mathematics, physics, chemistry, biology, engineering, statistics):
 - Physical and mathematical constants must carry their correct value and unit every time they appear.
 - Do not skip algebraic or logical steps in derivations — each step must follow from the previous one. Each intermediate step belongs in its own formula_block entry so the reasoning chain is visible.
 - Never state a reaction, mechanism, or formula that you cannot independently verify as real chemistry, physics, or mathematics. A confident, well-formatted but fabricated reaction or constant is a serious failure — if you are not certain a reaction or value is real, do not include it.
-- DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. A section that provides only a Python script computing a result where sequential formula_block steps were required has FAILED the must_cover item. Code_blocks are permitted in STEM sections ONLY when the section's primary teaching goal is computational implementation (e.g., "Numerical Integration Methods") AND the linked must_cover item does not demand a mathematical derivation.
-
+- DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. A section that provides only a Python script computing a result where sequential formula_block steps were required has FAILED the must_cover item. Code_blocks are permitted in STEM sections ONLY when the section's primary teaching goal is computational implementation (e.g., "Numerical Integration Methods") AND the linked must_cover item does not demand a mathematical derivation."""
+PROGRAMMING_DOMAIN_RULES_BLOCK = """\
 Programming (code, algorithms, data structures, APIs, frameworks):
 - Code must be syntactically valid and produce the correct result on the demonstrated path.
 - Every symbol, function, class, or module used in a code block must be defined or imported within that same block.
@@ -64,24 +51,32 @@ Programming (code, algorithms, data structures, APIs, frameworks):
 - Python: never define the same method or function name twice in the same scope unless you explicitly explain that the second definition replaces the first and demonstrate the intended pattern.
 - JavaScript/TypeScript: every hook, component, or API used must appear in an import statement in the same block. Verify the API exists in the stated library.
 - C/C++: include every required header; zero-initialise structs before use; the demonstrated path must not invoke undefined behaviour.
-- The "explanation" field must state: (1) what the code demonstrates, (2) which concept it illustrates, (3) one thing the reader should notice or remember.
-
+- The "explanation" field must state: (1) what the code demonstrates, (2) which concept it illustrates, (3) one thing the reader should notice or remember."""
+CONCEPTUAL_DOMAIN_RULES_BLOCK = """\
 Conceptual (history, philosophy, law, ethics, social sciences, literature, management, business):
 - Named facts — dates, people, events, laws, organisations — must be accurate per mainstream record.
 - Arguments must be structured: claim → evidence → reasoning. Do not state conclusions without support.
 - Examples must be specific and named. "In many industries…" is not an example — name the industry, company, or case.
-- Do not add code_blocks or formula_blocks to a Conceptual section. There is no source code or equation to illustrate a recruitment process, a historical event, or a management framework — express every example as a specific, named, real-world scenario in prose instead.
-
+- Do not add code_blocks or formula_blocks to a Conceptual section. There is no source code or equation to illustrate a recruitment process, a historical event, or a management framework — express every example as a specific, named, real-world scenario in prose instead."""
+MIXED_DOMAIN_RULES_BLOCK = """\
 Mixed (spans more than one domain above):
-- Apply the relevant domain's rules section by section, based on what each individual section is actually teaching — not the document's overall label. A Mixed topic with one conceptual section and one programming section should have code_blocks only in the programming section.
-
+- Apply the relevant domain's rules section by section, based on what each individual section is actually teaching — not the document's overall label. A Mixed topic with one conceptual section and one programming section should have code_blocks only in the programming section."""
+_DOMAIN_RULES_HEADER = "DOMAIN RULES — apply based on <domain> when provided; otherwise infer from the topic"
+SYSTEM_PROMPT_PREFIX = f"""\
+You are an expert educator writing structured study material on any academic or technical subject.
+Return ONLY valid JSON — no markdown fences, no prose outside the JSON.
+{JSON_OUTPUT_SCHEMA}
+HONESTY GATE
+If the topic is proprietary, internal, or undocumented and you cannot write accurate content from public knowledge, return:
+{{"generation_status": "reference_required", "topic_received": "<topic>", "reason": "<one sentence>", "message": "Provide official documentation, a PDF, or key concepts to proceed."}}
+"""
+SYSTEM_PROMPT_SUFFIX = """\
 UNIVERSAL ACCURACY RULES (all domains)
 - Never use two technically distinct terms interchangeably.
 - Never invent named facts: no fabricated formulas, fake API names, invented events, invented reactions, or made-up constants.
 - Never attribute a property, behaviour, or feature to a language, framework, or field it does not belong to.
 - Use code_blocks only for genuine, executable source code in a real programming language. Use formula_blocks only for equations, chemical reactions, or mathematical/scientific notation. Never label a code_block's "language" as something like "math" or "chemical equation" — that content belongs in a formula_block.
 - Never attribute specific statistics, percentages, retention rates, or performance metrics to named organisations unless those figures are publicly documented and widely known. Invented case-study metrics are hallucinations regardless of how plausible they sound — if a verifiable figure is unavailable, describe the outcome qualitatively.
-
 SUBSTANCE RULES
 - Every section must deliver: definition of the concept, mechanism (how and why it works), and at least one concrete example.
 - Naming a concept in a heading or a single sentence is not coverage.
@@ -91,11 +86,9 @@ SUBSTANCE RULES
 - Use code_blocks and formula_blocks only where that section's domain rule calls for them — never insert either purely to make a section look more technical or rigorous.
 - When <must_cover_checklist> is present, every required item must satisfy its depth_gate — demonstrated, not merely mentioned.
 - When a checklist `requirement` or `depth_gate` uses verbs such as *derive*, *prove*, *calculate*, or *step-by-step*, include the full working as sequential algebraic or logical steps in `formula_blocks` within that item's `section_id` — stating only the final rule or formula is insufficient, and Python code is not a substitute.
-
 OUTPUT SIZE
 - Code blocks: under 30 lines each. Favour quality over repetition.
 - Always finish the entire JSON object. A truncated response is invalid.
-
 FINAL CHECK before outputting (do not print this list):
 1. Every topic_split entry has a matching section with the correct id and heading.
 2. Every required checklist item satisfies its depth_gate with demonstrated evidence.
@@ -106,31 +99,48 @@ FINAL CHECK before outputting (do not print this list):
 7. Every `must_cover` item's evidence appears in the section matching its `section_id`, not a neighbouring section.
 8. Every STEM section whose must_cover item demands derivation contains sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.\
 """
-
 REPROMPT_SYSTEM = (
     "Your previous response was not valid JSON. "
     "Return ONLY the JSON object, starting with { and ending with }. "
     "No markdown, no commentary."
 )
-
 _REFERENCE_ADDENDUM = """
-
 Reference material is provided. Treat it as authoritative — prefer it over general knowledge when they conflict.
 - Do not invent facts not found in the reference.
 - [IMAGE: <caption>] blocks: write a plain-English walkthrough using the labels in the Description field.
 - Adapt reference code into minimal readable snippets with the correct language value.\
 """
-
 _NO_REFERENCE_ADDENDUM = """
-
 No reference material is provided. Write from authoritative knowledge of the topic.\
 """
 
 
-def build_system_prompt(*, has_reference: bool) -> str:
-    return SYSTEM_PROMPT + (
-        _REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM
+def build_domain_rules_block(domain: str | None) -> str:
+    return merge_domain_blocks(
+        {
+            "STEM": STEM_DOMAIN_RULES_BLOCK,
+            "Programming": PROGRAMMING_DOMAIN_RULES_BLOCK,
+            "Conceptual": CONCEPTUAL_DOMAIN_RULES_BLOCK,
+            "Mixed": MIXED_DOMAIN_RULES_BLOCK,
+        },
+        domain,
+        header=_DOMAIN_RULES_HEADER,
     )
+
+
+def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
+    return (
+        SYSTEM_PROMPT_PREFIX
+        + build_domain_rules_block(domain)
+        + "\n\n"
+        + SYSTEM_PROMPT_SUFFIX
+        + (_REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM)
+    )
+
+
+SYSTEM_PROMPT = (
+    SYSTEM_PROMPT_PREFIX + build_domain_rules_block("") + "\n\n" + SYSTEM_PROMPT_SUFFIX
+)
 
 
 def format_reference_user_block(
@@ -180,7 +190,6 @@ def build_must_cover_block(must_cover_checklist: list[dict]) -> str:
 
 USER_MESSAGE_TEMPLATE = """\
 Topic: {topic_title}
-
 Teaching instruction: {teaching_instruction_text}
 {reference_block}"""
 

@@ -1,0 +1,1 @@
+"""Deterministic quiz QC checks."""

@@ -95,7 +95,7 @@ class TestVerificationPrompt:
         assert "<code_review_units>" not in msg
 
     def test_system_prompt_covers_all_six_categories(self):
-        system = qc_verification_prompt.SYSTEM_PROMPT
+        system = qc_verification_prompt.build_system_prompt(domain="")
         assert "must_cover" in system
         assert "content_accuracy" in system
         assert "teaching_alignment" in system
@@ -107,12 +107,12 @@ class TestVerificationPrompt:
         assert "ANTI-INFLATION RULES" in system
 
     def test_system_prompt_includes_depth_gate_procedure(self):
-        system = qc_verification_prompt.SYSTEM_PROMPT
+        system = qc_verification_prompt.build_system_prompt(domain="")
         assert "depth_gate" in system
         assert "explanation" in system
 
     def test_system_prompt_includes_retry_recommendation(self):
-        system = qc_verification_prompt.SYSTEM_PROMPT
+        system = qc_verification_prompt.build_system_prompt(domain="")
         assert "retry_recommendation" in system
         assert "section_patch" in system
         assert "section_insert" in system
@@ -199,12 +199,12 @@ class TestVerificationPrompt:
         assert "sections" in parsed
 
     def test_system_prompt_requires_json_only_output(self):
-        system = qc_verification_prompt.SYSTEM_PROMPT
+        system = qc_verification_prompt.build_system_prompt(domain="")
         assert "Return ONLY valid JSON" in system
         assert "Start with {" in system
 
     def test_system_prompt_includes_accuracy_hygiene_rules(self):
-        system = qc_verification_prompt.SYSTEM_PROMPT
+        system = qc_verification_prompt.build_system_prompt(domain="")
         assert "only states the final formula, rule, or result" in system
         assert "NEVER set corrective_hint when passed=true" in system
         assert "retry_recommendation.mode" in system
@@ -250,3 +250,11 @@ class TestVerificationPrompt:
         assert "mc_1" not in checklist_block
         assert section_id in frozen_block
         assert "mc_2" in checklist_block
+
+    def test_stem_domain_excludes_code_quality_section(self):
+        empty_prompt = qc_verification_prompt.build_system_prompt(domain="")
+        stem_prompt = qc_verification_prompt.build_system_prompt(domain="STEM")
+        assert empty_prompt != stem_prompt
+        assert "⑤ code_quality" not in stem_prompt
+        assert "⑥ stack_fidelity" not in stem_prompt
+        assert "PROGRAMMING VERIFICATION" not in stem_prompt

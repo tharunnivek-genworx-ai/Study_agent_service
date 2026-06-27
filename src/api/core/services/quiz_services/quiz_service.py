@@ -16,6 +16,7 @@ Mentor flow (Option B — quiz lifecycle decoupled from SM version identity):
 import logging
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
@@ -106,16 +107,32 @@ from src.api.utils.trainee_progress_utils.progress_resets import (
 logger = logging.getLogger(__name__)
 
 
-def _validate_correct_option_exists(
-    correct_option: CorrectOption,
+def _validate_question_options(
+    *,
+    option_a: str | None,
+    option_b: str | None,
     option_c: str | None,
     option_d: str | None,
+    correct_option: CorrectOption,
 ) -> None:
-    """Ensure correct_option references a non-None option."""
-    if correct_option == "C" and option_c is None:
-        raise QuizQuestionNotFoundException()
-    if correct_option == "D" and option_d is None:
-        raise QuizQuestionNotFoundException()
+    """Ensure all four options are non-empty and correct_option references one."""
+    options = {
+        "A": option_a,
+        "B": option_b,
+        "C": option_c,
+        "D": option_d,
+    }
+    for letter, value in options.items():
+        if value is None or not str(value).strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"option_{letter.lower()} is required and must be non-empty.",
+            )
+    if correct_option not in options or not str(options[correct_option]).strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="correct_option must reference a non-empty option.",
+        )
 
 
 class QuizService:
@@ -165,8 +182,8 @@ class QuizService:
             if source_quiz is None or source_quiz.node_id != node_id:
                 raise QuizNotFoundException()
             if source_quiz.qc_failed_permanently and source_quiz.qc_result:
-                from src.api.control.quiz_agent.nodes.quiz_nodes import (
-                    format_qc_feedback,  # noqa: PLC0415
+                from src.api.utils.quiz_utils.quality_check_utils.results.feedback import (  # noqa: PLC0415
+                    format_qc_feedback,
                 )
 
                 failed_qc_feedback = format_qc_feedback(source_quiz.qc_result)
@@ -646,8 +663,12 @@ class QuizService:
             raise QuizNotFoundException()
         await self._require_quiz_study_material_source(node_id)
 
-        _validate_correct_option_exists(
-            request.correct_option, request.option_c, request.option_d
+        _validate_question_options(
+            option_a=request.option_a,
+            option_b=request.option_b,
+            option_c=request.option_c,
+            option_d=request.option_d,
+            correct_option=request.correct_option,
         )
 
         order_index = request.order_index
@@ -702,15 +723,40 @@ class QuizService:
         if question is None or question.quiz_id != quiz_id or not question.is_active:
             raise QuizQuestionNotFoundException()
 
-        # Validate correct_option references a real option after merge
+        merged_a = (
+            request.option_a if request.option_a is not None else question.option_a
+        )
+        merged_b = (
+            request.option_b if request.option_b is not None else question.option_b
+        )
         merged_c = (
             request.option_c if request.option_c is not None else question.option_c
         )
         merged_d = (
             request.option_d if request.option_d is not None else question.option_d
         )
-        if request.correct_option is not None:
-            _validate_correct_option_exists(request.correct_option, merged_c, merged_d)
+        merged_correct = (
+            request.correct_option
+            if request.correct_option is not None
+            else question.correct_option
+        )
+        if any(
+            field is not None
+            for field in (
+                request.option_a,
+                request.option_b,
+                request.option_c,
+                request.option_d,
+                request.correct_option,
+            )
+        ):
+            _validate_question_options(
+                option_a=merged_a,
+                option_b=merged_b,
+                option_c=merged_c,
+                option_d=merged_d,
+                correct_option=merged_correct,
+            )
 
         # EC-12: if correct_option changed on a published quiz, emit notification (stub)
         if (

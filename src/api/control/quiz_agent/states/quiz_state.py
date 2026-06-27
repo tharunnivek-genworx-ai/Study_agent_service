@@ -22,11 +22,27 @@ class QuizGraphState(TypedDict, total=False):
     node_title: str | None
     study_material_version_id: UUID | None
     study_material_content: str | None
+    domain: str | None
+    topic_split: list[dict] | None
     existing_quiz_questions: list | None  # populated only in regenerate mode
     prompt_input: dict | None
     raw_llm_output: str | None
     parsed_questions: list | None
     validated_questions: list | None
+    hints_stale_question_ids: list[str]
+    struct_validation_passed: bool
+
+    # Pre-QC deterministic retry
+    gen_attempt: int
+    gen_feedback: str
+
+    # QC retry routing (mirrors study agent)
+    qc_retry_mode: str
+    qc_reverify_question_ids: list[str]
+    qc_missing_concepts: list[str]
+    qc_question_failures: list[dict]
+    fixed_questions: list[dict] | None
+    qc_verification_mode: str  # "full" | "targeted"
     quiz_title: str | None
     created_quiz_id: UUID | None
     llm_model_used: str | None
@@ -46,3 +62,4 @@ class QuizGraphState(TypedDict, total=False):
     llm_error_type: str | None
     provider_meta: dict[str, Any] | None
     next_llm_retry_at: datetime | None
+    artifact_run_id: str | None

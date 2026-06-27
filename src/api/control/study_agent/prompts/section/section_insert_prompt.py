@@ -1,6 +1,4 @@
-# ─────────────────────────────────────────────────────────────────────────────
 # src/api/control/study_agent/prompts/section_insert_prompt.py
-# ─────────────────────────────────────────────────────────────────────────────
 """Section insert prompts — write only the missing checklist sections."""
 
 from __future__ import annotations
@@ -8,6 +6,7 @@ from __future__ import annotations
 from src.api.control.study_agent.prompts.generation.generation_prompt import (
     format_reference_user_block,
 )
+from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     format_must_cover_checklist_line,
 )
@@ -30,13 +29,17 @@ Omit "code_blocks", "formula_blocks", and "subsections" entirely when empty.
 Each section's "id" must match the section_id from its checklist item. Source code lives only in "code_blocks"; equations,
 reactions, and derivations live only in "formula_blocks" — never invent a code-language label for a formula.\
 """
-
-_BASE_SYSTEM = f"""\
+STEM_SUBSTANCE_BLOCK = "- STEM: state equations and reactions in formula_blocks (never code_blocks), trace worked examples step-by-step to correct answers, define all variables with units. When the depth_gate demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — one step per formula_block entry if needed. Do NOT use Python, sympy, scipy, numpy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain."
+PROGRAMMING_SUBSTANCE_BLOCK = '- Programming: show complete runnable examples in code_blocks; every code_block must have a non-empty "explanation" field.'
+CONCEPTUAL_SUBSTANCE_BLOCK = "- Conceptual: use specific named cases, organisations, rulings, or events; never use vague generalisations as examples; do not add code_blocks or formula_blocks — there is nothing to execute or compute. Do not invent statistics attributed to named organisations."
+_SUBSTANCE_RULES_COMMON = """\
+SUBSTANCE RULES
+- Each new section must satisfy its depth_gate — this is the minimum, not the ceiling.
+- Deliver: definition + mechanism (how and why) + at least one concrete example per major concept, with the depth of a real teaching section rather than a brief summary."""
+_BASE_SYSTEM_PREFIX = f"""\
 You are an expert educator writing missing sections for a study document.
 Mandate: write ONLY the sections listed in <missing_checklist_items>. Do not return any existing section.
-
 {SECTION_OUTPUT_SCHEMA}
-
 ACCURACY RULES
 - Every claim must be true for the specific language, framework, or field in the topic.
 - Never attribute a property to a language or field it does not belong to.
@@ -45,15 +48,8 @@ ACCURACY RULES
 - Code must be syntactically valid. Every symbol must be defined or imported in the same block.
 - Never define the same method or function name twice in the same scope without explaining the consequence.
 - Verify every API call is real for the stated language/version.
-
-SUBSTANCE RULES
-- Each new section must satisfy its depth_gate — this is the minimum, not the ceiling.
-- Deliver: definition + mechanism (how and why) + at least one concrete example per major concept, with the depth of a real teaching section rather than a brief summary.
-- STEM: state equations and reactions in formula_blocks (never code_blocks), trace worked examples step-by-step to correct answers, define all variables with units. When the depth_gate demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — one step per formula_block entry if needed. Do NOT use Python, sympy, scipy, numpy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain.
-- Programming: show complete runnable examples in code_blocks; every code_block must have a non-empty "explanation" field.
-- Conceptual: use specific named cases, organisations, rulings, or events; never use vague generalisations as examples; do not add code_blocks or formula_blocks — there is nothing to execute or compute. Do not invent statistics attributed to named organisations.
-- Examples must be meaningfully distinct from each other.
-
+"""
+_FINAL_CHECK_BLOCK = """\
 FINAL CHECK before outputting (do not print):
 1. Output contains only sections for <missing_checklist_items> with correct ids.
 2. Every depth_gate requirement is substantively satisfied with evidence.
@@ -63,20 +59,47 @@ FINAL CHECK before outputting (do not print):
 6. No invented statistics attributed to named organisations.
 7. JSON is valid.\
 """
-
 _REFERENCE_ADDENDUM = """
-
 Reference material is provided. Treat it as authoritative when writing new sections. Do not invent facts not in the reference.\
 """
-
 _NO_REFERENCE_ADDENDUM = """
-
 No reference material is provided. Write from authoritative knowledge of the topic.\
 """
 
 
-def build_system_prompt(*, has_reference: bool) -> str:
-    return _BASE_SYSTEM + (
+def build_substance_rules_block(domain: str | None) -> str:
+    domain_bullets = merge_domain_blocks(
+        {
+            "STEM": STEM_SUBSTANCE_BLOCK,
+            "Programming": PROGRAMMING_SUBSTANCE_BLOCK,
+            "Conceptual": CONCEPTUAL_SUBSTANCE_BLOCK,
+        },
+        domain,
+        separator="\n",
+    )
+    return (
+        _SUBSTANCE_RULES_COMMON
+        + "\n"
+        + domain_bullets
+        + "\n"
+        + "- Examples must be meaningfully distinct from each other."
+    )
+
+
+def _build_base_system(domain: str | None) -> str:
+    return (
+        _BASE_SYSTEM_PREFIX
+        + build_substance_rules_block(domain)
+        + "\n\n"
+        + _FINAL_CHECK_BLOCK
+    )
+
+
+_BASE_SYSTEM = _build_base_system("")
+
+
+def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
+    return _build_base_system(domain) + (
         _REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM
     )
 

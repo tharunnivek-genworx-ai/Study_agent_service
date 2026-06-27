@@ -29,7 +29,7 @@ async def run_verification_pass(
     """Single Groq pass over the full study document."""
     verification, meta = await run_llm_verification_pass(
         build_user_message=qc_verification_prompt.build_user_message,
-        system_prompt=qc_verification_prompt.SYSTEM_PROMPT,
+        system_prompt=qc_verification_prompt.build_system_prompt(domain=domain),
         reprompt_system=qc_verification_prompt.REPROMPT_SYSTEM,
         call_llm=call_groq_qc_verification,
         graph_node="qc_verification",
@@ -64,7 +64,7 @@ async def run_retry_verification_pass(
     """Targeted Groq pass over patched or inserted sections only."""
     verification, meta = await run_llm_verification_pass(
         build_user_message=qc_retry_verification_prompt.build_user_message,
-        system_prompt=qc_retry_verification_prompt.SYSTEM_PROMPT,
+        system_prompt=qc_retry_verification_prompt.build_system_prompt(domain=domain),
         reprompt_system=qc_retry_verification_prompt.REPROMPT_SYSTEM,
         call_llm=call_groq_qc_verification,
         graph_node="qc_retry_verification",
