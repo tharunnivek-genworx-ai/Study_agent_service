@@ -126,6 +126,10 @@ class QuizGenerateRequest(BaseModel):
         default=None,
         description="Optional feedback or goal for regeneration.",
     )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
+    )
 
 
 class QuizDeleteOut(BaseModel):
@@ -209,10 +213,6 @@ class QuizQuestionUpdateRequest(BaseModel):
 
     If any option field is provided, the merged question must still have all
     four non-empty options after the update.
-
-    Note: updating correct_option on a published quiz triggers a
-    quiz_questions_edited node_event_notification (EC-12). The service
-    handles this; the schema does not need to carry a flag for it.
 
     hint_3 is the most explicit hint — it must NOT reveal the correct answer.
     explanation is post-submit only and must NOT reveal the answer during a live attempt.

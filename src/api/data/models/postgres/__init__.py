@@ -17,6 +17,9 @@ from src.api.data.models.postgres.e_spaces_trees import (  # noqa: F401
     space_trainees,
     topic_nodes,
 )
+from src.api.data.models.postgres.generation import (  # noqa: F401
+    generation_runs,
+)
 from src.api.data.models.postgres.identity_refs import (  # noqa: F401
     departments,
     mentors,
@@ -24,7 +27,4 @@ from src.api.data.models.postgres.identity_refs import (  # noqa: F401
 )
 from src.api.data.models.postgres.progress_models import (  # noqa: F401
     trainee_node_progress,
-)
-from src.api.data.models.postgres.progress_notification_models import (  # noqa: F401
-    node_event_notifications,
 )

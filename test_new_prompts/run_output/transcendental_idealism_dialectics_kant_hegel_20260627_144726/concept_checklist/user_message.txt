@@ -1,0 +1,7 @@
+<topic>Transcendental Idealism & Dialectics (Kant & Hegel)</topic>
+
+<teaching_instruction>
+Write a comprehensive study guide on the Transcendental Idealism & Dialectics (Kant & Hegel), covering its basics, common pitfalls, and real-world scenarios.Include a worked real world scenario for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.Generated content should be on the level of a university philosophy textbook, with detailed subsections and subtopics. Every subsection must have very big paragraphs and detailed explanations.
+</teaching_instruction>
+
+Generate the JSON plan now. For every must_cover item, pick its evidence family (A/B/C) from what the item is actually about, copy that family's depth_gate skeleton, and fill only the brackets. Run the Family-A word-ban scan on every Family B and Family C item before output. Ensure each section has a pedagogy_intent distinct from its neighbours, and every checklist item has a concrete misconception and a non-trivial reflection_q. Ensure each section has linked checklist items with specific requirements and fully filled-in depth_gates — not a thin or generic plan.

@@ -1,0 +1,19 @@
+Topic: React useState Hook
+Teaching instruction: Write for a junior developer who knows JavaScript basics but has never used React hooks. Focus on mental models, common pitfalls, and one complete runnable example per major idea.
+
+<domain>Programming</domain>
+<topic_split>
+Create exactly one section per entry (matching id and heading), and use the listed pedagogy intent as the dominant teaching mode for that section.
+  - [ts_1] useState Hook Basics — Understand the mental model behind useState and how it differs from traditional JavaScript state management. — pedagogy: 
+  - [ts_2] Common Pitfalls and Best Practices — Learn how to avoid common mistakes when using useState and understand best practices for its usage. — pedagogy: 
+  - [ts_3] Implementing useState in a Real-World Scenario — See a complete runnable example of how to use useState in a real-world application. — pedagogy: 
+</topic_split>
+<must_cover_checklist>
+Every required item must be addressed to its depth_gate standard — demonstrated, not just named.
+Place each item's demonstrated evidence inside the section matching its section_id.
+If an item includes a misconception field, correct that misconception explicitly.
+If an item includes a reflection_q field, preserve its intent as a learner-facing check question.
+  - [required] mc_1 (section_id: ts_1): useState Hook Basics — Explain how useState differs from traditional JavaScript state management, including the mental model behind it. | depth_gate: The mental model behind useState is explained in prose; the key differences from traditional JavaScript state management are named and presented; the causal reasoning connecting useState to its benefits is explained.
+  - [required] mc_2 (section_id: ts_2): Common Pitfalls and Best Practices — Implement a working example of a React component that uses useState to store a count, and explain how to avoid common mistakes when using useState. | depth_gate: At least one self-contained, runnable JavaScript code block implementing the useState example; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.
+  - [required] mc_3 (section_id: ts_3): Implementing useState in a Real-World Scenario — Explain how to use useState in a real-world scenario, such as a form with multiple input fields. | depth_gate: The specific real-world scenario (e.g. a form with multiple input fields) is named and presented; the causal reasoning connecting useState to its benefits in this scenario is explained.
+</must_cover_checklist>

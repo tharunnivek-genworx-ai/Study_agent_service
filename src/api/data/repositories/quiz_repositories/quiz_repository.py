@@ -32,17 +32,17 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
 from src.api.schemas.quiz_schemas.quiz_schema import QuizQuestionUpdateRequest
-from src.api.utils.content_lifecycle import (
-    transition_quiz_to_active,
-    transition_quiz_to_archived,
-    transition_quiz_to_hidden,
-)
 from src.api.utils.content_lifecycle.attempt_freeze import (
     abandon_in_progress_attempts_for_quizzes,
 )
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_DISCARDED,
     LIFECYCLE_DRAFT,
+)
+from src.api.utils.content_lifecycle.transitions import (
+    transition_quiz_to_active,
+    transition_quiz_to_archived,
+    transition_quiz_to_hidden,
 )
 from src.api.utils.content_lifecycle.visibility import exclude_discarded
 

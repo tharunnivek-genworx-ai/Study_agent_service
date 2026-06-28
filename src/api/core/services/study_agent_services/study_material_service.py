@@ -103,6 +103,10 @@ from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ARCHIVED,
     LIFECYCLE_DRAFT,
 )
+from src.api.utils.generation_progress import (
+    GenerationPipeline,
+    get_generation_progress_store,
+)
 from src.api.utils.space_node_utils.build_node import (
     format_effective_instruction,
     resolve_effective_instruction_parts,
@@ -134,6 +138,10 @@ from src.api.utils.study_agent_utils.version.version_actions import (
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
+
+
+def _progress_session_id(progress_session_id: UUID | None) -> str | None:
+    return str(progress_session_id) if progress_session_id is not None else None
 
 
 def _clear_drafts_block_reason_no_discardable_versions(
@@ -454,24 +462,37 @@ class StudyMaterialService:
         space_id = node.space_id
         node_title = node.title
 
-        graph_result = await run_study_material_generation(
-            session=self.session,
-            node_id=node_id,
-            reference_material_id=request.reference_material_id,
-            user_id=user_id,
-        )
-        graph_result["node_title"] = node_title
+        progress_id = _progress_session_id(request.progress_session_id)
+        progress_store = get_generation_progress_store()
+        if progress_id:
+            progress_store.start(progress_id, GenerationPipeline.STUDY_MATERIAL)
 
-        version_out = await self._persist_new_version(
-            node_id=node_id,
-            space_id=space_id,
-            graph_result=graph_result,
-            generation_type="generate",
-            user_id=user_id,
-            reference_material_id=request.reference_material_id,
-            based_on_version_id=None,
-        )
-        return version_out
+        try:
+            graph_result = await run_study_material_generation(
+                session=self.session,
+                node_id=node_id,
+                reference_material_id=request.reference_material_id,
+                user_id=user_id,
+                progress_session_id=progress_id,
+            )
+            graph_result["node_title"] = node_title
+
+            version_out = await self._persist_new_version(
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_type="generate",
+                user_id=user_id,
+                reference_material_id=request.reference_material_id,
+                based_on_version_id=None,
+            )
+            if progress_id:
+                progress_store.complete(progress_id)
+            return version_out
+        except Exception as exc:
+            if progress_id:
+                progress_store.fail(progress_id, str(exc))
+            raise
 
     # ── regenerate ─────────────────────────────────────────────────────
 
@@ -510,45 +531,60 @@ class StudyMaterialService:
 
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
 
-        graph_result = await run_study_material_regeneration(
-            session=self.session,
-            node_id=node_id,
-            current_draft_content=current_draft_content,
-            mentor_regeneration_goal=request.mentor_regeneration_goal,
-            reference_material_id=reference_material_id,
-            user_id=user_id,
-            hydration=hydration,
-            failed_qc_feedback=failed_qc_feedback,
-        )
-        graph_result["node_title"] = node_title
+        progress_id = _progress_session_id(request.progress_session_id)
+        progress_store = get_generation_progress_store()
+        if progress_id:
+            progress_store.start(progress_id, GenerationPipeline.STUDY_MATERIAL)
 
-        if graph_result.get("regenerate_status") == "vague":
-            return StudyMaterialFeedbackResponse(
-                has_new_version=False,
-                status="regeneration_goal_too_vague",
-                status_message=graph_result.get("llm_output_content"),
-                new_version=None,
+        try:
+            graph_result = await run_study_material_regeneration(
+                session=self.session,
+                node_id=node_id,
+                current_draft_content=current_draft_content,
+                mentor_regeneration_goal=request.mentor_regeneration_goal,
+                reference_material_id=reference_material_id,
+                user_id=user_id,
+                hydration=hydration,
+                failed_qc_feedback=failed_qc_feedback,
+                progress_session_id=progress_id,
             )
+            graph_result["node_title"] = node_title
 
-        new_version = await self._persist_new_version(
-            node_id=node_id,
-            space_id=space_id,
-            graph_result=graph_result,
-            generation_type="regenerate",
-            user_id=user_id,
-            mentor_feedback_used=request.mentor_regeneration_goal,
-            reference_material_id=reference_material_id,
-            based_on_version_id=based_on_version_id,
-        )
+            if graph_result.get("regenerate_status") == "vague":
+                if progress_id:
+                    progress_store.complete(progress_id)
+                return StudyMaterialFeedbackResponse(
+                    has_new_version=False,
+                    status="regeneration_goal_too_vague",
+                    status_message=graph_result.get("llm_output_content"),
+                    new_version=None,
+                )
 
-        return StudyMaterialFeedbackResponse(
-            has_new_version=True,
-            new_version_id=new_version.version_id,
-            status="ok",
-            new_version=new_version,
-            qc_failed_permanently=new_version.qc_failed_permanently,
-            qc_result=new_version.qc_result,
-        )
+            new_version = await self._persist_new_version(
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_type="regenerate",
+                user_id=user_id,
+                mentor_feedback_used=request.mentor_regeneration_goal,
+                reference_material_id=reference_material_id,
+                based_on_version_id=based_on_version_id,
+            )
+            if progress_id:
+                progress_store.complete(progress_id)
+
+            return StudyMaterialFeedbackResponse(
+                has_new_version=True,
+                new_version_id=new_version.version_id,
+                status="ok",
+                new_version=new_version,
+                qc_failed_permanently=new_version.qc_failed_permanently,
+                qc_result=new_version.qc_result,
+            )
+        except Exception as exc:
+            if progress_id:
+                progress_store.fail(progress_id, str(exc))
+            raise
 
     # ── improve ────────────────────────────────────────────────────────
 
@@ -587,45 +623,60 @@ class StudyMaterialService:
 
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
 
-        graph_result = await run_study_material_improve(
-            session=self.session,
-            node_id=node_id,
-            current_draft_content=current_draft_content,
-            mentor_feedback=request.mentor_feedback,
-            reference_material_id=reference_material_id,
-            user_id=user_id,
-            hydration=hydration,
-            failed_qc_feedback=failed_qc_feedback,
-        )
-        graph_result["node_title"] = node_title
+        progress_id = _progress_session_id(request.progress_session_id)
+        progress_store = get_generation_progress_store()
+        if progress_id:
+            progress_store.start(progress_id, GenerationPipeline.STUDY_MATERIAL)
 
-        if graph_result.get("improve_status") == "vague":
-            return StudyMaterialFeedbackResponse(
-                has_new_version=False,
-                status="feedback_too_vague",
-                status_message=graph_result.get("llm_output_content"),
-                new_version=None,
+        try:
+            graph_result = await run_study_material_improve(
+                session=self.session,
+                node_id=node_id,
+                current_draft_content=current_draft_content,
+                mentor_feedback=request.mentor_feedback,
+                reference_material_id=reference_material_id,
+                user_id=user_id,
+                hydration=hydration,
+                failed_qc_feedback=failed_qc_feedback,
+                progress_session_id=progress_id,
             )
+            graph_result["node_title"] = node_title
 
-        new_version = await self._persist_new_version(
-            node_id=node_id,
-            space_id=space_id,
-            graph_result=graph_result,
-            generation_type="improve",
-            user_id=user_id,
-            mentor_feedback_used=request.mentor_feedback,
-            reference_material_id=reference_material_id,
-            based_on_version_id=based_on_version_id,
-        )
+            if graph_result.get("improve_status") == "vague":
+                if progress_id:
+                    progress_store.complete(progress_id)
+                return StudyMaterialFeedbackResponse(
+                    has_new_version=False,
+                    status="feedback_too_vague",
+                    status_message=graph_result.get("llm_output_content"),
+                    new_version=None,
+                )
 
-        return StudyMaterialFeedbackResponse(
-            has_new_version=True,
-            new_version_id=new_version.version_id,
-            status="ok",
-            new_version=new_version,
-            qc_failed_permanently=new_version.qc_failed_permanently,
-            qc_result=new_version.qc_result,
-        )
+            new_version = await self._persist_new_version(
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_type="improve",
+                user_id=user_id,
+                mentor_feedback_used=request.mentor_feedback,
+                reference_material_id=reference_material_id,
+                based_on_version_id=based_on_version_id,
+            )
+            if progress_id:
+                progress_store.complete(progress_id)
+
+            return StudyMaterialFeedbackResponse(
+                has_new_version=True,
+                new_version_id=new_version.version_id,
+                status="ok",
+                new_version=new_version,
+                qc_failed_permanently=new_version.qc_failed_permanently,
+                qc_result=new_version.qc_result,
+            )
+        except Exception as exc:
+            if progress_id:
+                progress_store.fail(progress_id, str(exc))
+            raise
 
     # ── manual edit ────────────────────────────────────────────────────
 

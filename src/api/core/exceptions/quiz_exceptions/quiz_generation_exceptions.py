@@ -14,10 +14,9 @@ Edge cases covered (cross-referenced to TDD §3.6):
   EC-10  — Deleted questions in historical attempts: soft-delete only;
             no exception raised, frontend renders '(Removed)'.
   EC-11  — Regenerate entire quiz: new row; no exception for the action itself.
-  EC-12  — Wrong answer key corrected: update + notification; no exception.
+  EC-12  — Wrong answer key corrected: update only; no exception.
   EC-20  — New quiz resets node completion: handled by quiz_service +
-            progress_resets + node_event_notifications (see EC-20 in
-            progress_exceptions.py).
+            progress_resets (see EC-20 in progress_exceptions.py).
 
 Hint generation exceptions live in hint_generation_exceptions.py.
 
@@ -57,8 +56,7 @@ class QuizQuestionNotFoundException(HTTPException):
 class QuizAlreadyPublishedException(HTTPException):
     """
     Raised when a mentor tries to publish a quiz that is already published.
-    Guards against duplicate publish events creating spurious
-    node_event_notifications (mirrors VersionAlreadyPublishedException).
+    Guards against duplicate publish events (mirrors VersionAlreadyPublishedException).
     """
 
     def __init__(self) -> None:

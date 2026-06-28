@@ -1,0 +1,21 @@
+{
+  "stage": "generation",
+  "topic": "Light Particle Wave Duality",
+  "effective_instruction": "Write a comprehensive study guide on the Light Particle Wave Duality, covering its basics, common pitfalls, and real-world scenarios.Include a worked example for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.Generated content should be on the level of a university physics textbook, with detailed subsections and subtopics. Every subsection must have very big paragraphs and detailed explanations.",
+  "domain": "STEM",
+  "started_at": "2026-06-27T14:44:46.118453+00:00",
+  "finished_at": "2026-06-27T14:44:53.961477+00:00",
+  "duration_seconds": 7.843024,
+  "llm_ok": true,
+  "llm_error_type": null,
+  "llm_model_used": "llama-3.3-70b-versatile",
+  "token_usage": 6876,
+  "provider_meta": {
+    "api_key_alias": "key_2",
+    "attempt_index": 1,
+    "graph_node": "study_generator"
+  },
+  "suggestion": null,
+  "parse_ok": true,
+  "ok": true
+}

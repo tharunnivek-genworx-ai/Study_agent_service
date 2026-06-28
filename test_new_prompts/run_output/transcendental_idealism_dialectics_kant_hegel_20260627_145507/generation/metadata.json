@@ -1,0 +1,21 @@
+{
+  "stage": "generation",
+  "topic": "Transcendental Idealism & Dialectics (Kant & Hegel)",
+  "effective_instruction": "Write a comprehensive study guide on the Transcendental Idealism & Dialectics (Kant & Hegel), covering its basics, common pitfalls, and real-world scenarios.Include a worked real world scenario for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.Generated content should be on the level of a university philosophy textbook, with detailed subsections and subtopics. Every subsection must have very big paragraphs and detailed explanations.",
+  "domain": "Conceptual",
+  "started_at": "2026-06-27T14:55:10.314740+00:00",
+  "finished_at": "2026-06-27T14:55:20.746354+00:00",
+  "duration_seconds": 10.431614,
+  "llm_ok": true,
+  "llm_error_type": null,
+  "llm_model_used": "llama-3.3-70b-versatile",
+  "token_usage": 7602,
+  "provider_meta": {
+    "api_key_alias": "key_6",
+    "attempt_index": 1,
+    "graph_node": "study_generator"
+  },
+  "suggestion": null,
+  "parse_ok": true,
+  "ok": true
+}

@@ -1,0 +1,77 @@
+{
+  "domain": "STEM",
+  "topic_split": [
+    {
+      "id": "ts_1",
+      "heading": "Introduction to Light Particle Wave Duality",
+      "purpose": "Understand the fundamental concept of light particle wave duality and its significance in physics."
+    },
+    {
+      "id": "ts_2",
+      "heading": "Wave-Particle Duality in Light",
+      "purpose": "Learn how light exhibits both wave-like and particle-like properties, and understand the experiments that demonstrate this."
+    },
+    {
+      "id": "ts_3",
+      "heading": "Double-Slit Experiment and Wave Function",
+      "purpose": "Understand the double-slit experiment and how it demonstrates the wave-like behavior of light, and learn about the wave function and its significance."
+    },
+    {
+      "id": "ts_4",
+      "heading": "Photoelectric Effect and Particle-Like Behavior",
+      "purpose": "Learn about the photoelectric effect and how it demonstrates the particle-like behavior of light, and understand the significance of the energy of photons."
+    },
+    {
+      "id": "ts_5",
+      "heading": "Quantization and the Energy of Photons",
+      "purpose": "Understand the concept of quantization and how it relates to the energy of photons, and learn about the significance of Planck's constant."
+    },
+    {
+      "id": "ts_6",
+      "heading": "Real-World Applications of Light Particle Wave Duality",
+      "purpose": "Learn about the real-world applications of light particle wave duality, including its use in optics, spectroscopy, and quantum mechanics."
+    }
+  ],
+  "must_cover_checklist": [
+    {
+      "id": "mc_1",
+      "concept": "Wave-Particle Duality",
+      "requirement": "Explain how light exhibits both wave-like and particle-like properties, including the experiments that demonstrate this.",
+      "priority": "required",
+      "section_id": "ts_2",
+      "depth_gate": "Describe the double-slit experiment and how it demonstrates the wave-like behavior of light; explain the significance of the wave function and its relation to the particle-like behavior of light."
+    },
+    {
+      "id": "mc_2",
+      "concept": "Wave Function",
+      "requirement": "Derive the wave function for a particle in a one-dimensional box, and explain its significance in quantum mechanics.",
+      "priority": "required",
+      "section_id": "ts_3",
+      "depth_gate": "Derivation begins from the time-independent Schrödinger equation; each algebraic step is shown explicitly via substitution; all variables defined; correct wave function reached and stated."
+    },
+    {
+      "id": "mc_3",
+      "concept": "Photoelectric Effect",
+      "requirement": "Explain the photoelectric effect and how it demonstrates the particle-like behavior of light, including the significance of the energy of photons.",
+      "priority": "required",
+      "section_id": "ts_4",
+      "depth_gate": "Describe the photoelectric effect and how it demonstrates the particle-like behavior of light; explain the significance of the energy of photons and how it relates to the work function of a material."
+    },
+    {
+      "id": "mc_4",
+      "concept": "Quantization",
+      "requirement": "Explain the concept of quantization and how it relates to the energy of photons, including the significance of Planck's constant.",
+      "priority": "required",
+      "section_id": "ts_5",
+      "depth_gate": "Describe the concept of quantization and how it relates to the energy of photons; explain the significance of Planck's constant and how it relates to the quantization of energy."
+    },
+    {
+      "id": "mc_5",
+      "concept": "Real-World Applications",
+      "requirement": "Explain the real-world applications of light particle wave duality, including its use in optics, spectroscopy, and quantum mechanics.",
+      "priority": "recommended",
+      "section_id": "ts_6",
+      "depth_gate": "Describe the real-world applications of light particle wave duality, including its use in optics, spectroscopy, and quantum mechanics; explain the significance of these applications and how they relate to our understanding of light."
+    }
+  ]
+}

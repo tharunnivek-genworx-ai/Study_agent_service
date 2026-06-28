@@ -1,0 +1,21 @@
+{
+  "stage": "generation",
+  "topic": "React useState Hook",
+  "effective_instruction": "Write a comprehensive study guide on the useState hook in React, covering its basics, common pitfalls, and real-world scenarios.Include a worked example for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.",
+  "domain": "Programming",
+  "started_at": "2026-06-27T14:42:04.989999+00:00",
+  "finished_at": "2026-06-27T14:42:09.540028+00:00",
+  "duration_seconds": 4.550029,
+  "llm_ok": true,
+  "llm_error_type": null,
+  "llm_model_used": "llama-3.3-70b-versatile",
+  "token_usage": 5321,
+  "provider_meta": {
+    "api_key_alias": "key_2",
+    "attempt_index": 1,
+    "graph_node": "study_generator"
+  },
+  "suggestion": null,
+  "parse_ok": true,
+  "ok": true
+}

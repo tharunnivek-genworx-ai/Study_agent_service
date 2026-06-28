@@ -1,0 +1,21 @@
+Topic: React useState Hook
+Teaching instruction: Write a comprehensive study guide on the useState hook in React, covering its basics, common pitfalls, and real-world scenarios.Include a worked example for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.
+
+<domain>Programming</domain>
+<topic_split>
+Create exactly one section per entry (matching id and heading), and use the listed pedagogy intent as the dominant teaching mode for that section.
+  - [ts_1] useState Hook Basics — Understand the useState hook's purpose, usage, and common patterns. — pedagogy: 
+  - [ts_2] Common Pitfalls and Best Practices — Learn how to avoid common mistakes and follow best practices when using the useState hook. — pedagogy: 
+  - [ts_3] Real-World Scenarios and Use Cases — Explore real-world scenarios and use cases for the useState hook, including examples and code snippets. — pedagogy: 
+</topic_split>
+<must_cover_checklist>
+Every required item must be addressed to its depth_gate standard — demonstrated, not just named.
+Place each item's demonstrated evidence inside the section matching its section_id.
+If an item includes a misconception field, correct that misconception explicitly.
+If an item includes a reflection_q field, preserve its intent as a learner-facing check question.
+  - [required] mc_1 (section_id: ts_1): useState Hook Basics — Implement a simple counter using the useState hook, including a worked example that demonstrates the hook's usage and common patterns. | depth_gate: At least one self-contained, runnable code block implementing the counter; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.
+  - [required] mc_2 (section_id: ts_1): Updating State with useState — Explain how to update state using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls. | depth_gate: The correct method for updating state using the useState hook is explained; a worked example demonstrates the correct usage and common pitfalls; the implications of incorrect usage are discussed.
+  - [required] mc_3 (section_id: ts_2): Handling Errors with useState — Implement a try-catch block to handle errors when updating state using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls. | depth_gate: At least one self-contained, runnable code block implementing the try-catch block; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.
+  - [recommended] mc_4 (section_id: ts_2): Optimizing Performance with useState — Explain how to optimize performance when using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls. | depth_gate: The correct method for optimizing performance when using the useState hook is explained; a worked example demonstrates the correct usage and common pitfalls; the implications of incorrect usage are discussed.
+  - [required] mc_5 (section_id: ts_3): Real-World Scenarios: Form Validation — Implement a form validation system using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls. | depth_gate: At least one self-contained, runnable code block implementing the form validation system; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.
+</must_cover_checklist>

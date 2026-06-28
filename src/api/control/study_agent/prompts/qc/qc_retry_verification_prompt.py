@@ -31,7 +31,7 @@ QC_RETRY_PROGRAMMING_RULES_BLOCK = """\
 - Programming: trace code execution; verify no undefined symbols; verify every API call is real for the stated language/version; check for duplicate method/function names in the same scope. A Programming item's runnable code block is itself the correct evidence — it is never penalised for "not being a derivation."
 """
 QC_RETRY_CONCEPTUAL_RULES_BLOCK = """\
-- Conceptual: verify named facts; a code_block or formula_block appearing in a Conceptual section is itself a failure, regardless of whether its content is correct.
+- Conceptual: apply the 3-step procedure — state the correct fact from your own knowledge first, then compare to the revised content; do not use "X is indeed Y" as evidence. Verify named facts (dates, people, events, laws, organisations) are accurate per mainstream record. Verify causal claims are directionally accurate and mechanistically sound, not just plausible. When the prior failure cited a missing named example: confirm the revised section names a specific actor, describes the context, and states a verifiable outcome — a sector-level generalisation ("many companies", "government agencies") is still a failure even after revision. When the prior failure cited an unverifiable statistic: confirm it is now either removed, replaced with a qualitative description, or traceable to a publicly documented source. A code_block or formula_block appearing in a Conceptual section is itself a failure regardless of content correctness.\
 """
 QC_MUST_COVER_BLOCK = """\
 CHECK CATEGORIES (emit only for revised sections)

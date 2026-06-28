@@ -1,0 +1,64 @@
+{
+  "domain": "Conceptual",
+  "topic_split": [
+    {
+      "id": "ts_1",
+      "heading": "Introduction to Transcendental Idealism & Dialectics",
+      "purpose": "Understand the historical context and philosophical background of Transcendental Idealism & Dialectics, and its significance in the development of modern philosophy."
+    },
+    {
+      "id": "ts_2",
+      "heading": "Immanuel Kant's Transcendental Idealism",
+      "purpose": "Learn the key concepts and arguments of Kant's Transcendental Idealism, including the distinction between phenomena and noumena, and the role of the transcendental unity of apperception."
+    },
+    {
+      "id": "ts_3",
+      "heading": "Georg Wilhelm Friedrich Hegel's Dialectics",
+      "purpose": "Understand the core principles and mechanisms of Hegel's Dialectics, including the concept of the Absolute Spirit, and the role of thesis, antithesis, and synthesis."
+    },
+    {
+      "id": "ts_4",
+      "heading": "Comparing and Contrasting Kant and Hegel",
+      "purpose": "Analyze the similarities and differences between Kant's Transcendental Idealism and Hegel's Dialectics, and evaluate their respective strengths and weaknesses."
+    },
+    {
+      "id": "ts_5",
+      "heading": "Real-World Applications and Critiques",
+      "purpose": "Examine the relevance and impact of Transcendental Idealism & Dialectics on modern philosophy, science, and society, and discuss potential criticisms and limitations."
+    }
+  ],
+  "must_cover_checklist": [
+    {
+      "id": "mc_1",
+      "concept": "Kant's Distinction between Phenomena and Noumena",
+      "requirement": "Explain how Kant's Transcendental Idealism distinguishes between phenomena and noumena, and how this distinction affects our understanding of reality.",
+      "priority": "required",
+      "section_id": "ts_2",
+      "depth_gate": "The distinction between phenomena and noumena is defined in prose; the specific argument from the Critique of Pure Reason is named and presented; the causal/interpretive reasoning connecting it to Kant's Transcendental Idealism is explained."
+    },
+    {
+      "id": "mc_2",
+      "concept": "Hegel's Concept of the Absolute Spirit",
+      "requirement": "Describe the core principles and mechanisms of Hegel's Dialectics, including the concept of the Absolute Spirit, and explain how this concept relates to the idea of thesis, antithesis, and synthesis.",
+      "priority": "required",
+      "section_id": "ts_3",
+      "depth_gate": "The concept of the Absolute Spirit is defined in prose; the specific argument from the Phenomenology of Spirit is named and presented; the causal/interpretive reasoning connecting it to Hegel's Dialectics is explained."
+    },
+    {
+      "id": "mc_3",
+      "concept": "Comparing and Contrasting Kant and Hegel",
+      "requirement": "Analyze the similarities and differences between Kant's Transcendental Idealism and Hegel's Dialectics, and evaluate their respective strengths and weaknesses.",
+      "priority": "required",
+      "section_id": "ts_4",
+      "depth_gate": "The similarities and differences between Kant's Transcendental Idealism and Hegel's Dialectics are defined in prose; the specific arguments from the Critique of Pure Reason and the Phenomenology of Spirit are named and presented; the causal/interpretive reasoning connecting them to the respective philosophical systems is explained."
+    },
+    {
+      "id": "mc_4",
+      "concept": "Real-World Applications and Critiques",
+      "requirement": "Examine the relevance and impact of Transcendental Idealism & Dialectics on modern philosophy, science, and society, and discuss potential criticisms and limitations.",
+      "priority": "required",
+      "section_id": "ts_5",
+      "depth_gate": "The relevance and impact of Transcendental Idealism & Dialectics on modern philosophy, science, and society are defined in prose; the specific arguments from contemporary philosophers and critics are named and presented; the causal/interpretive reasoning connecting them to the respective philosophical systems is explained."
+    }
+  ]
+}

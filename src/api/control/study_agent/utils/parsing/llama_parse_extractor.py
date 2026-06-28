@@ -15,9 +15,7 @@ from uuid import UUID
 
 from llama_cloud import LlamaCloud
 
-from src.api.control.study_agent.prompts.parsing.llama_parse_prompt import (
-    LLAMAPARSE_PARSING_INSTRUCTION,
-)
+from src.api.control.study_agent.prompts.parsing import build_parsing_instruction
 from src.api.utils.study_agent_utils.artifacts.artifact_paths import (
     ensure_dir,
     ist_timestamp,
@@ -262,6 +260,7 @@ def extract_structured_reference(
     reference_material_id: UUID | None = None,
     material_label: str | None = None,
     artifact_stamp: str | None = None,
+    domain: str | None = None,
 ) -> LlamaParseExtractionResult:
     """Upload a PDF, extract structured JSON, and download reference figure files."""
     source = Path(file_path)
@@ -287,13 +286,15 @@ def extract_structured_reference(
     file_obj = client.files.create(file=str(source), purpose="extract")
     file_id = file_obj.id
 
+    parsing_instruction = build_parsing_instruction(domain=domain)
+
     job = client.extract.create(
         file_input=file_id,
         configuration={
             "data_schema": load_study_material_schema(),
             "extraction_target": "per_doc",
             "tier": "agentic",
-            "system_prompt": LLAMAPARSE_PARSING_INSTRUCTION,
+            "system_prompt": parsing_instruction,
         },
     )
     extract_job_id = job.id

@@ -10,7 +10,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from src.api.config.llm_config import llm_settings
-from src.api.control.study_agent.prompts.concept import concept_checklist_prompt
+from src.api.control.study_agent.prompts.concept import (
+    build_concept_checklist_system_prompt,
+    build_concept_checklist_user_message,
+)
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.schemas.study_material_schemas.concept_checklist_schema import (
     fallback_checklist,
@@ -140,8 +143,8 @@ async def concept_checklist_node(
             "must_cover_checklist": existing_checklist,
         }
 
-    system_prompt = concept_checklist_prompt.SYSTEM_PROMPT
-    user_message = concept_checklist_prompt.build_user_message(
+    system_prompt = build_concept_checklist_system_prompt(mode)
+    user_message = build_concept_checklist_user_message(
         topic_title=topic_title,
         teaching_instruction=teaching_instruction,
         reference_sections=reference_sections,

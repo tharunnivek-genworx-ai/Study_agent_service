@@ -1,0 +1,24 @@
+Topic: Light Particle Wave Duality
+Teaching instruction: Write a comprehensive study guide on the Light Particle Wave Duality, covering its basics, common pitfalls, and real-world scenarios.Include a worked example for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.Generated content should be on the level of a university physics textbook, with detailed subsections and subtopics. Every subsection must have very big paragraphs and detailed explanations.
+
+<domain>STEM</domain>
+<topic_split>
+Create exactly one section per entry (matching id and heading), and use the listed pedagogy intent as the dominant teaching mode for that section.
+  - [ts_1] Introduction to Light Particle Wave Duality — Understand the fundamental concept of light particle wave duality and its significance in physics. — pedagogy: 
+  - [ts_2] Wave-Particle Duality in Light — Learn how light exhibits both wave-like and particle-like properties, and understand the experiments that demonstrate this. — pedagogy: 
+  - [ts_3] Double-Slit Experiment and Wave Function — Understand the double-slit experiment and how it demonstrates the wave-like behavior of light, and learn about the wave function and its significance. — pedagogy: 
+  - [ts_4] Photoelectric Effect and Particle-Like Behavior — Learn about the photoelectric effect and how it demonstrates the particle-like behavior of light, and understand the significance of the energy of photons. — pedagogy: 
+  - [ts_5] Quantization and the Energy of Photons — Understand the concept of quantization and how it relates to the energy of photons, and learn about the significance of Planck's constant. — pedagogy: 
+  - [ts_6] Real-World Applications of Light Particle Wave Duality — Learn about the real-world applications of light particle wave duality, including its use in optics, spectroscopy, and quantum mechanics. — pedagogy: 
+</topic_split>
+<must_cover_checklist>
+Every required item must be addressed to its depth_gate standard — demonstrated, not just named.
+Place each item's demonstrated evidence inside the section matching its section_id.
+If an item includes a misconception field, correct that misconception explicitly.
+If an item includes a reflection_q field, preserve its intent as a learner-facing check question.
+  - [required] mc_1 (section_id: ts_2): Wave-Particle Duality — Explain how light exhibits both wave-like and particle-like properties, including the experiments that demonstrate this. | depth_gate: Describe the double-slit experiment and how it demonstrates the wave-like behavior of light; explain the significance of the wave function and its relation to the particle-like behavior of light.
+  - [required] mc_2 (section_id: ts_3): Wave Function — Derive the wave function for a particle in a one-dimensional box, and explain its significance in quantum mechanics. | depth_gate: Derivation begins from the time-independent Schrödinger equation; each algebraic step is shown explicitly via substitution; all variables defined; correct wave function reached and stated.
+  - [required] mc_3 (section_id: ts_4): Photoelectric Effect — Explain the photoelectric effect and how it demonstrates the particle-like behavior of light, including the significance of the energy of photons. | depth_gate: Describe the photoelectric effect and how it demonstrates the particle-like behavior of light; explain the significance of the energy of photons and how it relates to the work function of a material.
+  - [required] mc_4 (section_id: ts_5): Quantization — Explain the concept of quantization and how it relates to the energy of photons, including the significance of Planck's constant. | depth_gate: Describe the concept of quantization and how it relates to the energy of photons; explain the significance of Planck's constant and how it relates to the quantization of energy.
+  - [recommended] mc_5 (section_id: ts_6): Real-World Applications — Explain the real-world applications of light particle wave duality, including its use in optics, spectroscopy, and quantum mechanics. | depth_gate: Describe the real-world applications of light particle wave duality, including its use in optics, spectroscopy, and quantum mechanics; explain the significance of these applications and how they relate to our understanding of light.
+</must_cover_checklist>

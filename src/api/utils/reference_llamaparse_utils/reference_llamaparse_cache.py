@@ -185,6 +185,7 @@ async def resolve_reference_extraction(
     node_id: UUID,
     topic_title: str = "topic",
     material_label: str | None = None,
+    domain: str | None = None,
 ) -> LlamaParseExtractionResult:
     """Return cached parse output for identical PDF bytes or run a new extraction."""
     content_hash = compute_pdf_content_hash(file_path)
@@ -207,6 +208,7 @@ async def resolve_reference_extraction(
         topic_title=topic_title,
         reference_material_id=reference_material_id,
         material_label=material_label,
+        domain=domain,
     )
 
     if extraction.content_hash != content_hash:

@@ -187,17 +187,38 @@ def _failure_result(
     )
 
 
+def _resolve_groq_sampling(
+    *,
+    temperature: float,
+    top_p: float | None,
+    do_sample: bool | None,
+) -> tuple[float, float | None]:
+    """Map do_sample intent to Groq temperature/top_p (Groq has no do_sample flag)."""
+    if do_sample is False:
+        return 0.0, 1.0
+    if do_sample is True and top_p is None:
+        return temperature, None
+    return temperature, top_p
+
+
 async def call_groq_with_rotation(
     *,
     messages: list[BaseMessage],
     model: str,
     temperature: float = 0.4,
+    top_p: float | None = None,
+    do_sample: bool | None = None,
     timeout: int = 120,
     max_tokens: int | None = None,
     response_format: dict[str, Any] | None = None,
     graph_node: str | None = None,
 ) -> GroqCallResult:
     """Invoke ChatGroq with key rotation and structured terminal failures."""
+    temperature, top_p = _resolve_groq_sampling(
+        temperature=temperature,
+        top_p=top_p,
+        do_sample=do_sample,
+    )
     pool = get_shared_key_pool()
     max_infra_attempts = llm_settings.llm_retry_attempts
 
@@ -242,6 +263,8 @@ async def call_groq_with_rotation(
             "temperature": temperature,
             "timeout": timeout,
         }
+        if top_p is not None:
+            groq_kwargs["top_p"] = top_p
         if max_tokens is not None:
             groq_kwargs["max_tokens"] = max_tokens
         if response_format is not None:
@@ -331,6 +354,8 @@ async def invoke_llm_rotating(
     messages: list[BaseMessage],
     model: str,
     temperature: float = 0.4,
+    top_p: float | None = None,
+    do_sample: bool | None = None,
     timeout: int = 120,
     extra_retries: int = 1,
     graph_node: str | None = None,
@@ -341,6 +366,8 @@ async def invoke_llm_rotating(
         messages=messages,
         model=model,
         temperature=temperature,
+        top_p=top_p,
+        do_sample=do_sample,
         timeout=timeout,
         graph_node=graph_node,
     )

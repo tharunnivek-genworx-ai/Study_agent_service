@@ -1,0 +1,137 @@
+{
+  "overall_status": "fail",
+  "is_refusal": false,
+  "hallucination_risk": "low",
+  "scores": {
+    "content_accuracy": null,
+    "code_quality": null,
+    "section_depth": 8,
+    "teaching_alignment": 1
+  },
+  "checks": [
+    {
+      "id": "det_structure_coverage",
+      "category": "structure",
+      "question": "Does every required topic_split / checklist section exist in the document?",
+      "passed": false,
+      "severity": "critical",
+      "evidence": "Missing section ids: ts_5",
+      "corrective_hint": "Add one section per topic_split entry (or required checklist item) with matching id."
+    },
+    {
+      "id": "mc_1",
+      "category": "must_cover",
+      "question": "Does the document satisfy 'Kant's Distinction between Phenomena and Noumena' to the depth_gate standard?",
+      "passed": true,
+      "severity": "critical",
+      "evidence": "The distinction between phenomena and noumena is central to Kant's Transcendental Idealism. Phenomena refer to the world as it appears to us, while noumena refer to the world as it is in itself, independent of our experience of it.",
+      "corrective_hint": "",
+      "section_id": "ts_2",
+      "checklist_id": "mc_1"
+    },
+    {
+      "id": "mc_2",
+      "category": "must_cover",
+      "question": "Does the document satisfy 'Hegel's Concept of the Absolute Spirit' to the depth_gate standard?",
+      "passed": true,
+      "severity": "critical",
+      "evidence": "The Absolute Spirit is the central concept in Hegel's Dialectics, and refers to the ultimate reality that underlies all of existence. The Absolute Spirit is the unity of all opposites, and is the source of all development and transformation.",
+      "corrective_hint": "",
+      "section_id": "ts_3",
+      "checklist_id": "mc_2"
+    },
+    {
+      "id": "mc_3",
+      "category": "must_cover",
+      "question": "Does the document satisfy 'Comparing and Contrasting Kant and Hegel' to the depth_gate standard?",
+      "passed": true,
+      "severity": "critical",
+      "evidence": "Kant's Transcendental Idealism and Hegel's Dialectics are two philosophical frameworks that have had a profound impact on the development of modern philosophy. While both frameworks share some similarities, they also have some significant differences.",
+      "corrective_hint": "",
+      "section_id": "ts_4",
+      "checklist_id": "mc_3"
+    },
+    {
+      "id": "mc_4",
+      "category": "must_cover",
+      "question": "Does the document satisfy 'Real-World Applications and Critiques' to the depth_gate standard?",
+      "passed": false,
+      "severity": "critical",
+      "evidence": "The document does not provide a comprehensive analysis of the relevance and impact of Transcendental Idealism & Dialectics on modern philosophy, science, and society.",
+      "corrective_hint": "Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+      "section_id": "ts_5",
+      "checklist_id": "mc_4"
+    },
+    {
+      "id": "teaching_alignment_1",
+      "category": "teaching_alignment",
+      "question": "Does the document address everything the teaching instruction specifies?",
+      "passed": false,
+      "severity": "major",
+      "evidence": "The document does not provide a comprehensive analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+      "corrective_hint": "Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+      "section_id": ""
+    },
+    {
+      "id": "document_coherence_1",
+      "category": "document_coherence",
+      "question": "Is the document internally consistent, non-redundant, and complete?",
+      "passed": true,
+      "severity": "critical",
+      "evidence": "The document provides a clear and logical structure, with each section building on the previous one to provide a comprehensive overview of Transcendental Idealism & Dialectics.",
+      "corrective_hint": "",
+      "section_id": ""
+    }
+  ],
+  "failed_checks": [
+    {
+      "id": "det_structure_coverage",
+      "category": "structure",
+      "question": "Does every required topic_split / checklist section exist in the document?",
+      "passed": false,
+      "severity": "critical",
+      "evidence": "Missing section ids: ts_5",
+      "corrective_hint": "Add one section per topic_split entry (or required checklist item) with matching id."
+    },
+    {
+      "id": "mc_4",
+      "category": "must_cover",
+      "question": "Does the document satisfy 'Real-World Applications and Critiques' to the depth_gate standard?",
+      "passed": false,
+      "severity": "critical",
+      "evidence": "The document does not provide a comprehensive analysis of the relevance and impact of Transcendental Idealism & Dialectics on modern philosophy, science, and society.",
+      "corrective_hint": "Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+      "section_id": "ts_5",
+      "checklist_id": "mc_4"
+    },
+    {
+      "id": "teaching_alignment_1",
+      "category": "teaching_alignment",
+      "question": "Does the document address everything the teaching instruction specifies?",
+      "passed": false,
+      "severity": "major",
+      "evidence": "The document does not provide a comprehensive analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+      "corrective_hint": "Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+      "section_id": ""
+    }
+  ],
+  "issues": [
+    "The document does not provide a comprehensive analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics."
+  ],
+  "corrective_instructions": "Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.",
+  "summary": "The document provides a comprehensive overview of Transcendental Idealism & Dialectics, but lacks a detailed analysis of the real-world applications and critiques of these philosophical frameworks.",
+  "qc_llm_model_used": "llama-3.3-70b-versatile",
+  "qc_llm_models_used": {
+    "prose": "llama-3.3-70b-versatile",
+    "code": null
+  },
+  "retry_recommendation": {
+    "mode": "section_patch",
+    "failed_section_ids": [
+      "ts_5"
+    ],
+    "missing_checklist_ids": [],
+    "rationale": "The document does not provide a comprehensive analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics."
+  },
+  "verification_mode": "full"
+}

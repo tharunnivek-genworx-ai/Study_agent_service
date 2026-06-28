@@ -1,0 +1,23 @@
+{
+  "stage": "concept_checklist",
+  "topic": "React useState Hook",
+  "started_at": "2026-06-27T14:42:02.601810+00:00",
+  "finished_at": "2026-06-27T14:42:04.985994+00:00",
+  "duration_seconds": 2.384184,
+  "llm_ok": true,
+  "llm_error_type": null,
+  "llm_model_used": "llama-3.1-8b-instant",
+  "token_usage": 4987,
+  "parse_retries": 0,
+  "provider_meta": {
+    "api_key_alias": "key_1",
+    "attempt_index": 1,
+    "graph_node": "concept_checklist"
+  },
+  "suggestion": null,
+  "effective_instruction": "Write a comprehensive study guide on the useState hook in React, covering its basics, common pitfalls, and real-world scenarios.Include a worked example for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.",
+  "ok": true,
+  "domain": "Programming",
+  "topic_split_count": 3,
+  "must_cover_count": 5
+}

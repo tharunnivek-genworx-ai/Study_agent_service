@@ -137,6 +137,10 @@ class StudyMaterialGenerateRequest(BaseModel):
             "or its parent space. When set, extracted PDF text is passed to the LLM."
         ),
     )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
+    )
 
 
 class StudyMaterialRegenerateRequest(BaseModel):
@@ -155,6 +159,10 @@ class StudyMaterialRegenerateRequest(BaseModel):
         description=(
             "What is wrong with the current draft and what must improve in the rewrite."
         ),
+    )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
     )
 
 
@@ -176,6 +184,10 @@ class StudyMaterialImproveRequest(BaseModel):
         min_length=10,
         max_length=4000,
         description="Mentor's improvement instructions sent to the LLM.",
+    )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
     )
 
 

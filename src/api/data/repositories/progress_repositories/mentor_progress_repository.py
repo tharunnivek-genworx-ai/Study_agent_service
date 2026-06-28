@@ -306,7 +306,7 @@ class MentorProgressRepository:
 
     async def list_nodes_for_space(self, space_id: UUID) -> list[TopicNode]:
         """Fetch all topic_nodes for the space (active and inactive) so the
-        mentor dashboard can render archived nodes with an '(Archived)' label.
+        mentor dashboard can render deleted nodes with a '(Deleted)' label.
 
         is_active is included in TraineeNodeProgressSummaryOut so the frontend
         can distinguish live nodes from archived ones (EC-3).

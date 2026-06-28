@@ -179,8 +179,8 @@ class TraineeNodeProgressSummaryOut(BaseModel):
     Includes node title (denormalized from topic_nodes at query time)
     so the frontend can render the tree without a secondary lookup.
 
-    is_active=False means the node was archived after the trainee started it;
-    the frontend renders it with an '(Archived)' label (EC-3). Archived nodes
+    is_active=False means the node was soft-deleted after the trainee started it;
+    the frontend renders it with a '(Deleted)' label (EC-3). Deleted nodes
     are excluded from both total_nodes and completed_nodes when space progress
     is calculated (live rollup treats them as removed from the course).
     """

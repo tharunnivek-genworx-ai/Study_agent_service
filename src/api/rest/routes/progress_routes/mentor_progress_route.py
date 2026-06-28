@@ -30,6 +30,9 @@ from src.api.schemas.identity_schemas.auth_schema import TokenPayload
 from src.api.schemas.progress_schemas.mentor_progress_schema import (
     MentorSpaceProgressOut,
     MentorSpaceProgressSummaryOut,
+    NodeDeleteContentCascadeRequest,
+    NodeDeletePreviewOut,
+    NodeDeletePreviewRequest,
 )
 
 router = APIRouter(tags=["Progress"])
@@ -100,6 +103,50 @@ async def recompute_space_progress(
     service = MentorProgressService(db)
     await service.recompute_space_progress_for_space(
         space_id=space_id,
+        user_id=current_user.sub,
+        role=current_user.role,
+    )
+
+
+@router.post(
+    "/spaces/{space_id}/nodes/delete-preview",
+    response_model=NodeDeletePreviewOut,
+)
+async def preview_deleted_node_content(
+    space_id: UUID,
+    payload: NodeDeletePreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> NodeDeletePreviewOut:
+    """Return live study material and quiz counts before topic deletion."""
+    service = MentorProgressService(db)
+    return await service.preview_deleted_node_content(
+        space_id=space_id,
+        node_ids=payload.node_ids,
+        user_id=current_user.sub,
+        role=current_user.role,
+    )
+
+
+@router.post(
+    "/spaces/{space_id}/nodes/delete-content-cascade",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cascade_deleted_node_content(
+    space_id: UUID,
+    payload: NodeDeleteContentCascadeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> None:
+    """Unpublish live study material and quizzes after mentor deletes topic nodes.
+
+    Called immediately after Identity PATCH /nodes/:id/archive so published
+    content is not left active on invisible nodes.
+    """
+    service = MentorProgressService(db)
+    await service.cascade_deleted_node_content(
+        space_id=space_id,
+        node_ids=payload.node_ids,
         user_id=current_user.sub,
         role=current_user.role,
     )

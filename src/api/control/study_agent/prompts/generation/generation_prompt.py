@@ -37,30 +37,44 @@ STEM_DOMAIN_RULES_BLOCK = """\
 STEM (mathematics, physics, chemistry, biology, engineering, statistics):
 - Every equation, chemical reaction, or derivation step belongs in a formula_block, not a code_block or inline text.
 - State every equation in standard notation. Define every variable and its unit on first use.
+- COMPLETE SECTION STANDARD: A well-formed STEM section delivers: (1) a formal statement of the concept or law with all defining conditions; (2) derivation or proof from first principles where the concept permits it — each algebraic or logical step in its own formula_block entry so the reasoning chain is visible; (3) a fully worked numerical or algebraic example tracing from stated inputs through every intermediate step to the correct final answer; (4) the assumptions and boundary conditions under which the concept holds or breaks down. A section that states a formula and gives one sentence of context has not met this standard.
 - Worked examples must show every calculation or derivation step, not just the final answer.
 - State all assumptions and constraints explicitly (e.g. "assuming ideal gas behaviour", "for small angles").
 - Physical and mathematical constants must carry their correct value and unit every time they appear.
 - Do not skip algebraic or logical steps in derivations — each step must follow from the previous one. Each intermediate step belongs in its own formula_block entry so the reasoning chain is visible.
 - Never state a reaction, mechanism, or formula that you cannot independently verify as real chemistry, physics, or mathematics. A confident, well-formatted but fabricated reaction or constant is a serious failure — if you are not certain a reaction or value is real, do not include it.
 - DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. A section that provides only a Python script computing a result where sequential formula_block steps were required has FAILED the must_cover item. Code_blocks are permitted in STEM sections ONLY when the section's primary teaching goal is computational implementation (e.g., "Numerical Integration Methods") AND the linked must_cover item does not demand a mathematical derivation."""
+
 PROGRAMMING_DOMAIN_RULES_BLOCK = """\
 Programming (code, algorithms, data structures, APIs, frameworks):
 - Code must be syntactically valid and produce the correct result on the demonstrated path.
 - Every symbol, function, class, or module used in a code block must be defined or imported within that same block.
+- COMPLETE SECTION STANDARD: A well-formed Programming section delivers: (1) a precise explanation of what the concept does and the problem it solves; (2) a complete, self-contained runnable code example with inline comments on any non-obvious logic; (3) an explicit execution trace for at least one input path — state the input, trace intermediate state changes (e.g. stack contents after each operation, variable values at key points, tree structure after each insertion or deletion), and confirm the final output. The execution trace belongs in the explanation field or section prose, not as commented-out print statements inside the code.
 - Show at least one complete, self-contained runnable example per major concept — not a fragment requiring surrounding context.
+- When a depth_gate or requirement uses verbs such as trace, step-by-step, or walk through for a Programming item, satisfy it by tracing code execution (input → intermediate state changes → output). This is a runtime behaviour trace, not an algebraic derivation — do not use formula_blocks for Programming execution traces.
 - Python: never define the same method or function name twice in the same scope unless you explicitly explain that the second definition replaces the first and demonstrate the intended pattern.
 - JavaScript/TypeScript: every hook, component, or API used must appear in an import statement in the same block. Verify the API exists in the stated library.
 - C/C++: include every required header; zero-initialise structs before use; the demonstrated path must not invoke undefined behaviour.
 - The "explanation" field must state: (1) what the code demonstrates, (2) which concept it illustrates, (3) one thing the reader should notice or remember."""
+
 CONCEPTUAL_DOMAIN_RULES_BLOCK = """\
 Conceptual (history, philosophy, law, ethics, social sciences, literature, management, business):
+- COMPLETE SECTION STANDARD: A well-formed Conceptual section delivers: (1) a precise definition that distinguishes this concept from adjacent or commonly confused ones; (2) the mechanism — what causes this, how it operates step by step, who the actors are, what conditions are required, and what the observable outcome is; (3) at least one specific named real-world case with an identifiable actor, a described context, a concrete action or decision, and a verifiable outcome. A section that states the concept name and one general sentence about it has not met this standard.
 - Named facts — dates, people, events, laws, organisations — must be accurate per mainstream record.
 - Arguments must be structured: claim → evidence → reasoning. Do not state conclusions without support.
-- Examples must be specific and named. "In many industries…" is not an example — name the industry, company, or case.
-- Do not add code_blocks or formula_blocks to a Conceptual section. There is no source code or equation to illustrate a recruitment process, a historical event, or a management framework — express every example as a specific, named, real-world scenario in prose instead."""
+- Examples must be specific and named. "In many industries…" or "organisations often find…" are not examples — name the organisation, legislation, event, or individual, describe what they did, and state what the outcome was.
+- When a depth_gate requires comparison between two concepts, approaches, or frameworks: name both explicitly, state what each does and under what conditions you would choose one over the other, and provide a specific named real case for each side.
+- When a depth_gate requires causal analysis: trace the causal chain from precondition → trigger → mechanism → outcome. Stating "X caused Y" without the mechanism is not a causal analysis — explain why X led to Y given the specific actors, incentives, and context.
+- When a depth_gate requires evaluation or critique: state the position clearly, provide the strongest evidence for it, then name and address the primary counterargument.
+- Do not add code_blocks or formula_blocks to a Conceptual section. There is no source code or equation to illustrate a recruitment process, a historical event, or a management framework — express every example as a specific, named, real-world scenario in prose instead.
+- Never attribute specific statistics, percentages, retention rates, or performance metrics to named organisations unless those figures are publicly documented and widely known. If a verifiable figure is unavailable, describe the outcome qualitatively using the named case."""
+
 MIXED_DOMAIN_RULES_BLOCK = """\
 Mixed (spans more than one domain above):
-- Apply the relevant domain's rules section by section, based on what each individual section is actually teaching — not the document's overall label. A Mixed topic with one conceptual section and one programming section should have code_blocks only in the programming section."""
+- Apply the relevant domain's rules section by section, based on what each individual section is actually teaching — not the document's overall label. A Mixed topic with one conceptual section and one programming section should have code_blocks only in the programming section.
+- Classify each section's domain independently at the point of writing it. Do not inherit artifacts from adjacent sections: no code_blocks in a Conceptual-classified section, no formula_blocks where the content is purely narrative, no vague prose where a derivation or execution trace is required.
+- Apply the full COMPLETE SECTION STANDARD for each section's classified domain when writing its content."""
+
 _DOMAIN_RULES_HEADER = "DOMAIN RULES — apply based on <domain> when provided; otherwise infer from the topic"
 SYSTEM_PROMPT_PREFIX = f"""\
 You are an expert educator writing structured study material on any academic or technical subject.
@@ -85,7 +99,7 @@ SUBSTANCE RULES
 - Examples must be meaningfully distinct: different domain, different inputs, or different behavioural aspect. Renaming variables is not a new example.
 - Use code_blocks and formula_blocks only where that section's domain rule calls for them — never insert either purely to make a section look more technical or rigorous.
 - When <must_cover_checklist> is present, every required item must satisfy its depth_gate — demonstrated, not merely mentioned.
-- When a checklist `requirement` or `depth_gate` uses verbs such as *derive*, *prove*, *calculate*, or *step-by-step*, include the full working as sequential algebraic or logical steps in `formula_blocks` within that item's `section_id` — stating only the final rule or formula is insufficient, and Python code is not a substitute.
+- When a checklist `requirement` or `depth_gate` uses verbs such as *derive*, *prove*, *calculate*, *trace*, or *step-by-step*, the full working must be demonstrated within the section matching its `section_id`. The correct form is domain-dependent: STEM items require sequential algebraic or logical steps in `formula_blocks` — a formula statement alone or Python code is not sufficient; Programming items require a traced execution path through real runnable code showing intermediate state changes — `formula_blocks` are not appropriate for code tracing; Conceptual items require a structured causal or argumentative chain supported by specific named real-world evidence. Restating only the final rule, result, or conclusion is insufficient in all three domains.
 OUTPUT SIZE
 - Code blocks: under 30 lines each. Favour quality over repetition.
 - Always finish the entire JSON object. A truncated response is invalid.
@@ -97,8 +111,11 @@ FINAL CHECK before outputting (do not print this list):
 5. All domain-specific accuracy rules are satisfied.
 6. code_blocks contain only real programming code, formula_blocks contain only equations/reactions/derivations, and neither appears in a Conceptual section without the topic genuinely requiring it.
 7. Every `must_cover` item's evidence appears in the section matching its `section_id`, not a neighbouring section.
-8. Every STEM section whose must_cover item demands derivation contains sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.\
+8. Every STEM section whose must_cover item demands derivation contains sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.
+9. Every Conceptual section whose must_cover item demands a named example, comparison, or causal analysis contains a specific named actor, described context, and stated outcome — a sector-level generalisation is not a named example.
+10. Every Programming section whose must_cover item demands a step-by-step trace or execution walkthrough includes an explicit execution trace showing intermediate state changes, not just the final output.\
 """
+
 REPROMPT_SYSTEM = (
     "Your previous response was not valid JSON. "
     "Return ONLY the JSON object, starting with { and ending with }. "

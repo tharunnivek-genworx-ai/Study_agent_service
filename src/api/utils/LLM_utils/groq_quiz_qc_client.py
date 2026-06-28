@@ -48,7 +48,9 @@ async def call_groq_quiz_qc_verification(
     return await call_groq_with_rotation(
         messages=messages,
         model=model,
-        temperature=0,
+        temperature=llm_settings.qc_temperature,
+        top_p=llm_settings.qc_top_p,
+        do_sample=llm_settings.qc_do_sample,
         timeout=180,
         max_tokens=max_tokens,
         response_format={"type": "json_object"},

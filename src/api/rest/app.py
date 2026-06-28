@@ -12,6 +12,10 @@ from fastapi.staticfiles import StaticFiles
 import src.api.data.models.postgres  # noqa: F401 — register all ORM models on startup
 from src.api.rest.middleware.cors import setup_cors
 from src.api.rest.routes import health, sse, websocket
+from src.api.rest.routes.generation_progress_route import (
+    router as generation_progress_router,
+)
+from src.api.rest.routes.generation_run_route import router as generation_run_router
 from src.api.rest.routes.progress_routes import (
     mentor_progress_route,
     trainee_progress_route,
@@ -30,6 +34,8 @@ app = FastAPI(title="Study Agent Service")
 setup_cors(app)
 
 app.include_router(health.router)
+app.include_router(generation_progress_router)
+app.include_router(generation_run_router)
 app.include_router(study_material_route.router)
 app.include_router(reference_material_route.router)
 app.include_router(quiz_route.router)

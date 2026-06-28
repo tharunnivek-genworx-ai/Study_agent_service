@@ -50,6 +50,21 @@ class LLMSettings(BaseSettings):
     # Groq Llama 8B — concept checklist
     checklist_llm_model: str = "llama-3.1-8b-instant"
 
+    # Study material generation — first draft / full regen from generation prompt
+    study_generation_temperature: float = 0.25
+    study_generation_top_p: float = 0.9
+    study_generation_do_sample: bool = True
+
+    # Study material improve / regenerate / section patch-insert
+    study_revision_temperature: float = 0.35
+    study_revision_top_p: float = 0.9
+    study_revision_do_sample: bool = True
+
+    # QC verification — study docs and quiz (deterministic rubric evaluation)
+    qc_temperature: float = 0.0
+    qc_top_p: float = 1.0
+    qc_do_sample: bool = False
+
     # QC token budgets (Groq on_demand TPM counts input + max_tokens per request)
     qc_llm_max_tokens: int = 4096
     quiz_qc_llm_max_tokens: int = 8192

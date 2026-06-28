@@ -64,6 +64,7 @@ from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository
 from src.api.schemas.progress_schemas.mentor_progress_schema import (
     MentorSpaceProgressOut,
     MentorSpaceProgressSummaryOut,
+    NodeDeletePreviewOut,
 )
 from src.api.schemas.progress_schemas.trainee_progress_schema import (
     TraineeNodeProgressSummaryOut,
@@ -284,6 +285,78 @@ class MentorProgressService:
             raise SpaceForbiddenException()
 
         await recompute_all_trainees_space_progress(self.session, space_id=space_id)
+
+    async def cascade_deleted_node_content(
+        self,
+        *,
+        space_id: UUID,
+        node_ids: list[UUID],
+        user_id: UUID,
+        role: str,
+    ) -> None:
+        """Retire live SM/quiz layers after mentor soft-deletes topic nodes."""
+        _assert_mentor(role)
+
+        repo = MentorProgressRepository(self.session)
+        space = await repo.get_space_by_id(space_id)
+        if space is None or not space.is_active:
+            raise SpaceNotFoundException()
+
+        effective_owner_id = (
+            space.transferred_to_mentor_id
+            if space.transferred_to_mentor_id is not None
+            else space.mentor_id
+        )
+        if effective_owner_id != user_id:
+            raise SpaceForbiddenException()
+
+        from src.api.utils.content_lifecycle.node_delete_cascade import (  # noqa: PLC0415
+            cascade_node_delete_content,
+        )
+
+        await cascade_node_delete_content(
+            self.session,
+            space_id=space_id,
+            node_ids=node_ids,
+        )
+
+    async def preview_deleted_node_content(
+        self,
+        *,
+        space_id: UUID,
+        node_ids: list[UUID],
+        user_id: UUID,
+        role: str,
+    ) -> NodeDeletePreviewOut:
+        """Return live SM/quiz counts before mentor confirms topic deletion."""
+        from src.api.utils.content_lifecycle.node_delete_cascade import (  # noqa: PLC0415
+            preview_node_delete_content,
+        )
+
+        _assert_mentor(role)
+
+        repo = MentorProgressRepository(self.session)
+        space = await repo.get_space_by_id(space_id)
+        if space is None or not space.is_active:
+            raise SpaceNotFoundException()
+
+        effective_owner_id = (
+            space.transferred_to_mentor_id
+            if space.transferred_to_mentor_id is not None
+            else space.mentor_id
+        )
+        if effective_owner_id != user_id:
+            raise SpaceForbiddenException()
+
+        live_sm_count, live_quiz_count = await preview_node_delete_content(
+            self.session,
+            node_ids=node_ids,
+        )
+        return NodeDeletePreviewOut(
+            live_study_material_count=live_sm_count,
+            live_quiz_count=live_quiz_count,
+            topic_count=len(node_ids),
+        )
 
     async def get_space_progress_summary(
         self,

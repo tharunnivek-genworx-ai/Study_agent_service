@@ -215,26 +215,6 @@ async def create_quiz_question(
 
 
 @router.patch(
-    "/nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}",
-    response_model=QuizQuestionOut,
-)
-async def update_quiz_question(
-    node_id: UUID,
-    quiz_id: UUID,
-    question_id: UUID,
-    payload: QuizQuestionUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: TokenPayload = Depends(get_current_user),
-) -> QuizQuestionOut:
-    """Mentor partially updates a question. Triggers EC-12 notification if
-    correct_option changes on a published quiz."""
-    service = QuizService(db)
-    return await service.update_question(
-        node_id, quiz_id, question_id, payload, current_user.sub, current_user.role
-    )
-
-
-@router.patch(
     "/nodes/{node_id}/quizzes/{quiz_id}/questions/reorder",
     status_code=status.HTTP_200_OK,
 )
@@ -248,10 +228,30 @@ async def reorder_quiz_questions(
     """Bulk-update order_index for all active questions in a quiz.
 
     question_ids must be the complete active set — partial reorders are rejected.
+    Registered before /questions/{question_id} so "reorder" is not parsed as a UUID.
     """
     service = QuizService(db)
     return await service.reorder_questions(
         node_id, quiz_id, payload, current_user.sub, current_user.role
+    )
+
+
+@router.patch(
+    "/nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}",
+    response_model=QuizQuestionOut,
+)
+async def update_quiz_question(
+    node_id: UUID,
+    quiz_id: UUID,
+    question_id: UUID,
+    payload: QuizQuestionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizQuestionOut:
+    """Mentor partially updates a question."""
+    service = QuizService(db)
+    return await service.update_question(
+        node_id, quiz_id, question_id, payload, current_user.sub, current_user.role
     )
 
 

@@ -1,0 +1,21 @@
+{
+  "topic": "Transcendental Idealism & Dialectics (Kant & Hegel)",
+  "topic_slug": "transcendental_idealism_dialectics_kant_hegel",
+  "timestamp": "20260627_145507",
+  "started_at": "2026-06-27T14:55:07.449050+00:00",
+  "finished_at": "2026-06-27T14:55:30.098493+00:00",
+  "generation_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\transcendental_idealism_dialectics_kant_hegel_20260627_145507\\generation",
+  "qc_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\transcendental_idealism_dialectics_kant_hegel_20260627_145507\\qc\\attempt_02",
+  "status": "qc_passed",
+  "final_qc_passed": true,
+  "qc_attempts": 2,
+  "retry_attempts": 1,
+  "concept_checklist_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\transcendental_idealism_dialectics_kant_hegel_20260627_145507\\concept_checklist",
+  "last_retry_mode": "section_insert",
+  "last_retry_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\transcendental_idealism_dialectics_kant_hegel_20260627_145507\\retry\\attempt_01_section_insert",
+  "last_qc_overall_status": "warn",
+  "last_qc_retry_mode": "full_regeneration",
+  "domain": "Conceptual",
+  "topic_split_count": 5,
+  "must_cover_count": 4
+}

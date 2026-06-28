@@ -1,0 +1,19 @@
+{
+  "sections": [
+    "Introduction to Transcendental Idealism & Dialectics",
+    "Immanuel Kant's Transcendental Idealism",
+    "Georg Wilhelm Friedrich Hegel's Dialectics",
+    "Comparing and Contrasting Kant and Hegel"
+  ],
+  "code_review_payloads": [],
+  "structure_check": {
+    "id": "det_structure_coverage",
+    "category": "structure",
+    "question": "Does every required topic_split / checklist section exist in the document?",
+    "passed": false,
+    "severity": "critical",
+    "evidence": "Missing section ids: ts_5",
+    "corrective_hint": "Add one section per topic_split entry (or required checklist item) with matching id."
+  },
+  "block_placement_checks": []
+}

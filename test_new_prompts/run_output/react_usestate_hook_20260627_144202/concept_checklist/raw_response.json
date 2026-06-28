@@ -1,0 +1,75 @@
+{
+  "domain": "Programming",
+   "topic_split": [
+      {
+         "id": "ts_1",
+         "heading": "useState Hook Basics",
+         "purpose": "Understand the useState hook's purpose, usage, and common patterns.",
+         "pedagogy_intent": "worked_example"
+      },
+      {
+         "id": "ts_2",
+         "heading": "Common Pitfalls and Best Practices",
+         "purpose": "Learn how to avoid common mistakes and follow best practices when using the useState hook.",
+         "pedagogy_intent": "misconception_fix"
+      },
+      {
+         "id": "ts_3",
+         "heading": "Real-World Scenarios and Use Cases",
+         "purpose": "Explore real-world scenarios and use cases for the useState hook, including examples and code snippets.",
+         "pedagogy_intent": "conceptual_story"
+      }
+   ],
+   "must_cover_checklist": [
+      {
+         "id": "mc_1",
+         "concept": "useState Hook Basics",
+         "requirement": "Implement a simple counter using the useState hook, including a worked example that demonstrates the hook's usage and common patterns.",
+         "priority": "required",
+         "section_id": "ts_1",
+         "depth_gate": "At least one self-contained, runnable code block implementing the counter; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.",
+         "misconception": "Learners often think the useState hook always causes an immediate re-render, even when the new value equals the old one.",
+         "reflection_q": "If the useState hook were not used, how would the component's state be managed, and what would be the implications for the component's behavior?"
+      },
+      {
+         "id": "mc_2",
+         "concept": "Updating State with useState",
+         "requirement": "Explain how to update state using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+         "priority": "required",
+         "section_id": "ts_1",
+         "depth_gate": "The correct method for updating state using the useState hook is explained; a worked example demonstrates the correct usage and common pitfalls; the implications of incorrect usage are discussed.",
+         "misconception": "Learners often think that updating state using the useState hook is the same as updating state using the setState method.",
+         "reflection_q": "What are the differences between updating state using the useState hook and the setState method, and how do these differences impact the component's behavior?"
+      },
+      {
+         "id": "mc_3",
+         "concept": "Handling Errors with useState",
+         "requirement": "Implement a try-catch block to handle errors when updating state using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+         "priority": "required",
+         "section_id": "ts_2",
+         "depth_gate": "At least one self-contained, runnable code block implementing the try-catch block; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.",
+         "misconception": "Learners often think that errors when updating state using the useState hook are always caught by the try-catch block.",
+         "reflection_q": "What are the implications of not handling errors when updating state using the useState hook, and how can these implications be mitigated?"
+      },
+      {
+         "id": "mc_4",
+         "concept": "Optimizing Performance with useState",
+         "requirement": "Explain how to optimize performance when using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+         "priority": "recommended",
+         "section_id": "ts_2",
+         "depth_gate": "The correct method for optimizing performance when using the useState hook is explained; a worked example demonstrates the correct usage and common pitfalls; the implications of incorrect usage are discussed.",
+         "misconception": "Learners often think that optimizing performance when using the useState hook is not necessary.",
+         "reflection_q": "What are the implications of not optimizing performance when using the useState hook, and how can these implications be mitigated?"
+      },
+      {
+         "id": "mc_5",
+         "concept": "Real-World Scenarios: Form Validation",
+         "requirement": "Implement a form validation system using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+         "priority": "required",
+         "section_id": "ts_3",
+         "depth_gate": "At least one self-contained, runnable code block implementing the form validation system; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.",
+         "misconception": "Learners often think that form validation using the useState hook is not necessary.",
+         "reflection_q": "What are the implications of not implementing form validation using the useState hook, and how can these implications be mitigated?"
+      }
+   ]
+}

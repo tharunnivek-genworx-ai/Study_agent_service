@@ -66,11 +66,13 @@ from src.api.utils.content_lifecycle.transitions import (
     transition_quiz_to_hidden,
 )
 from src.api.utils.content_lifecycle.visibility import is_discarded
+from src.api.utils.generation_progress import (
+    GenerationPipeline,
+    get_generation_progress_store,
+    invoke_graph_with_progress,
+)
 from src.api.utils.mentor_progress_utils.space_recompute import (
     recompute_all_trainees_space_progress,
-)
-from src.api.utils.notification_utils.node_event_notifications import (
-    emit_node_completion_reset_safe,
 )
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.mentor_quiz_history import (
@@ -219,6 +221,15 @@ class QuizService:
             QuizGenerationFailedException,  # noqa: PLC0415
         )
 
+        progress_id = (
+            str(request.progress_session_id)
+            if request.progress_session_id is not None
+            else None
+        )
+        progress_store = get_generation_progress_store()
+        if progress_id:
+            progress_store.start(progress_id, GenerationPipeline.QUIZ)
+
         graph = get_quiz_generation_graph()
         initial_state = {
             "mentor_id": user_id,
@@ -238,35 +249,45 @@ class QuizService:
             "failed_qc_feedback": failed_qc_feedback,
         }
 
-        final_state = await graph.ainvoke(
-            initial_state,
-            config={"configurable": {"session": self.session}},
-        )
-
-        if final_state is None:
-            raise QuizGenerationFailedException()
-
-        created_quiz_id = final_state.get("created_quiz_id")
-        if created_quiz_id is None:
-            if final_state.get("error"):
-                raise QuizGenerationFailedException(str(final_state["error"]))
-            raise QuizGenerationFailedException(
-                "Quiz generation failed. Please try again."
+        try:
+            final_state = await invoke_graph_with_progress(
+                graph,
+                initial_state,
+                config={"configurable": {"session": self.session}},
+                progress_session_id=progress_id,
+                pipeline=GenerationPipeline.QUIZ,
             )
 
-        if final_state.get("error") and not final_state.get("terminal_llm_failure"):
-            raise QuizGenerationFailedException(str(final_state["error"]))
+            if final_state is None:
+                raise QuizGenerationFailedException()
 
-        quiz = await repo.get_quiz_by_id(created_quiz_id)
-        if quiz is None:
-            raise QuizGenerationFailedException()
+            created_quiz_id = final_state.get("created_quiz_id")
+            if created_quiz_id is None:
+                if final_state.get("error"):
+                    raise QuizGenerationFailedException(str(final_state["error"]))
+                raise QuizGenerationFailedException(
+                    "Quiz generation failed. Please try again."
+                )
 
-        questions = await repo.get_questions_by_quiz(created_quiz_id)
-        active_questions = await repo.get_active_questions_by_quiz(created_quiz_id)
-        quiz_out = QuizOut.model_validate(quiz)
-        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
-        quiz_out.hints_status = compute_hints_status(active_questions)
-        return quiz_out
+            if final_state.get("error") and not final_state.get("terminal_llm_failure"):
+                raise QuizGenerationFailedException(str(final_state["error"]))
+
+            quiz = await repo.get_quiz_by_id(created_quiz_id)
+            if quiz is None:
+                raise QuizGenerationFailedException()
+
+            questions = await repo.get_questions_by_quiz(created_quiz_id)
+            active_questions = await repo.get_active_questions_by_quiz(created_quiz_id)
+            quiz_out = QuizOut.model_validate(quiz)
+            quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+            quiz_out.hints_status = compute_hints_status(active_questions)
+            if progress_id:
+                progress_store.complete(progress_id)
+            return quiz_out
+        except Exception as exc:
+            if progress_id:
+                progress_store.fail(progress_id, str(exc))
+            raise
 
     async def get_mentor_quiz_ui_state(
         self,
@@ -504,14 +525,6 @@ class QuizService:
                 node_id,
                 exc_info=True,
             )
-        else:
-            await emit_node_completion_reset_safe(
-                self.session,
-                space_id=space_id,
-                node_id=node_id,
-                triggered_by=user_id,
-                related_quiz_id=quiz_id,
-            )
 
         return quiz_out
 
@@ -707,7 +720,7 @@ class QuizService:
         user_id: UUID,
         role: str,
     ) -> QuizQuestionOut:
-        """Partial update for a question. EC-12 notification is a placeholder."""
+        """Partial update for a question."""
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
@@ -757,15 +770,6 @@ class QuizService:
                 option_d=merged_d,
                 correct_option=merged_correct,
             )
-
-        # EC-12: if correct_option changed on a published quiz, emit notification (stub)
-        if (
-            quiz.is_published
-            and request.correct_option is not None
-            and request.correct_option != question.correct_option
-        ):
-            # TODO: emit quiz_questions_edited node_event_notification
-            pass
 
         question = await repo.update_question(question, request)
         return QuizQuestionOut.model_validate(question)

@@ -1,0 +1,15 @@
+{
+  "topic": "React useState Hook",
+  "topic_slug": "react_usestate_hook",
+  "timestamp": "20260627_144202",
+  "started_at": "2026-06-27T14:42:02.583250+00:00",
+  "finished_at": "2026-06-27T14:42:15.142861+00:00",
+  "generation_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\react_usestate_hook_20260627_144202\\generation",
+  "qc_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\react_usestate_hook_20260627_144202\\qc",
+  "status": "completed",
+  "failed_stage": null,
+  "concept_checklist_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\react_usestate_hook_20260627_144202\\concept_checklist",
+  "domain": "Programming",
+  "topic_split_count": 3,
+  "must_cover_count": 5
+}
