@@ -102,7 +102,7 @@ class HintRepository:
             question.hint_2 = hint_2
             question.hint_3 = hint_3
 
-        await self.db.commit()
+        await self.db.flush()
 
     def _deep_merge_hint_generation(
         self,
@@ -155,7 +155,7 @@ class HintRepository:
         quiz.qc_result = existing
         if next_llm_retry_at is not None:
             quiz.next_llm_retry_at = next_llm_retry_at
-        await self.db.commit()
+        await self.db.flush()
 
     async def update_question_hints(
         self,
@@ -164,7 +164,7 @@ class HintRepository:
         hint_2: str,
         hint_3: str,
         *,
-        commit: bool = True,
+        commit: bool = False,
     ) -> None:
         """Update hint fields for a single question."""
         result = await self.db.execute(
@@ -178,6 +178,8 @@ class HintRepository:
         question.hint_3 = hint_3
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def clear_all_hints_for_quiz(self, quiz_id: UUID) -> int:
         """Clear hint_1/2/3 on all active questions. Returns count of rows updated."""
@@ -206,7 +208,7 @@ class HintRepository:
             await self.db.execute(
                 update(Quiz).where(Quiz.quiz_id == quiz_id).values(updated_at=now)
             )
-        await self.db.commit()
+        await self.db.flush()
         return cleared
 
     async def touch_quiz_updated_at(self, quiz_id: UUID) -> None:
@@ -215,4 +217,4 @@ class HintRepository:
             .where(Quiz.quiz_id == quiz_id)
             .values(updated_at=datetime.now(UTC))
         )
-        await self.db.commit()
+        await self.db.flush()

@@ -21,13 +21,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.progress_services.mentor_progress_service import (
+from src.api.core.services import (
     MentorProgressService,
 )
-from src.api.data.clients.postgres.database import get_db
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.schemas.progress_schemas.mentor_progress_schema import (
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.schemas.progress_schemas import (
     MentorSpaceProgressOut,
     MentorSpaceProgressSummaryOut,
     NodeDeleteContentCascadeRequest,

@@ -7,14 +7,14 @@ from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.quiz_agent.prompts import (
     quiz_qc_prompt,
     quiz_qc_retry_verification_prompt,
 )
 from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
-from src.api.schemas.common.generation_diagnostics_schema import QcInfraErrorType
-from src.api.schemas.qc_schemas.quiz_retry_routing_schema import QuizRetryRoutingResult
+from src.api.schemas.common import QcInfraErrorType
+from src.api.schemas.qc_schemas import QuizRetryRoutingResult
 from src.api.utils.quiz_utils.generation.question_parsing import questions_for_qc
 from src.api.utils.quiz_utils.graph.constants import MAX_QC_ATTEMPTS
 from src.api.utils.quiz_utils.graph.node_helpers import (

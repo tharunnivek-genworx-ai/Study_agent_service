@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.utils.LLM_utils.groq_qc_client import (
     _QC_COMPLETION_FLOOR,
     _QC_TPM_INPUT_BUFFER,

@@ -1,5 +1,7 @@
-from src.api.schemas.generation_progress_schema import GenerationPipeline
+from src.api.schemas import GenerationPipeline
 from src.api.utils.generation_progress.advisory_lock import (
+    release_all_generation_locks,
+    release_generation_lock,
     require_generation_lock,
     try_acquire_generation_lock,
 )
@@ -8,14 +10,14 @@ from src.api.utils.generation_progress.graph_runner import (
     invoke_graph_with_progress,
     node_succeeded,
 )
-from src.api.utils.generation_progress.store import get_generation_progress_store
 
 __all__ = [
     "DbGenerationProgressStore",
     "GenerationPipeline",
-    "get_generation_progress_store",
     "invoke_graph_with_progress",
     "node_succeeded",
+    "release_all_generation_locks",
+    "release_generation_lock",
     "require_generation_lock",
     "try_acquire_generation_lock",
 ]

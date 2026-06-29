@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+from src.api.data.repositories import (
     StudyMaterialRepository,
 )
 from src.api.utils.content_lifecycle.constants import (

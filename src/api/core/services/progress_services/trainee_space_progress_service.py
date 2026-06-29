@@ -33,24 +33,18 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.progress_exceptions.progress_exceptions import (
+from src.api.core.exceptions import (
     SpaceProgressNotFoundException,
     SpaceProgressRecomputeFailedException,
     TraineeNotEnrolledInSpaceException,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.progress_repositories.trainee_node_progress_repository import (
     TraineeNodeProgressRepository,
-)
-from src.api.data.repositories.progress_repositories.trainee_space_progress_repository import (
+    TraineeQuizRepository,
     TraineeSpaceProgressRepository,
 )
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
-    TraineeQuizRepository,
-)
-from src.api.schemas.progress_schemas.trainee_progress_schema import (
+from src.api.schemas.progress_schemas import (
     TraineeNodeProgressSummaryOut,
     TraineeOwnSpaceProgressOut,
 )

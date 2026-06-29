@@ -6,9 +6,9 @@ import mimetypes
 from pathlib import Path
 from uuid import UUID
 
-from src.api.config.dbconfig import settings
+from src.api.config import settings
 from src.api.data.models.postgres.e_learning_content.node_media import NodeMedia
-from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import (
+from src.api.schemas.study_material_schemas import (
     TraineeTopicResourceOut,
 )
 

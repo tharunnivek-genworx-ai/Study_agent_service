@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 import src.api.data.models.postgres  # noqa: F401 — register all ORM models on startup
 from src.api.rest.middleware.cors import setup_cors
-from src.api.rest.routes import health, sse, websocket
+from src.api.rest.routes import health
 from src.api.rest.routes.generation_progress_route import (
     router as generation_progress_router,
 )
@@ -45,8 +45,6 @@ app.include_router(trainee_study_routes.router)
 app.include_router(trainee_progress_route.router)
 app.include_router(trainee_space_progress_route.router)
 app.include_router(mentor_progress_route.router)
-app.include_router(sse.router)
-app.include_router(websocket.router)
 
 # Serve uploaded files (reference PDFs and extracted images) over HTTP so the
 # frontend can render images embedded in generated study material.

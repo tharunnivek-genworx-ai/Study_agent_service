@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 
 
 class KeyStatus(StrEnum):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.api.schemas.qc_schemas.qc_check_schema import (
+from src.api.schemas.qc_schemas import (
     CODE_CATEGORIES,
 )
 

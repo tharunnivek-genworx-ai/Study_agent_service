@@ -4,8 +4,8 @@ from sqlalchemy import Column, Float, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import relationship
 
-from src.api.data.clients.postgres.database import Base
-from src.api.utils.common_utils.time import utc_now
+from src.api.data.clients.postgres import Base
+from src.api.utils.common_utils import utc_now
 
 
 class TraineeSpaceProgress(Base):
@@ -51,5 +51,5 @@ class TraineeSpaceProgress(Base):
         ),
     )
 
-    trainee = relationship("Trainee", foreign_keys=[trainee_id])
-    space = relationship("ESpace", foreign_keys=[space_id])
+    trainee = relationship("Trainee", foreign_keys=[trainee_id], lazy="raise")
+    space = relationship("ESpace", foreign_keys=[space_id], lazy="raise")

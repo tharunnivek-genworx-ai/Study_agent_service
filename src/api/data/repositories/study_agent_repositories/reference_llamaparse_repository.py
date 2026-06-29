@@ -154,6 +154,6 @@ class ReferenceLlamaParseRepository:
                 )
             )
 
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(pdf_row)
         return pdf_row

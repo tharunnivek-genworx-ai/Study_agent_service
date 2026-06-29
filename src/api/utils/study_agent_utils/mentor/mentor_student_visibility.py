@@ -7,13 +7,11 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+from src.api.data.repositories import (
     StudyMaterialRepository,
-)
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
     TraineeQuizRepository,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import (
+from src.api.schemas.study_material_schemas import (
     MentorStudentVisibilityOut,
 )
 from src.api.utils.content_lifecycle.queries import list_trainee_archive_sm

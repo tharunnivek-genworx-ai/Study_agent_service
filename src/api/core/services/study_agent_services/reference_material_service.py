@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.study_material_exceptions.reference_material_exceptions import (
+from src.api.core.exceptions import (
     InvalidMediaTypePayloadException,
     NodeMediaNotFoundException,
     NodeMediaReorderIncompleteException,
@@ -35,20 +35,16 @@ from src.api.core.exceptions.study_material_exceptions.reference_material_except
 from src.api.data.models.postgres.e_learning_content.reference_llamaparse_images import (
     ReferenceLlamaParseImage,
 )
-from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (
+from src.api.data.repositories import (
     ReferenceLlamaParseRepository,
-)
-from src.api.data.repositories.study_agent_repositories.reference_material_repository import (
     ReferenceMaterialRepository,
 )
-from src.api.schemas.study_material_schemas.node_media_schema import (
+from src.api.schemas.study_material_schemas import (
     NodeMediaAttachRequest,
     NodeMediaDeletedOut,
     NodeMediaListOut,
     NodeMediaOut,
     NodeMediaReorderRequest,
-)
-from src.api.schemas.study_material_schemas.reference_material_schema import (
     ReferenceImageListOut,
     ReferenceImageOut,
     ReferenceMaterialDeletedOut,

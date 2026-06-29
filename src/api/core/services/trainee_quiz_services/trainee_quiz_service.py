@@ -14,7 +14,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
+from src.api.core.exceptions import (
     AttemptAbandonedException,
     AttemptAlreadyInProgressException,
     AttemptAlreadySubmittedException,
@@ -26,7 +26,7 @@ from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
     QuizNotPublishedException,
 )
-from src.api.core.services.progress_services.trainee_progress_service import (
+from src.api.core.services import (
     TraineeProgressService,
 )
 from src.api.data.models.postgres.e_learning_content.quiz_attempts import QuizAttempt
@@ -35,13 +35,11 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 )
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
+from src.api.data.repositories import (
     TraineeQuizRepository,
-)
-from src.api.data.repositories.trainee_study_repositories.trainee_study_repository import (
     TraineeStudyRepository,
 )
-from src.api.schemas.quiz_schemas.quiz_schema import (
+from src.api.schemas.quiz_schemas import (
     ArchivedQuizReviewOut,
     PublishedQuizDiscoveryOut,
     QuizAttemptOut,
@@ -717,7 +715,7 @@ class TraineeQuizService:
         if quiz is None:
             raise QuizNotFoundException()
 
-        from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: PLC0415
+        from src.api.data.repositories import (  # noqa: PLC0415
             StudyMaterialRepository,
         )
 

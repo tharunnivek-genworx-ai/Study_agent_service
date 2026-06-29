@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.utils.LLM_utils.groq_retry import GroqCallResult, call_groq_with_rotation
 
 _QC_COMPLETION_FLOOR = 1024

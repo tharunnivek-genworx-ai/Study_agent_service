@@ -68,5 +68,4 @@ __all__ = [
     "transition_sm_to_archived",
     "transition_sm_to_discarded",
     "transition_sm_to_hidden",
-    "abandon_in_progress_attempts_for_quizzes",
 ]

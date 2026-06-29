@@ -12,24 +12,18 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.trainee_study_services.trainee_node_panel_service import (
+from src.api.core.services import (
     TraineeNodePanelService,
-)
-from src.api.core.services.trainee_study_services.trainee_study_service import (
     TraineeStudyService,
 )
-from src.api.data.clients.postgres.database import get_db
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.schemas.study_material_schemas.study_material_schema import (
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.schemas.study_material_schemas import (
     TraineeArchivedSmListOut,
     TraineeArchivedStudyMaterialOut,
-    TraineeStudyMaterialOut,
-)
-from src.api.schemas.study_material_schemas.trainee_node_panel_schema import (
     TraineeNodePanelOut,
-)
-from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import (
+    TraineeStudyMaterialOut,
     TraineeTopicResourceListOut,
 )
 

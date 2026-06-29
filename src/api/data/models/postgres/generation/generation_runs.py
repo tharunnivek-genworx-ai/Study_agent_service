@@ -3,8 +3,8 @@ import uuid
 from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
-from src.api.data.clients.postgres.database import Base
-from src.api.utils.common_utils.time import utc_now
+from src.api.data.clients.postgres import Base
+from src.api.utils.common_utils import utc_now
 
 
 class GenerationRun(Base):

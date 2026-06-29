@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.api.config.dbconfig import settings
+from src.api.config import settings
 
 
 def storage_path_to_url(storage_path: str, base_url: str | None = None) -> str:

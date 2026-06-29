@@ -12,8 +12,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+from src.api.data.repositories import (
+    QuizRepository,
     StudyMaterialRepository,
 )
 from src.api.utils.content_lifecycle.attempt_freeze import (

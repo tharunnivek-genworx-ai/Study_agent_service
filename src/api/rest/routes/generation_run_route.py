@@ -5,14 +5,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.generation_run_service import GenerationRunService
-from src.api.data.clients.postgres.database import get_db
+from src.api.core.services import GenerationRunService
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.generation_run_schema import (
+from src.api.schemas import (
     GenerationRunOut,
     GenerationRunResumeResponse,
 )
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
+from src.api.schemas.identity_schemas import TokenPayload
 
 router = APIRouter(tags=["Generation Runs"])
 

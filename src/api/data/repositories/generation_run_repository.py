@@ -10,7 +10,7 @@ from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.data.models.postgres.generation.generation_runs import GenerationRun
-from src.api.schemas.generation_run_schema import (
+from src.api.schemas import (
     ACTIVE_RUN_STATUSES,
     GenerationRunCreate,
     GenerationRunStatus,
@@ -38,7 +38,7 @@ class GenerationRunRepository:
             attempt_count=0,
         )
         self.db.add(run)
-        await self.db.commit()
+        await self.db.flush()
         return run
 
     async def get_by_id(self, run_id: UUID) -> GenerationRun | None:
@@ -96,6 +96,7 @@ class GenerationRunRepository:
         progress_step_index: int | None = None,
         artifact_run_id: str | None = None,
     ) -> GenerationRun | None:
+        """Persist checkpoint state; commits for mid-graph durability."""
         values: dict[str, Any] = {
             "last_completed_node": node_name,
             "checkpoint_state": checkpoint_state,
@@ -135,6 +136,7 @@ class GenerationRunRepository:
         await self.db.execute(
             update(GenerationRun).where(GenerationRun.run_id == run_id).values(**values)
         )
+        await self.db.flush()
 
     async def fail_run(
         self,
@@ -183,7 +185,7 @@ class GenerationRunRepository:
                 error_type=None,
             )
         )
-        await self.db.commit()
+        await self.db.flush()
 
     async def increment_attempt_count(self, run_id: UUID) -> int:
         run = await self.get_by_id(run_id)
@@ -198,7 +200,7 @@ class GenerationRunRepository:
                 updated_at=datetime.now(UTC),
             )
         )
-        await self.db.commit()
+        await self.db.flush()
         return new_count
 
     async def cancel_run(self, run_id: UUID) -> bool:
@@ -224,7 +226,7 @@ class GenerationRunRepository:
                 completed_at=datetime.now(UTC),
             )
         )
-        await self.db.commit()
+        await self.db.flush()
         rowcount = getattr(result, "rowcount", 0)
         return int(rowcount or 0) > 0
 
@@ -251,6 +253,6 @@ class GenerationRunRepository:
                 updated_at=datetime.now(UTC),
             )
         )
-        await self.db.commit()
+        await self.db.flush()
         rowcount = getattr(result, "rowcount", 0)
         return int(rowcount or 0)

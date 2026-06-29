@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from src.api.control.hint_agent.states.hint_state import HintGraphState
-
-_RESUME_FLAG = "_is_resume"
-_LAST_COMPLETED_NODE_KEY = "_last_completed_node"
+from src.api.utils.generation_progress.resume_helpers import (
+    LAST_COMPLETED_NODE_KEY,
+    RESUME_FLAG,
+    coerce_datetime,
+    coerce_uuid,
+    coerce_uuid_list,
+    is_resume_state,
+    last_completed_node_from_state,
+)
 
 
 def _pending_question_ids(
@@ -79,34 +83,6 @@ def resolve_resume_next_node(
     return "load_hint_context"
 
 
-def _coerce_uuid(value: Any) -> Any:
-    if isinstance(value, UUID):
-        return value
-    if isinstance(value, str) and value:
-        try:
-            return UUID(value)
-        except ValueError:
-            return value
-    return value
-
-
-def _coerce_uuid_list(value: Any) -> Any:
-    if not isinstance(value, list):
-        return value
-    return [_coerce_uuid(item) for item in value]
-
-
-def _coerce_datetime(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str) and value:
-        try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return value
-    return value
-
-
 def hydrate_checkpoint_state(
     checkpoint_state: dict[str, Any],
     *,
@@ -119,24 +95,22 @@ def hydrate_checkpoint_state(
 
     for key in ("node_id", "quiz_id", "space_id"):
         if key in state:
-            state[key] = _coerce_uuid(state[key])
+            state[key] = coerce_uuid(state[key])
         elif params.get(key):
-            state[key] = _coerce_uuid(params[key])
+            state[key] = coerce_uuid(params[key])
 
     if "mentor_id" in state:
-        state["mentor_id"] = _coerce_uuid(state["mentor_id"])
+        state["mentor_id"] = coerce_uuid(state["mentor_id"])
     elif params.get("mentor_id"):
-        state["mentor_id"] = _coerce_uuid(params["mentor_id"])
+        state["mentor_id"] = coerce_uuid(params["mentor_id"])
 
     if "questions_filter_ids" in state:
-        state["questions_filter_ids"] = _coerce_uuid_list(state["questions_filter_ids"])
+        state["questions_filter_ids"] = coerce_uuid_list(state["questions_filter_ids"])
     elif params.get("questions_filter_ids"):
-        state["questions_filter_ids"] = _coerce_uuid_list(
-            params["questions_filter_ids"]
-        )
+        state["questions_filter_ids"] = coerce_uuid_list(params["questions_filter_ids"])
 
     if "next_llm_retry_at" in state:
-        state["next_llm_retry_at"] = _coerce_datetime(state["next_llm_retry_at"])
+        state["next_llm_retry_at"] = coerce_datetime(state["next_llm_retry_at"])
 
     for param_key, state_key in (
         ("mentor_feedback", "mentor_feedback"),
@@ -146,18 +120,17 @@ def hydrate_checkpoint_state(
         if state_key not in state and params.get(param_key) is not None:
             value = params[param_key]
             if state_key in ("quiz_id", "node_id"):
-                value = _coerce_uuid(value)
+                value = coerce_uuid(value)
             state[state_key] = value
 
-    state[_RESUME_FLAG] = True
-    state[_LAST_COMPLETED_NODE_KEY] = last_completed_node
+    state[RESUME_FLAG] = True
+    state[LAST_COMPLETED_NODE_KEY] = last_completed_node
     return state  # type: ignore[return-value]
 
 
-def is_resume_state(state: HintGraphState) -> bool:
-    return bool(state.get(_RESUME_FLAG))
-
-
-def last_completed_node_from_state(state: HintGraphState) -> str | None:
-    value = state.get(_LAST_COMPLETED_NODE_KEY)
-    return str(value) if value else None
+__all__ = [
+    "hydrate_checkpoint_state",
+    "is_resume_state",
+    "last_completed_node_from_state",
+    "resolve_resume_next_node",
+]

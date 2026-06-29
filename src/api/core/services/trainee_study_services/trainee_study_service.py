@@ -12,32 +12,24 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.study_material_exceptions.reference_material_exceptions import (
+from src.api.core.exceptions import (
     NodeMediaNotFoundException,
-)
-from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     StudyMaterialNoPublishedVersionException,
     StudyMaterialPdfGenerationFailedException,
 )
-from src.api.core.services.progress_services.trainee_progress_service import (
+from src.api.core.services import (
     TraineeProgressService,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.study_agent_repositories.reference_material_repository import (
     ReferenceMaterialRepository,
-)
-from src.api.data.repositories.trainee_study_repositories.trainee_study_repository import (
     TraineeStudyRepository,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import (
+from src.api.schemas.study_material_schemas import (
     TraineeArchivedSmItemOut,
     TraineeArchivedSmListOut,
     TraineeArchivedStudyMaterialOut,
     TraineeStudyMaterialOut,
-)
-from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import (
     TraineeTopicResourceListOut,
 )
 from src.api.utils.content_lifecycle import (

@@ -13,7 +13,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 from langchain_groq import ChatGroq
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.utils.LLM_utils.groq_key_pool import get_shared_key_pool
 
 logger = logging.getLogger(__name__)
@@ -347,33 +347,3 @@ async def call_groq_with_rotation(
                         graph_node=graph_node,
                     ),
                 )
-
-
-async def invoke_llm_rotating(
-    *,
-    messages: list[BaseMessage],
-    model: str,
-    temperature: float = 0.4,
-    top_p: float | None = None,
-    do_sample: bool | None = None,
-    timeout: int = 120,
-    extra_retries: int = 1,
-    graph_node: str | None = None,
-) -> tuple[str, str, int | None]:
-    """Deprecated shim — calls ``call_groq_with_rotation`` and raises on failure."""
-    del extra_retries  # infra retries now come from llm_settings.llm_retry_attempts
-    result = await call_groq_with_rotation(
-        messages=messages,
-        model=model,
-        temperature=temperature,
-        top_p=top_p,
-        do_sample=do_sample,
-        timeout=timeout,
-        graph_node=graph_node,
-    )
-    if not result.ok:
-        detail = result.error_type or "llm_failed"
-        if result.suggestion:
-            detail = f"{detail}: {result.suggestion}"
-        raise RuntimeError(detail)
-    return result.content or "", result.model or model, result.token_usage

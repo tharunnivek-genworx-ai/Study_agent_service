@@ -31,16 +31,15 @@ responses, labelled '(Removed)' by the frontend using is_active=False flag.
 """
 
 from datetime import datetime
-from typing import Any, Literal, Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.api.schemas.common.generation_diagnostics_schema import (
+from src.api.schemas.common import (
     GenerationDiagnosticsOut,
-    QualityCheckItemOut,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
+from src.api.schemas.study_material_schemas import RetentionMode
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
@@ -49,41 +48,6 @@ QuizAttemptStatus = Literal["in_progress", "submitted", "abandoned"]
 CorrectOption = Literal["A", "B", "C", "D"]
 QuestionSource = Literal["ai_generated", "mentor_manual"]
 QuestionNavStatus = Literal["notVisited", "visited", "answered", "skipped"]
-
-
-class QuizQualityCheckScoresOut(BaseModel):
-    """Individual dimension scores from the quiz QC evaluator."""
-
-    answer_correctness: int | None = None
-    question_quality: int | None = None
-    topic_relevance: int | None = None
-    option_quality: int | None = None
-    question_clarity: int | None = None
-    difficulty_alignment: int | None = None
-    explanation_quality: int | None = None
-    duplicate_overlap: int | None = None
-
-
-class QuizQualityCheckFlaggedQuestionOut(BaseModel):
-    """Flagged question entry in the quiz QC result."""
-
-    question_id: UUID
-    question_number: int
-    flags: list[str] = Field(default_factory=list)
-
-
-class QuizQualityCheckResultOut(BaseModel):
-    """Structured quiz QC evaluation result surfaced to the frontend."""
-
-    overall_status: Literal["pass", "warn", "fail"]
-    wrong_answer_risk: Literal["none", "low", "medium", "high"]
-    checks: list[QualityCheckItemOut] = Field(default_factory=list)
-    issues: list[str] = Field(default_factory=list)
-    corrective_instructions: str = ""
-    summary: str = ""
-    scores: QuizQualityCheckScoresOut | None = None
-    flagged_questions: list[QuizQualityCheckFlaggedQuestionOut] | None = None
-    retry_recommendation: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,10 +89,6 @@ class QuizGenerateRequest(BaseModel):
     mentor_feedback: str | None = Field(
         default=None,
         description="Optional feedback or goal for regeneration.",
-    )
-    progress_session_id: UUID | None = Field(
-        default=None,
-        description="Client-generated session id for polling generation progress.",
     )
 
 
@@ -322,7 +282,9 @@ class QuizOut(BaseModel):
     )
     progress_session_id: UUID | None = Field(
         default=None,
-        description="Alias for run_id when polling generation progress.",
+        description=(
+            "Deprecated alias for run_id. Poll GET /generation-progress/{run_id}."
+        ),
     )
 
 

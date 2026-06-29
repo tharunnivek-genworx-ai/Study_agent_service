@@ -10,7 +10,7 @@ as fully complete (100%). After a mentor publishes a quiz, completion requires
 both reading and a passing score (50% per component).
 """
 
-from src.api.schemas.progress_schemas.trainee_progress_schema import CompletionStatus
+from src.api.schemas.progress_schemas import CompletionStatus
 
 
 def compute_progress_percentage(

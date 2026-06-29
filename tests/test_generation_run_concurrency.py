@@ -153,6 +153,7 @@ def test_cancel_run_marks_running_as_cancelled() -> None:
         cancelled.status = GenerationRunStatus.CANCELLED.value
 
         session = MagicMock()
+        session.execute = AsyncMock()
         service = GenerationRunService(session)
         service.repo = MagicMock()
         service.repo.get_by_id = AsyncMock(side_effect=[run, cancelled])

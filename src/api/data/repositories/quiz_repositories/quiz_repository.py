@@ -31,7 +31,7 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 )
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.schemas.quiz_schemas.quiz_schema import QuizQuestionUpdateRequest
+from src.api.schemas.quiz_schemas import QuizQuestionUpdateRequest
 from src.api.utils.content_lifecycle.attempt_freeze import (
     abandon_in_progress_attempts_for_quizzes,
 )
@@ -158,7 +158,7 @@ class QuizRepository:
                     source=source,
                 )
             )
-        await self.db.commit()
+        await self.db.flush()
         return quiz_id
 
     async def replace_quiz_draft_with_questions(
@@ -176,7 +176,7 @@ class QuizRepository:
         next_llm_retry_at: datetime | None = None,
     ) -> UUID:
         """Replace an existing draft quiz's questions in-place (M10 one-draft rule)."""
-        from src.api.schemas.generation_run_schema import GenerationRunPipeline
+        from src.api.schemas import GenerationRunPipeline
         from src.api.utils.generation_progress.advisory_lock import (
             require_generation_lock,
         )
@@ -240,11 +240,11 @@ class QuizRepository:
                     source=source,
                 )
             )
-        await self.db.commit()
+        await self.db.flush()
         return quiz_id
 
     async def unpublish_other_quizzes(
-        self, node_id: UUID, except_quiz_id: UUID, *, commit: bool = True
+        self, node_id: UUID, except_quiz_id: UUID, *, commit: bool = False
     ) -> None:
         """Archive all other published quizzes for this node (quiz swap path)."""
         result = await self.db.execute(
@@ -264,24 +264,28 @@ class QuizRepository:
             await abandon_in_progress_attempts_for_quizzes(self.db, archived_ids)
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def publish_quiz(self, quiz: Quiz, published_by: UUID) -> Quiz:  # noqa: ARG002
         """Publish quiz and archive any other published quiz on the node."""
-        await self.unpublish_other_quizzes(quiz.node_id, quiz.quiz_id)
+        await self.unpublish_other_quizzes(quiz.node_id, quiz.quiz_id, commit=False)
         transition_quiz_to_active(quiz)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(quiz)
         return quiz
 
-    async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = True) -> Quiz:
+    async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = False) -> Quiz:
         """Hide quiz from trainees while retaining publish metadata."""
         transition_quiz_to_hidden(quiz)
         if commit:
             await self.db.commit()
             await self.db.refresh(quiz)
+        else:
+            await self.db.flush()
         return quiz
 
-    async def discard_quiz(self, quiz_id: UUID, *, commit: bool = True) -> int:
+    async def discard_quiz(self, quiz_id: UUID, *, commit: bool = False) -> int:
         """Soft-discard a quiz from the mentor workspace; row and questions retained."""
         now = datetime.now(UTC)
         result = await self.db.execute(
@@ -295,10 +299,12 @@ class QuizRepository:
         )
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
         return int(getattr(result, "rowcount", 0) or 0)
 
     async def discard_drafts_for_sm_versions(
-        self, sm_version_ids: list[UUID], *, commit: bool = True
+        self, sm_version_ids: list[UUID], *, commit: bool = False
     ) -> int:
         """Soft-discard draft quizzes linked to the given study material versions."""
         if not sm_version_ids:
@@ -322,6 +328,8 @@ class QuizRepository:
         )
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
         return int(getattr(result, "rowcount", 0) or 0)
 
     async def increment_total_questions(self, quiz_id: UUID) -> None:
@@ -335,7 +343,7 @@ class QuizRepository:
                 updated_at=now,
             )
         )
-        await self.db.commit()
+        await self.db.flush()
 
     async def decrement_total_questions(self, quiz_id: UUID) -> None:
         """Decrement counter via SQL UPDATE (safe after other commits expire ORM state)."""
@@ -350,7 +358,7 @@ class QuizRepository:
                 updated_at=now,
             )
         )
-        await self.db.commit()
+        await self.db.flush()
 
     # ── Question Lookups ──────────────────────────────────────────────
 
@@ -453,7 +461,7 @@ class QuizRepository:
             source=source,
         )
         self.db.add(question)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(question)
         return question
 
@@ -464,13 +472,13 @@ class QuizRepository:
         for field in request.model_fields_set:
             value = getattr(request, field)
             setattr(question, field, value)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(question)
         return question
 
     async def soft_delete_question(self, question: QuizQuestion) -> None:
         question.is_active = False
-        await self.db.commit()
+        await self.db.flush()
 
     async def bulk_update_question_order(self, order_map: dict[UUID, int]) -> None:
         """Update order_index for multiple questions in one transaction."""
@@ -480,7 +488,7 @@ class QuizRepository:
                 .where(QuizQuestion.question_id == question_id)
                 .values(order_index=order_index)
             )
-        await self.db.commit()
+        await self.db.flush()
 
     # ── Attempt Lookups ───────────────────────────────────────────────
 
@@ -515,7 +523,7 @@ class QuizRepository:
             submitted_at=None,
         )
         self.db.add(attempt)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(attempt)
         return attempt
 
@@ -534,7 +542,7 @@ class QuizRepository:
         attempt.total_with_hints = total_with_hints
         attempt.total_skipped = total_skipped
         attempt.submitted_at = now
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(attempt)
         return attempt
 
@@ -596,7 +604,7 @@ class QuizRepository:
             existing.was_skipped = was_skipped
             existing.was_locked = was_locked
             existing.responded_at = now
-            await self.db.commit()
+            await self.db.flush()
             await self.db.refresh(existing)
             return existing
 
@@ -613,6 +621,6 @@ class QuizRepository:
             responded_at=now,
         )
         self.db.add(response)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(response)
         return response

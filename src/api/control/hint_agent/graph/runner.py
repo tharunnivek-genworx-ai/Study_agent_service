@@ -12,7 +12,7 @@ from src.api.control.hint_agent.graph.hint_generation_graph import (
     get_hint_generation_graph,
 )
 from src.api.control.hint_agent.states.hint_state import HintGraphState
-from src.api.core.exceptions.quiz_exceptions.hint_generation_exceptions import (
+from src.api.core.exceptions import (
     HintGenerationFailedException,
 )
 from src.api.utils.generation_progress import (
@@ -27,7 +27,6 @@ async def _run_graph(
     session: AsyncSession,
     initial_state: HintGraphState,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> HintGraphState:
     graph = get_hint_generation_graph()
@@ -38,7 +37,6 @@ async def _run_graph(
             graph,
             cast(dict[str, Any], initial_state),
             config,
-            progress_session_id=progress_session_id,
             pipeline=GenerationPipeline.HINT,
             run_id=run_id,
         ),
@@ -64,14 +62,12 @@ async def run_hint_generation(
     session: AsyncSession,
     initial_state: HintGraphState,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> HintGraphState:
     """Fresh hint generation from service-shaped initial state."""
     return await _run_graph(
         session,
         initial_state,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )
 
@@ -80,13 +76,11 @@ async def run_hint_from_checkpoint(
     session: AsyncSession,
     initial_state: HintGraphState,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> HintGraphState:
     """Resume a failed hint run from a hydrated checkpoint state."""
     return await _run_graph(
         session,
         initial_state,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )

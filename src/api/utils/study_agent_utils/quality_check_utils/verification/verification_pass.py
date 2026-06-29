@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.qc import (
     qc_retry_verification_prompt,
     qc_verification_prompt,

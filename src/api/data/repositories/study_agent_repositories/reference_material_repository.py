@@ -121,7 +121,7 @@ class ReferenceMaterialRepository:
             deleted_at=None,
         )
         self.db.add(material)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(material)
         return material
 
@@ -130,13 +130,13 @@ class ReferenceMaterialRepository:
     ) -> ReferenceMaterial:
         material.is_visible_to_trainees = is_visible
         material.updated_at = datetime.now(UTC)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(material)
         return material
 
     async def soft_delete(self, material: ReferenceMaterial) -> None:
         material.deleted_at = datetime.now(UTC)
-        await self.db.commit()
+        await self.db.flush()
 
     # ── Node Media Lookups ───────────────────────────────────────────────
 
@@ -189,7 +189,7 @@ class ReferenceMaterialRepository:
             uploaded_by=uploaded_by,
         )
         self.db.add(media)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(media)
         return media
 
@@ -201,9 +201,9 @@ class ReferenceMaterialRepository:
                 .where(NodeMedia.media_id == media_id)
                 .values(order_index=order_index)
             )
-        await self.db.commit()
+        await self.db.flush()
 
     async def delete_media(self, media: NodeMedia) -> None:
         """Hard delete — no soft-delete for node_media."""
         await self.db.delete(media)
-        await self.db.commit()
+        await self.db.flush()

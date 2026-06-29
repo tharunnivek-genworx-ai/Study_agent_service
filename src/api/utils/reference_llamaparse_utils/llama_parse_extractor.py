@@ -8,7 +8,6 @@ import logging
 import re
 import time
 import urllib.request
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -16,6 +15,11 @@ from uuid import UUID
 from llama_cloud import LlamaCloud
 
 from src.api.control.study_agent.prompts.parsing import build_parsing_instruction
+from src.api.schemas.study_material_schemas.llama_parse_schema import (
+    LlamaParseExtractionResult,
+    ParseImageRecord,
+    load_study_material_schema,
+)
 from src.api.utils.study_agent_utils.artifacts.artifact_paths import (
     ensure_dir,
     ist_timestamp,
@@ -25,48 +29,10 @@ from src.api.utils.study_agent_utils.artifacts.artifact_paths import (
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "schemas"
-    / "study_material_schemas"
-    / "llama_parse_schema.json"
-)
-
 _PAGE_FILENAME_RE = re.compile(
     r"page_(\d+)_(?:chart|image)_(\d+)",
     re.IGNORECASE,
 )
-
-
-@dataclass
-class ParseImageRecord:
-    """A downloaded figure from the LlamaParse Parse job."""
-
-    parse_index: int
-    page_number: int
-    figure_index_on_page: int
-    filename: str
-    path: str
-    category: str | None = None
-    bbox_y: float = 0.0
-
-
-@dataclass
-class LlamaParseExtractionResult:
-    """Structured output from a single LlamaParse extraction run."""
-
-    structured_data: dict[str, Any]
-    extract_job_id: str
-    parse_job_id: str | None
-    content_hash: str
-    parse_images: list[ParseImageRecord] = field(default_factory=list)
-    reused_from_cache: bool = False
-    skip_persist: bool = False
-
-
-def load_study_material_schema() -> dict[str, Any]:
-    parsed: dict[str, Any] = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    return parsed
 
 
 def compute_pdf_content_hash(file_path: str | Path) -> str:

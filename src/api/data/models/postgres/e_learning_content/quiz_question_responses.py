@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 
-from src.api.data.clients.postgres.database import Base
+from src.api.data.clients.postgres import Base
 
 
 class QuizQuestionResponse(Base):

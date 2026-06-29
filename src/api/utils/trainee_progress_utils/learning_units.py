@@ -9,7 +9,7 @@ with **progress snapshots** from ``TraineeProgressService``.
 
 from uuid import UUID
 
-from src.api.schemas.progress_schemas.trainee_progress_schema import (
+from src.api.schemas.progress_schemas import (
     TraineeNodeProgressBatchItemOut,
 )
 from src.api.utils.trainee_progress_utils.completion import is_learning_unit_complete

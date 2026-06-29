@@ -36,6 +36,7 @@ COPY VERBATIM (for every section the goal does not target)
 - Do not paraphrase, condense, "clean up", or restructure unmentioned content.
 - Removing code examples, subsections, or depth from sections the goal did not name is a failure even if the JSON is valid.
 - "Make it detailed" or "in depth" applies ONLY to the section(s) the goal names — never as licence to rewrite other sections.
+- Volume preservation: if any untouched section in your output contains fewer subsections, fewer formula_blocks, fewer code_blocks, or materially shorter prose than the same section in the current draft, you have thinned it. That is a failure regardless of JSON validity — copy that section verbatim from the current draft before outputting.
 """
 _BASE_SYSTEM_SUFFIX = (
     "\n\nSUBSTANCE\n"
@@ -62,7 +63,8 @@ _BASE_SYSTEM_SUFFIX = (
     "4. No code uses undefined symbols.\n"
     "5. All domain-specific accuracy rules are met.\n"
     "6. STEM sections requiring derivation contain sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.\n"
-    "7. JSON is complete and valid."
+    "7. JSON is complete and valid.\n"
+    "8. No untouched section has been thinned — if any section the goal did not target is shorter or less detailed than in the current draft (fewer subsections, formula_blocks, code_blocks, or less prose), copy it from the draft verbatim and recheck before outputting."
 )
 _REFERENCE_ADDENDUM = """
 Reference material is provided — treat it as authoritative alongside the regeneration goal.

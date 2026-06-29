@@ -26,21 +26,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.study_agent_services.reference_material_service import (
+from src.api.core.services import (
     ReferenceMaterialService,
 )
-from src.api.data.clients.postgres.database import get_db
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.schemas.study_material_schemas.node_media_schema import (
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.schemas.study_material_schemas import (
     NodeMediaAttachRequest,
     NodeMediaDeletedOut,
     NodeMediaListOut,
     NodeMediaOut,
     NodeMediaReorderRequest,
     NodeMediaType,
-)
-from src.api.schemas.study_material_schemas.reference_material_schema import (
     ReferenceImageListOut,
     ReferenceMaterialDeletedOut,
     ReferenceMaterialListOut,

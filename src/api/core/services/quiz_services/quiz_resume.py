@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from src.api.core.services.quiz_services.quiz_service import QuizService
-from src.api.schemas.generation_run_schema import GenerationRunResumeResult
-from src.api.utils.space_node_utils.node_role_assert import _assert_mentor
+from src.api.core.services.resume_dispatch import execute_pipeline_resume
+from src.api.schemas import GenerationRunResumeResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,10 +21,11 @@ async def execute_resume(
     role: str,
 ) -> None:
     """Dispatch a validated quiz resume to the service layer."""
-    _assert_mentor(role)
-    service = QuizService(session)
-    await service.resume_quiz_generation(
+    await execute_pipeline_resume(
+        session,
         resume_result,
-        user_id=mentor_id,
+        mentor_id=mentor_id,
         role=role,
+        service_factory=QuizService,
+        resume_fn=QuizService.resume_quiz_generation,
     )

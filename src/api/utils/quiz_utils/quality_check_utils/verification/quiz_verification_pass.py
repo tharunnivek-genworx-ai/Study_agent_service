@@ -7,7 +7,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.utils.LLM_utils.groq_quiz_qc_client import call_groq_quiz_qc_verification
 from src.api.utils.quiz_utils.quality_check_utils.parsing.json_parse import (
     parse_quiz_qc_response,

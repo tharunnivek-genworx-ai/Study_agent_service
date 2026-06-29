@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.data.models.postgres.progress_models.trainee_node_progress import (
     TraineeNodeProgress,
 )
-from src.api.schemas.progress_schemas.trainee_progress_schema import CompletionStatus
-from src.api.utils.common_utils.time import utc_now
+from src.api.schemas.progress_schemas import CompletionStatus
+from src.api.utils.common_utils import utc_now
 
 
 class TraineeNodeProgressRepository:

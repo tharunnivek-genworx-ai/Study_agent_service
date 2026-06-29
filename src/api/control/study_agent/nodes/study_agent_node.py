@@ -10,7 +10,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.generation import (
     generation_prompt,
     improve_prompt,

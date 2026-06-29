@@ -20,38 +20,35 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.generation_run_exceptions import (
+from src.api.core.exceptions import (
     GenerationRunConflictException,
-)
-from src.api.core.exceptions.quiz_exceptions.hint_generation_exceptions import (
     HintGenerationFailedException,
     HintQuestionsNotFoundException,
     HintsAlreadyCompleteException,
     HintsCannotGenerateOnPublishedQuizException,
     HintsNothingToDeleteException,
     QuizHasNoQuestionsException,
-)
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
 )
-from src.api.core.services.generation_run_service import GenerationRunService
-from src.api.data.repositories.quiz_repositories.hint_repository import HintRepository
-from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+from src.api.core.services import GenerationRunService
+from src.api.data.repositories import (
+    HintRepository,
+    QuizRepository,
     StudyMaterialRepository,
 )
-from src.api.schemas.generation_run_schema import (
+from src.api.schemas import (
     GenerationRunCreate,
     GenerationRunMode,
     GenerationRunPipeline,
     GenerationRunResumeResult,
     GenerationRunStatus,
 )
-from src.api.schemas.quiz_schemas.hint_schema import (
+from src.api.schemas.quiz_schemas import (
     HintGenerateRequest,
     HintRegenerateRequest,
+    QuizOut,
+    QuizQuestionOut,
 )
-from src.api.schemas.quiz_schemas.quiz_schema import QuizOut, QuizQuestionOut
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.study_material_link import (
     require_mentor_quiz_study_material_source,
@@ -181,12 +178,10 @@ class HintService:
     ) -> dict[str, Any]:
         from src.api.control.hint_agent.graph.runner import run_hint_generation
 
-        progress_id = str(run_id)
         try:
             final_state = await run_hint_generation(
                 self.session,
                 initial_state,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
             await self._complete_generation_run(run_id)
@@ -235,7 +230,6 @@ class HintService:
         )
 
         run_id = resume_result.run_id
-        progress_id = str(run_id)
         initial_state = hydrate_checkpoint_state(
             resume_result.checkpoint_state,
             last_completed_node=resume_result.last_completed_node,
@@ -247,7 +241,6 @@ class HintService:
             final_state = await run_hint_from_checkpoint(
                 self.session,
                 initial_state,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
             if final_state.get("error"):

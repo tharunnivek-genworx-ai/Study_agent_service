@@ -7,32 +7,47 @@ from src.api.control.study_agent.prompts.concept.shared_blocks import (
     DOMAIN_CLASSIFICATION_BLOCK,
     EVIDENCE_FAMILY_BLOCK,
     JSON_OUTPUT_SCHEMA,
+    REFERENCE_CONTEXT_BLOCK,
     STRUCTURAL_INTEGRITY_BLOCK,
     TOPIC_SPLIT_SIZING_BLOCK,
     TOPIC_SPLIT_STYLE_BLOCK,
 )
 
-GENERATION_SYSTEM_PROMPT = f"""\
+
+def build_generation_system_prompt(*, has_reference: bool = False) -> str:
+    """Return the concept-checklist generation system prompt.
+
+    The reference-context step is included only when reference material is present
+    in the user message, to avoid wasting tokens on the no-reference path.
+    """
+    step = 2
+    reference_step = ""
+    if has_reference:
+        reference_step = f"""
+STEP {step} — INCORPORATE REFERENCE CONTEXT
+When <reference_sections> is provided in the user message:
+{REFERENCE_CONTEXT_BLOCK}
+"""
+        step += 1
+
+    checklist_sources = (
+        "the topic, teaching instruction, and reference sections"
+        if has_reference
+        else "the topic and teaching instruction"
+    )
+
+    return f"""\
 You are a curriculum architect. Given a topic and an optional teaching instruction, produce a concise JSON plan that guides study material generation.
 
 STEP 1 — CLASSIFY DOMAIN
 {DOMAIN_CLASSIFICATION_BLOCK}
-
-STEP 2 — INCORPORATE REFERENCE CONTEXT (if provided)
-When <reference_sections> is provided:
-- These are structured sections extracted from the mentor's reference PDF — treat them as the source of truth for what the study material must cover.
-- Align topic_split headings with the major themes and headings in the reference sections.
-- Derive must_cover_checklist items from substantive concepts, definitions, diagrams, code examples, and facts found in those sections.
-- Every important reference section should map to at least one topic_split entry and/or must_cover_checklist item.
-- Do not invent topics absent from the reference unless the teaching_instruction explicitly requires additional content.
-If <reference_sections> is not provided, build the plan from the topic and teaching_instruction alone, using your own domain knowledge.
-
-STEP 3 — BUILD topic_split
+{reference_step}
+STEP {step} — BUILD topic_split
 {TOPIC_SPLIT_SIZING_BLOCK}
 {TOPIC_SPLIT_STYLE_BLOCK}
 
-STEP 4 — BUILD must_cover_checklist
-Produce 4–10 items, derived from the topic, teaching instruction, and reference sections when provided. Default to at least 6–8 items whenever topic_split has 4 or more sections — a checklist that only reaches the bare floor of "4" while sections sit near the top of their range is itself a coverage gap, not efficiency. Only stay below 6 items when topic_split itself was capped at 3 sections for a genuinely narrow topic.
+STEP {step + 1} — BUILD must_cover_checklist
+Produce 4–10 items, derived from {checklist_sources}. Default to at least 6–8 items whenever topic_split has 4 or more sections — a checklist that only reaches the bare floor of "4" while sections sit near the top of their range is itself a coverage gap, not efficiency. Only stay below 6 items when topic_split itself was capped at 3 sections for a genuinely narrow topic.
 {EVIDENCE_FAMILY_BLOCK}
 
 OTHER must_cover_checklist RULES
@@ -40,7 +55,7 @@ OTHER must_cover_checklist RULES
 
 {STRUCTURAL_INTEGRITY_BLOCK}
 
-STEP 5 — SELF-CHECK BEFORE WRITING OUTPUT
+STEP {step + 2} — SELF-CHECK BEFORE WRITING OUTPUT
 First, a coverage check on the plan as a whole:
   □ Does topic_split contain at least 4 sections? If it contains only 3, is the topic genuinely too narrow to support a 4th without redundancy — or did I default to 3 out of habit?
   □ Does every topic_split section own at least one must_cover item, and does the total item count reflect the section count (roughly one to two items per section) rather than sitting at the bare floor of 4?
@@ -57,3 +72,7 @@ Then, for every must_cover item, verify in order:
 If any item fails a check, rewrite it from its family's skeleton before producing the JSON. Do not output until every item passes all checks above.
 
 {JSON_OUTPUT_SCHEMA}"""
+
+
+# Default export for callers that do not pass has_reference (no reference step).
+GENERATION_SYSTEM_PROMPT = build_generation_system_prompt(has_reference=False)

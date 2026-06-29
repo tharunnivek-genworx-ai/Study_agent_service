@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.control.study_agent.graph.graph import get_study_material_graph
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (  # noqa: E501
+from src.api.core.exceptions import (  # noqa: E501
     LLMGenerationFailedException,
     StudyMaterialReferenceParseMissingException,
 )
-from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (  # noqa: E501
+from src.api.data.repositories import (  # noqa: E501
     ReferenceLlamaParseRepository,
 )
 from src.api.utils.generation_progress import (
@@ -79,8 +79,8 @@ async def _run_graph(
             graph,
             cast(dict[str, Any], initial_state),
             config,
-            progress_session_id=progress_session_id,
             pipeline=GenerationPipeline.STUDY_MATERIAL,
+            progress_session_id=progress_session_id,
             run_id=run_id,
         ),
     )

@@ -8,7 +8,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     canonicalize_generation_json,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.api.control.quiz_agent.prompts.quiz_qc_check_definitions import (
+from src.api.control.quiz_agent.prompts import (
     PER_QUESTION_CATEGORIES,
 )
 

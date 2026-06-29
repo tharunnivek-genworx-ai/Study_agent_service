@@ -2,19 +2,15 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.space_node_exceptions.node_exceptions import (
+from src.api.core.exceptions import (
     NodeForbiddenException,
     NodeNotFoundException,
-)
-from src.api.core.exceptions.space_node_exceptions.space_exceptions import (
     SpaceNotFoundException,
 )
 from src.api.data.models.postgres.e_spaces_trees.espaces import ESpace
 from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
-from src.api.data.repositories.space_node_repository.node_repository import (
+from src.api.data.repositories import (
     NodeRepository,
-)
-from src.api.data.repositories.space_node_repository.space_repository import (
     SpaceRepository,
 )
 from src.api.utils.space_node_utils.space_role_assert import (

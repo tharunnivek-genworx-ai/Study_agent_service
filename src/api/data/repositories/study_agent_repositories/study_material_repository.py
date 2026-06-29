@@ -69,6 +69,25 @@ class StudyMaterialRepository:
         )
         return cast(StudyMaterialVersion | None, result.scalars().first())
 
+    async def get_latest_workspace_draft(
+        self, node_id: UUID
+    ) -> StudyMaterialVersion | None:
+        """Return the newest non-archived WIP draft with content for a node, or None."""
+        result = await self.db.execute(
+            select(StudyMaterialVersion)
+            .where(
+                and_(
+                    StudyMaterialVersion.node_id == node_id,
+                    StudyMaterialVersion.is_archived.is_(False),
+                    StudyMaterialVersion.is_published.is_(False),
+                    exclude_discarded(StudyMaterialVersion.lifecycle_status),
+                )
+            )
+            .order_by(StudyMaterialVersion.version_number.desc())
+            .limit(1)
+        )
+        return cast(StudyMaterialVersion | None, result.scalars().first())
+
     async def get_published_version(self, node_id: UUID) -> StudyMaterialVersion | None:
         """Return the latest is_published=True version for a node, or None."""
         result = await self.db.execute(

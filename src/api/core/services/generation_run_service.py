@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.generation_run_exceptions import (
+from src.api.core.exceptions import (
     GenerationPipelineResumeNotImplementedException,
     GenerationResumeTooEarlyException,
     GenerationRunConflictException,
@@ -16,9 +16,8 @@ from src.api.core.exceptions.generation_run_exceptions import (
     GenerationRunNotFoundException,
     GenerationRunNotResumableException,
 )
-from src.api.data.repositories.generation_run_repository import GenerationRunRepository
-from src.api.schemas.generation_progress_schema import GenerationPipeline
-from src.api.schemas.generation_run_schema import (
+from src.api.data.repositories import GenerationRunRepository
+from src.api.schemas import (
     MAX_RESUME_ATTEMPTS,
     GenerationRunCreate,
     GenerationRunOut,
@@ -28,15 +27,13 @@ from src.api.schemas.generation_run_schema import (
     GenerationRunResumeResult,
     GenerationRunStatus,
 )
-from src.api.utils.generation_progress.advisory_lock import require_generation_lock
-from src.api.utils.generation_progress.db_store import (
-    DbGenerationProgressStore,
-    _node_to_step,
+from src.api.schemas.common import GenerationPipeline
+from src.api.utils.generation_progress.advisory_lock import (
+    release_generation_lock,
+    require_generation_lock,
 )
-
-
-def _pipeline_enum(pipeline: GenerationRunPipeline) -> GenerationPipeline:
-    return GenerationPipeline(pipeline.value)
+from src.api.utils.generation_progress.db_store import DbGenerationProgressStore
+from src.api.utils.generation_progress.store import node_to_step
 
 
 class GenerationRunService:
@@ -71,7 +68,7 @@ class GenerationRunService:
         )
 
         run = await self.repo.create(payload)
-        await self.progress.start(run.run_id, _pipeline_enum(payload.pipeline))
+        await self.progress.start(run.run_id, payload.pipeline)
         return GenerationRunOut.from_orm_run(run)
 
     async def checkpoint_after_node(
@@ -86,7 +83,7 @@ class GenerationRunService:
             return
 
         pipeline = GenerationPipeline(run.pipeline)
-        step_index = _node_to_step(pipeline, node_name)
+        step_index = node_to_step(pipeline, node_name)
         artifact_run_id = state.get("artifact_run_id")
         if isinstance(artifact_run_id, str):
             artifact_id: str | None = artifact_run_id
@@ -100,8 +97,6 @@ class GenerationRunService:
             progress_step_index=step_index,
             artifact_run_id=artifact_id,
         )
-        if step_index is not None:
-            await self.progress.set_step(run_id, step_index)
 
     async def fail_run(
         self,
@@ -111,15 +106,29 @@ class GenerationRunService:
         error_type: str | None = None,
         next_llm_retry_at: datetime | None = None,
     ) -> None:
+        run = await self.repo.get_by_id(run_id)
         await self.repo.fail_run(
             run_id,
             error_message=error_message,
             error_type=error_type,
             next_llm_retry_at=next_llm_retry_at,
         )
+        if run is not None:
+            await release_generation_lock(
+                self.session,
+                pipeline=run.pipeline,
+                resource_id=run.resource_id,
+            )
 
     async def complete_run(self, run_id: UUID) -> None:
+        run = await self.repo.get_by_id(run_id)
         await self.progress.complete(run_id)
+        if run is not None:
+            await release_generation_lock(
+                self.session,
+                pipeline=run.pipeline,
+                resource_id=run.resource_id,
+            )
 
     async def get_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
         run = await self._get_run_for_mentor(run_id, mentor_id)
@@ -174,9 +183,8 @@ class GenerationRunService:
             resource_id=run.resource_id,
         )
 
-        # Extract all attributes before committing — each commit() expires ORM
-        # objects in the session, and accessing expired attributes in an async
-        # session raises a greenlet error (lazy load without I/O permission).
+        # Snapshot ORM attrs before writes that may commit — callers resume from
+        # these values rather than re-reading the run row after mark_running.
         checkpoint = run.checkpoint_state or {}
         request_params = run.request_params or {}
         run_pipeline = run.pipeline
@@ -263,6 +271,12 @@ class GenerationRunService:
         cancelled = await self.repo.cancel_run(run_id)
         if not cancelled:
             raise GenerationRunNotCancellableException()
+
+        await release_generation_lock(
+            self.session,
+            pipeline=run.pipeline,
+            resource_id=run.resource_id,
+        )
 
         updated = await self.repo.get_by_id(run_id)
         if updated is None:

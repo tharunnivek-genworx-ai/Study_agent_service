@@ -18,20 +18,18 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
+from src.api.core.exceptions import (
     StudyMaterialPublishTransactionFailedException,
     StudyMaterialUnpublishTransactionFailedException,
 )
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+from src.api.data.repositories import (
     StudyMaterialRepository,
-)
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
     TraineeQuizRepository,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
+from src.api.schemas.study_material_schemas import RetentionMode
 from src.api.utils.content_lifecycle.transitions import (
     transition_sm_to_archived,
     transition_sm_to_hidden,

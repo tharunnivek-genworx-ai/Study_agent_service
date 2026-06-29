@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from src.api.schemas.common.generation_diagnostics_schema import (
+from src.api.schemas.common import (
     GenerationDiagnosticsOut,
     HintGenerationDiagnosticsOut,
     QcInfraErrorType,

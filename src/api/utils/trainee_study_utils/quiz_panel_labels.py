@@ -8,7 +8,7 @@ frontend renders panel fields without local business rules.
 from typing import Literal
 from uuid import UUID
 
-from src.api.schemas.quiz_schemas.quiz_schema import PublishedQuizDiscoveryOut
+from src.api.schemas.quiz_schemas import PublishedQuizDiscoveryOut
 
 QuizBadgeKind = Literal["none", "not_taken", "in_progress", "completed"]
 QuizButtonVariant = Literal["primary", "secondary"]

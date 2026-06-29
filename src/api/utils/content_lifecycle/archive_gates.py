@@ -6,24 +6,20 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.progress_exceptions.progress_exceptions import (
+from src.api.core.exceptions import (
     NodeNotActiveException,
     SpaceNotPublishedException,
-    TraineeNotEnrolledInSpaceException,
-)
-from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     StudyMaterialArchiveNotAvailableException,
     StudyMaterialVersionNotInStudentArchiveException,
+    TraineeNotEnrolledInSpaceException,
 )
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
 from src.api.data.models.postgres.e_spaces_trees.espaces import ESpace
 from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
     StudyMaterialRepository,
 )
 from src.api.utils.content_lifecycle.constants import LIFECYCLE_ARCHIVED

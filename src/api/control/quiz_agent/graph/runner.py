@@ -12,7 +12,7 @@ from src.api.control.quiz_agent.graph.quiz_generation_graph import (
     get_quiz_generation_graph,
 )
 from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
-from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+from src.api.core.exceptions import (
     QuizGenerationFailedException,
 )
 from src.api.utils.generation_progress import (
@@ -27,7 +27,6 @@ async def _run_graph(
     session: AsyncSession,
     initial_state: QuizGraphState,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> QuizGraphState:
     graph = get_quiz_generation_graph()
@@ -38,7 +37,6 @@ async def _run_graph(
             graph,
             cast(dict[str, Any], initial_state),
             config,
-            progress_session_id=progress_session_id,
             pipeline=GenerationPipeline.QUIZ,
             run_id=run_id,
         ),
@@ -64,14 +62,12 @@ async def run_quiz_generation(
     session: AsyncSession,
     initial_state: QuizGraphState,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> QuizGraphState:
     """Fresh quiz generation from service-shaped initial state."""
     return await _run_graph(
         session,
         initial_state,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )
 
@@ -80,13 +76,11 @@ async def run_quiz_from_checkpoint(
     session: AsyncSession,
     initial_state: QuizGraphState,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> QuizGraphState:
     """Resume a failed quiz run from a hydrated checkpoint state."""
     return await _run_graph(
         session,
         initial_state,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )

@@ -6,65 +6,15 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.data.repositories.generation_run_repository import GenerationRunRepository
-from src.api.schemas.generation_progress_schema import (
+from src.api.data.repositories import GenerationRunRepository
+from src.api.schemas import (
     GenerationJobStatus,
     GenerationPipeline,
     GenerationProgressOut,
     GenerationProgressRecord,
-    GenerationProgressStep,
-    GenerationProgressStepDef,
-    GenerationStepStatus,
+    GenerationRunStatus,
 )
-from src.api.schemas.generation_run_schema import GenerationRunStatus
-from src.api.utils.generation_progress.store import (
-    HINT_NODE_TO_STEP,
-    HINT_STEP_DEFS,
-    QUIZ_CONTEXT_LOAD_NODES,
-    QUIZ_NODE_TO_STEP,
-    QUIZ_STEP_DEFS,
-    STUDY_MATERIAL_NODE_TO_STEP,
-    STUDY_MATERIAL_STEP_DEFS,
-)
-
-
-def _step_defs(pipeline: GenerationPipeline) -> list[GenerationProgressStepDef]:
-    if pipeline == GenerationPipeline.QUIZ:
-        return QUIZ_STEP_DEFS
-    if pipeline == GenerationPipeline.HINT:
-        return HINT_STEP_DEFS
-    return STUDY_MATERIAL_STEP_DEFS
-
-
-def _node_to_step(pipeline: GenerationPipeline, node_name: str) -> int | None:
-    if pipeline == GenerationPipeline.QUIZ:
-        if node_name in QUIZ_CONTEXT_LOAD_NODES:
-            return 1
-        return QUIZ_NODE_TO_STEP.get(node_name)
-    if pipeline == GenerationPipeline.HINT:
-        return HINT_NODE_TO_STEP.get(node_name)
-    return STUDY_MATERIAL_NODE_TO_STEP.get(node_name)
-
-
-def _build_steps(
-    pipeline: GenerationPipeline, active_index: int
-) -> list[GenerationProgressStep]:
-    rendered: list[GenerationProgressStep] = []
-    for index, step in enumerate(_step_defs(pipeline)):
-        if index < active_index:
-            status = GenerationStepStatus.COMPLETED
-        elif index == active_index:
-            status = GenerationStepStatus.ACTIVE
-        else:
-            status = GenerationStepStatus.PENDING
-        rendered.append(
-            GenerationProgressStep(
-                id=step.id,
-                label=step.label,
-                status=status,
-            )
-        )
-    return rendered
+from src.api.utils.generation_progress.store import build_steps, node_to_step, step_defs
 
 
 def _status_from_run(run_status: str) -> GenerationJobStatus:
@@ -103,7 +53,7 @@ class DbGenerationProgressStore:
         pipeline: GenerationPipeline,
         node_name: str,
     ) -> None:
-        step_index = _node_to_step(pipeline, node_name)
+        step_index = node_to_step(pipeline, node_name)
         if step_index is not None:
             await self.set_step(run_id, step_index)
 
@@ -112,7 +62,7 @@ class DbGenerationProgressStore:
         if run is None:
             return
         pipeline = GenerationPipeline(run.pipeline)
-        final_index = len(_step_defs(pipeline)) - 1
+        final_index = len(step_defs(pipeline)) - 1
         await self._repo.update_progress(run_id, progress_step_index=final_index)
         await self._repo.complete_run(run_id)
 
@@ -128,14 +78,14 @@ class DbGenerationProgressStore:
         job_status = _status_from_run(run.status)
         active_index = run.progress_step_index
         if job_status == GenerationJobStatus.COMPLETED:
-            active_index = len(_step_defs(pipeline)) - 1
+            active_index = len(step_defs(pipeline)) - 1
 
         return GenerationProgressRecord(
             session_id=str(run.run_id),
             pipeline=pipeline,
             status=job_status,
             current_step_index=active_index,
-            steps=_build_steps(pipeline, active_index),
+            steps=build_steps(pipeline, active_index),
             error=run.error_message,
             started_at=run.created_at.timestamp(),
             updated_at=run.updated_at.timestamp(),

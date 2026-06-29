@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, cast
 
-from src.api.schemas.qc_schemas.qc_check_schema import is_valid_qc_verification_response
+from src.api.schemas.qc_schemas import is_valid_qc_verification_response
 
 logger = logging.getLogger(__name__)
 

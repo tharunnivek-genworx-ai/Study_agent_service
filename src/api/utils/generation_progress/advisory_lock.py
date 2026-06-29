@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.generation_run_exceptions import (
+from src.api.core.exceptions import (
     GenerationAdvisoryLockUnavailableException,
 )
 
@@ -33,14 +33,39 @@ async def try_acquire_generation_lock(
     pipeline: str,
     resource_id: UUID,
 ) -> bool:
-    """Try to acquire a transaction-scoped advisory lock for a generation resource."""
+    """Try to acquire a session-scoped advisory lock for a generation resource.
+
+    Session-level locks survive intermediate transaction commits (e.g. LangGraph
+    checkpoint durability) and are released via ``release_generation_lock`` or
+    ``release_all_generation_locks`` before the connection returns to the pool.
+    """
     key1, key2 = _lock_keys(pipeline, resource_id)
     result = await session.execute(
-        text("SELECT pg_try_advisory_xact_lock(:k1, :k2)"),
+        text("SELECT pg_try_advisory_lock(:k1, :k2)"),
         {"k1": key1, "k2": key2},
     )
     acquired = result.scalar()
     return bool(acquired)
+
+
+async def release_generation_lock(
+    session: AsyncSession,
+    *,
+    pipeline: str,
+    resource_id: UUID,
+) -> bool:
+    """Release one session-level advisory lock level for a generation resource."""
+    key1, key2 = _lock_keys(pipeline, resource_id)
+    result = await session.execute(
+        text("SELECT pg_advisory_unlock(:k1, :k2)"),
+        {"k1": key1, "k2": key2},
+    )
+    return bool(result.scalar())
+
+
+async def release_all_generation_locks(session: AsyncSession) -> None:
+    """Release every session-level advisory lock held by this connection."""
+    await session.execute(text("SELECT pg_advisory_unlock_all()"))
 
 
 async def require_generation_lock(
@@ -49,7 +74,7 @@ async def require_generation_lock(
     pipeline: str,
     resource_id: UUID,
 ) -> None:
-    """Acquire lock or raise 409 if another transaction holds it."""
+    """Acquire lock or raise 409 if another session holds it."""
     if not await try_acquire_generation_lock(
         session, pipeline=pipeline, resource_id=resource_id
     ):

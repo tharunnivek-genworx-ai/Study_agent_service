@@ -7,11 +7,11 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.generation import generation_prompt
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.schemas.qc_schemas.qc_retry_routing_schema import RetryRoutingResult
-from src.api.schemas.study_material_schemas.concept_checklist_schema import (
+from src.api.schemas.qc_schemas import RetryRoutingResult
+from src.api.schemas.study_material_schemas import (
     ConceptPlanOut,
     fallback_checklist,
     fallback_topic_split,
@@ -643,12 +643,8 @@ def base_qc_return(
     return payload
 
 
-# Backward-compatible alias for callers that imported ParsedConceptChecklist.
-ParsedConceptChecklist = ConceptPlanOut
-
 __all__ = [
     "ConceptPlanOut",
-    "ParsedConceptChecklist",
     "fallback_checklist",
     "fallback_topic_split",
     "parse_checklist",

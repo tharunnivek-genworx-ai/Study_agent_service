@@ -8,17 +8,15 @@ from uuid import UUID
 from langchain_core.runnables import RunnableConfig
 
 from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
-from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+from src.api.core.exceptions import (
     QuizHasNoPublishedStudyMaterialException,
-)
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
 )
-from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: E501
+from src.api.data.repositories import (  # noqa: E501
+    QuizRepository,
     StudyMaterialRepository,
 )
-from src.api.utils.artifacts.common import new_artifact_run_id
+from src.api.utils.artifacts import new_artifact_run_id
 from src.api.utils.quiz_utils.graph.node_helpers import graph_session
 from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
@@ -37,7 +35,7 @@ async def load_generation_context(
     study_repo = StudyMaterialRepository(session)
     version = await study_repo.get_published_version(state["node_id"])
     if version is None or not (version.content or "").strip():
-        version = await study_repo.get_active_version(state["node_id"])
+        version = await study_repo.get_latest_workspace_draft(state["node_id"])
     if version is None or not (version.content or "").strip():
         raise QuizHasNoPublishedStudyMaterialException()
 

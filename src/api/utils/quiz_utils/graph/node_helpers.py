@@ -9,14 +9,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.quiz_agent.prompts import (
     question_insert_prompt,
     question_rework_prompt,
 )
 from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
-from src.api.schemas.common.generation_diagnostics_schema import QcInfraErrorType
-from src.api.schemas.qc_schemas.quiz_retry_routing_schema import QuizRetryRoutingResult
+from src.api.schemas.common import QcInfraErrorType
+from src.api.schemas.qc_schemas import QuizRetryRoutingResult
 from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
 from src.api.utils.LLM_utils.llm_failure_diagnostics import (
     build_llm_failure_qc_result,
@@ -73,7 +73,7 @@ async def call_quiz_llm(*, system_prompt: str, user_message: str) -> Any:
     return await call_groq_with_rotation(
         messages=messages,
         model=llm_settings.llm_model,
-        temperature=0.4,
+        temperature=llm_settings.quiz_generation_temperature,
         timeout=120,
         graph_node="quiz_generator",
     )

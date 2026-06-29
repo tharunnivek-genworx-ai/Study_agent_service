@@ -2,6 +2,21 @@
 
 from __future__ import annotations
 
+DOMAIN_REUSE_FROM_PREVIOUS_PLAN_BLOCK = """\
+Copy the "domain" field from <previous_plan> verbatim into your output. The topic's domain is fixed for this run — never reclassify it, including during ACTION F (full restructure). Restructuring changes topic_split and must_cover_checklist only."""
+
+REFERENCE_CONTEXT_BLOCK = """\
+- These are structured sections extracted from the mentor's reference PDF — treat them as the source of truth for what the study material must cover.
+- Align topic_split headings with the major themes and headings in the reference sections.
+- Derive must_cover_checklist items from substantive concepts, definitions, diagrams, code examples, and facts found in those sections.
+- Every important reference section should map to at least one topic_split entry and/or must_cover_checklist item.
+- Do not invent topics absent from the reference unless the teaching_instruction explicitly requires additional content."""
+
+REWORK_PLAN_CONTEXT_BLOCK = """\
+<previous_plan> in the user message is the concept plan from the prior run. Use it as the starting point for this revision.
+When <mentor_feedback> or <regeneration_goal> is provided, treat it as the mentor's explicit revision request — authoritative over reference-derived defaults for scope, format, and section structure when they conflict.
+Output a complete revised JSON plan (domain + topic_split + must_cover_checklist), not a partial delta. Unless ACTION F (full restructure) applies, preserve every untouched topic_split entry and must_cover_checklist item from <previous_plan> verbatim — identical id, heading/concept, requirement, priority, section_id, and depth_gate."""
+
 DOMAIN_CLASSIFICATION_BLOCK = """\
 Classify the topic into exactly one of:
   STEM         — mathematics, physics, chemistry, biology, engineering, statistics; correctness depends on equations, derivations, proofs, or empirical facts.
@@ -92,7 +107,7 @@ CHECKLIST_RULES_BLOCK = """\
 - A depth_gate must be a bar that generic or surface-level coverage cannot satisfy. "A clear description is provided" or "examples are given" is never acceptable on its own — the filled skeleton above already enforces this; do not weaken it.
 - priority: "required" — absence is a critical failure. "recommended" — absence is a significant gap.
 - section_id must name the single topic_split section where a reviewer will find all depth_gate evidence. Never assign a checklist item to an introductory section (typically ts_1) unless that section is where the concept's complete treatment — not just a definition or overview — actually lives.
-- Each topic_split section should own at most 2 must_cover items, and every section should own at least 1 — a section with zero checklist items is uncovered, not efficiently scoped. If a concept needs its own depth_gate, give it a dedicated section rather than stacking unrelated requirements.
+- Each topic_split section should own at most 2 must_cover items, and every section should own at least 1 — a section with zero checklist items is uncovered, not efficiently scoped. Only give a concept its own dedicated topic_split section when the mentor explicitly requests a new section or topic (Action A Case 1, D-fallthrough, or F); when the mentor asks for a subtopic within an existing section (Action A Case 2), add the must_cover item under the existing ts_N instead of creating a new section.
 - Include ONLY the fields id, concept, requirement, priority, section_id, and depth_gate. No motivation, no depth, no coverage_notes, no family/domain label on the item itself.
 - Push every filled skeleton toward the richer end of its bracket content rather than the bare minimum — name the specific equation/law, the specific named case, or two genuinely distinct code scenarios. Going deeper never means switching to a different family's skeleton."""
 

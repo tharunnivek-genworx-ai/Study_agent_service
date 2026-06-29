@@ -1,1 +1,1 @@
-
+"""External datastore client adapters."""

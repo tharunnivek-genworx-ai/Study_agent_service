@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.api.utils.artifacts.common import log_agent_output
+from src.api.utils.artifacts import log_agent_output
 from src.api.utils.hint_utils.artifacts.hint_artifact_paths import (
     HINT_AGENT_ARTIFACT_SLUGS,
     PIPELINE_SUFFIX,

@@ -26,7 +26,7 @@ from src.api.data.models.postgres.progress_models.trainee_node_progress import (
 from src.api.data.models.postgres.progress_models.trainee_space_progress import (
     TraineeSpaceProgress,
 )
-from src.api.utils.common_utils.time import utc_now
+from src.api.utils.common_utils import utc_now
 
 
 class TraineeSpaceProgressRepository:

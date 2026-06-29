@@ -29,11 +29,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.quiz_services.quiz_service import QuizService
-from src.api.data.clients.postgres.database import get_db
+from src.api.core.services import QuizService
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.schemas.quiz_schemas.quiz_schema import (
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.schemas.quiz_schemas import (
     QuizDeleteOut,
     QuizGenerateRequest,
     QuizMentorUiStateOut,

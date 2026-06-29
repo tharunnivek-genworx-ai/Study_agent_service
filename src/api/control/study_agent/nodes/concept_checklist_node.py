@@ -9,13 +9,13 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.concept import (
     build_concept_checklist_system_prompt,
     build_concept_checklist_user_message,
 )
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.schemas.study_material_schemas.concept_checklist_schema import (
+from src.api.schemas.study_material_schemas import (
     fallback_checklist,
     fallback_topic_split,
     parse_concept_checklist_response,
@@ -143,7 +143,11 @@ async def concept_checklist_node(
             "must_cover_checklist": existing_checklist,
         }
 
-    system_prompt = build_concept_checklist_system_prompt(mode)
+    has_reference = reference_sections is not None
+    system_prompt = build_concept_checklist_system_prompt(
+        mode,
+        has_reference=has_reference,
+    )
     user_message = build_concept_checklist_user_message(
         topic_title=topic_title,
         teaching_instruction=teaching_instruction,

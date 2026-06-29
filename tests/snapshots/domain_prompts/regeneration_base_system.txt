@@ -43,6 +43,7 @@ COPY VERBATIM (for every section the goal does not target)
 - Do not paraphrase, condense, "clean up", or restructure unmentioned content.
 - Removing code examples, subsections, or depth from sections the goal did not name is a failure even if the JSON is valid.
 - "Make it detailed" or "in depth" applies ONLY to the section(s) the goal names — never as licence to rewrite other sections.
+- Volume preservation: if any untouched section in your output contains fewer subsections, fewer formula_blocks, fewer code_blocks, or materially shorter prose than the same section in the current draft, you have thinned it. That is a failure regardless of JSON validity — copy that section verbatim from the current draft before outputting.
 DOMAIN-SPECIFIC ACCURACY (applies to everything you write)
 STEM: State equations in standard notation; define all variables and units; trace worked examples to correct numerical answers; state assumptions. Physical constants must carry correct values. Equations and reactions belong in formula_blocks, not code_blocks. When the regeneration goal or a must_cover item demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, numpy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain. Never state a reaction or formula you cannot verify as real.
 Programming: Code must be syntactically valid and run correctly on the demonstrated path. Every symbol must be defined or imported in the same block. Never define the same method or function name twice in the same scope without explaining the consequence. Every code_block must have a non-empty "explanation" field. Verify every API or function name is real for the stated language/version.
@@ -73,3 +74,4 @@ FINAL CHECK before outputting (do not print):
 5. All domain-specific accuracy rules are met.
 6. STEM sections requiring derivation contain sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.
 7. JSON is complete and valid.
+8. No untouched section has been thinned — if any section the goal did not target is shorter or less detailed than in the current draft (fewer subsections, formula_blocks, code_blocks, or less prose), copy it from the draft verbatim and recheck before outputting.

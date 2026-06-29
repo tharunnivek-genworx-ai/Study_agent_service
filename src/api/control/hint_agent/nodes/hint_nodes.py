@@ -18,25 +18,23 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.hint_agent.prompts.hint_prompt import build_hint_prompt
 from src.api.control.hint_agent.states.hint_state import HintGraphState
-from src.api.core.exceptions.quiz_exceptions.hint_generation_exceptions import (
+from src.api.core.exceptions import (
     HintsCannotGenerateOnPublishedQuizException,
     QuizHasNoQuestionsException,
-)
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
 )
-from src.api.data.repositories.quiz_repositories.hint_repository import HintRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: E501
+from src.api.data.repositories import (  # noqa: E501
+    HintRepository,
     StudyMaterialRepository,
 )
-from src.api.schemas.common.generation_diagnostics_schema import (
+from src.api.schemas.common import (
     HintGenerationDiagnosticsOut,
     HintQuestionErrorOut,
 )
-from src.api.utils.artifacts.common import new_artifact_run_id
+from src.api.utils.artifacts import new_artifact_run_id
 from src.api.utils.hint_utils.artifacts.hint_artifacts import log_hint_agent
 from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
 from src.api.utils.LLM_utils.llm_failure_diagnostics import (
@@ -193,7 +191,7 @@ async def invoke_hint_llm(state: HintGraphState) -> HintGraphState:
             HumanMessage(content=prompt_input["user_message"]),
         ],
         model=llm_settings.llm_model,
-        temperature=0.4,
+        temperature=llm_settings.hint_generation_temperature,
         timeout=120,
         graph_node="hint_generator",
     )
@@ -320,7 +318,7 @@ async def _regenerate_hints_for_question(
             HumanMessage(content=prompt_input["user_message"]),
         ],
         model=llm_settings.llm_model,
-        temperature=0.4,
+        temperature=llm_settings.hint_generation_temperature,
         timeout=120,
         graph_node="hint_generator",
     )
@@ -476,15 +474,16 @@ async def persist_hints_to_questions(
 
     diagnostics = state.get("hint_generation_diagnostics")
     next_llm_retry_at = state.get("next_llm_retry_at")
+    hint_writes_pending = bool(validated or hints_written)
     if diagnostics:
         await repo.merge_quiz_qc_result(
             state["quiz_id"],
             {"hintGeneration": diagnostics},
             next_llm_retry_at=next_llm_retry_at,
         )
-    elif validated or hints_written:
+    elif hint_writes_pending:
         await repo.touch_quiz_updated_at(state["quiz_id"])
-    else:
+    if hint_writes_pending:
         await session.commit()
 
     _log_hint_artifact(

@@ -7,17 +7,10 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-
-class GenerationPipeline(StrEnum):
-    STUDY_MATERIAL = "study_material"
-    QUIZ = "quiz"
-    HINT = "hint"
-
-
-class GenerationJobStatus(StrEnum):
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
+from src.api.schemas.common import (
+    GenerationJobStatus,
+    GenerationPipeline,
+)
 
 
 class GenerationStepStatus(StrEnum):

@@ -21,34 +21,30 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+from src.api.core.exceptions import (
     QuizAlreadyPublishedException,
     QuizCannotDiscardRetiredException,
     QuizHintsIncompleteException,
+    QuizNotFoundException,
     QuizNotPublishedForUnpublishException,
     QuizQuestionNotFoundException,
 )
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
-    QuizNotFoundException,
-)
-from src.api.core.services.generation_run_service import GenerationRunService
+from src.api.core.services import GenerationRunService
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+    QuizRepository,
     StudyMaterialRepository,
 )
-from src.api.schemas.generation_run_schema import (
+from src.api.schemas import (
     GenerationRunCreate,
     GenerationRunMode,
     GenerationRunPipeline,
     GenerationRunResumeResult,
 )
-from src.api.schemas.quiz_schemas.quiz_schema import (
+from src.api.schemas.quiz_schemas import (
     CorrectOption,
     QuizDeleteOut,
     QuizGenerateRequest,
@@ -64,7 +60,7 @@ from src.api.schemas.quiz_schemas.quiz_schema import (
     QuizUnpublishPreviewOut,
     QuizUnpublishRequest,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
+from src.api.schemas.study_material_schemas import RetentionMode
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ACTIVE,
     LIFECYCLE_ARCHIVED,
@@ -111,16 +107,6 @@ from src.api.utils.trainee_progress_utils.progress_resets import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _progress_session_id(
-    progress_session_id: UUID | None,
-    *,
-    run_id: UUID | None = None,
-) -> str | None:
-    if run_id is not None:
-        return str(run_id)
-    return str(progress_session_id) if progress_session_id is not None else None
 
 
 def _quiz_run_mode(mode: str) -> GenerationRunMode:
@@ -226,7 +212,7 @@ class QuizService:
         repo = QuizRepository(self.session)
         quiz = await repo.get_quiz_by_id(quiz_id)
         if quiz is None:
-            from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (  # noqa: PLC0415
+            from src.api.core.exceptions import (  # noqa: PLC0415
                 QuizGenerationFailedException,
             )
 
@@ -253,7 +239,7 @@ class QuizService:
             hydrate_checkpoint_state,
         )
         from src.api.control.quiz_agent.graph.runner import run_quiz_from_checkpoint
-        from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (  # noqa: PLC0415
+        from src.api.core.exceptions import (  # noqa: PLC0415
             QuizGenerationFailedException,
         )
 
@@ -271,7 +257,6 @@ class QuizService:
         )
 
         run_id = resume_result.run_id
-        progress_id = str(run_id)
         initial_state = hydrate_checkpoint_state(
             resume_result.checkpoint_state,
             last_completed_node=resume_result.last_completed_node,
@@ -283,7 +268,6 @@ class QuizService:
             final_state = await run_quiz_from_checkpoint(
                 self.session,
                 initial_state,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
             created_quiz_id = final_state.get("created_quiz_id")
@@ -380,7 +364,7 @@ class QuizService:
                     effective_mode = "regenerate"
                     effective_quiz_id = existing_draft.quiz_id
         from src.api.control.quiz_agent.graph.runner import run_quiz_generation
-        from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+        from src.api.core.exceptions import (
             QuizGenerationFailedException,
         )
 
@@ -399,7 +383,6 @@ class QuizService:
                 "title": request.title,
             },
         )
-        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
 
         initial_state = {
             "mentor_id": user_id,
@@ -423,7 +406,6 @@ class QuizService:
             final_state = await run_quiz_generation(
                 self.session,
                 initial_state,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
 
@@ -491,9 +473,9 @@ class QuizService:
         published = await sm_repo.get_published_version(node_id)
         source_sm = published
         if source_sm is None or not (source_sm.content or "").strip():
-            active = await sm_repo.get_active_version(node_id)
-            if active is not None and (active.content or "").strip():
-                source_sm = active
+            draft = await sm_repo.get_latest_workspace_draft(node_id)
+            if draft is not None and (draft.content or "").strip():
+                source_sm = draft
 
         quizzes = await repo.get_quizzes_by_node(node_id)
         resolved_id = resolve_mentor_quiz_id(quizzes, preferred_quiz_id)

@@ -10,23 +10,21 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.progress_services.trainee_progress_service import (
+from src.api.core.services import (
     TraineeProgressService,
-)
-from src.api.core.services.trainee_quiz_services.trainee_quiz_service import (
     TraineeQuizService,
 )
 from src.api.core.services.trainee_study_services.trainee_study_service import (
     TraineeStudyService,
 )
 from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
-from src.api.data.repositories.trainee_study_repositories.trainee_node_panel_repository import (
+from src.api.data.repositories import (
     TraineeNodePanelRepository,
 )
-from src.api.schemas.progress_schemas.trainee_progress_schema import (
+from src.api.schemas.progress_schemas import (
     TraineeNodeProgressBatchItemOut,
 )
-from src.api.schemas.study_material_schemas.trainee_node_panel_schema import (
+from src.api.schemas.study_material_schemas import (
     ArchiveSummaryOut,
     BreadcrumbItemOut,
     NavSuggestionOut,

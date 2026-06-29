@@ -14,12 +14,17 @@ from src.api.schemas.qc_schemas.qc_check_schema import (
     QcSeverity,
     QcStructureCategory,
     QcVerificationResult,
+    QualityCheckScoresOut,
     is_valid_qc_verification_response,
     parse_qc_check_item,
 )
 from src.api.schemas.qc_schemas.qc_retry_routing_schema import (
     RetryMode,
     RetryRoutingResult,
+)
+from src.api.schemas.qc_schemas.quiz_retry_routing_schema import (
+    QuizRetryMode,
+    QuizRetryRoutingResult,
 )
 
 __all__ = [
@@ -35,6 +40,9 @@ __all__ = [
     "QcSeverity",
     "QcStructureCategory",
     "QcVerificationResult",
+    "QualityCheckScoresOut",
+    "QuizRetryMode",
+    "QuizRetryRoutingResult",
     "VERIFICATION_CATEGORIES",
     "RetryMode",
     "RetryRoutingResult",

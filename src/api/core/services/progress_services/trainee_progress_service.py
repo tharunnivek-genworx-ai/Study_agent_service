@@ -15,7 +15,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.progress_exceptions.progress_exceptions import (
+from src.api.core.exceptions import (
     NodeNotActiveException,
     ReadPercentOutOfRangeException,
     ReadPercentRegressionException,
@@ -29,16 +29,12 @@ from src.api.core.services.progress_services.trainee_space_progress_service impo
 from src.api.data.models.postgres.progress_models.trainee_node_progress import (
     TraineeNodeProgress,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.progress_repositories.trainee_node_progress_repository import (
     TraineeNodeProgressRepository,
-)
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
     TraineeQuizRepository,
 )
-from src.api.schemas.progress_schemas.trainee_progress_schema import (
+from src.api.schemas.progress_schemas import (
     TraineeNodeProgressBatchItemOut,
     TraineeNodeProgressBatchOut,
     TraineeNodeProgressOut,

@@ -40,6 +40,7 @@ COPY VERBATIM (for every section the feedback does not target)
 - Same heading, same prose wording, same subsections, same code_blocks (every line of code and every explanation field), and same formula_blocks.
 - Do not paraphrase, condense, "clean up", or restructure unmentioned content.
 - Removing code examples, subsections, or depth from sections the feedback did not name is a failure even if the JSON is valid.
+- Volume preservation: if any untouched section in your output contains fewer subsections, fewer formula_blocks, fewer code_blocks, or materially shorter prose than the same section in the current draft, you have thinned it. That is a failure regardless of JSON validity — copy that section verbatim from the current draft before outputting.
 VOLUME AND DEPTH PRESERVATION
 - Expanding a section means adding new concepts, worked examples, or subsections — not rephrasing existing content.
 - New examples must differ from existing ones in domain, input data, or behavioural aspect. Renamed variables are not new examples.
@@ -55,7 +56,8 @@ _BASE_SYSTEM_SUFFIX = (
     "2. Unchanged sections preserved at original volume.\n"
     '3. Every new or modified code_block and formula_block has a non-empty "explanation" field.\n'
     "4. JSON is valid and complete.\n"
-    "5. No invented statistics, fabricated API names, or unverifiable facts were introduced."
+    "5. No invented statistics, fabricated API names, or unverifiable facts were introduced.\n"
+    "6. No untouched section has been thinned — if any section the feedback did not target is shorter or less detailed than in the current draft (fewer subsections, formula_blocks, code_blocks, or less prose), copy it from the draft verbatim and recheck before outputting."
 )
 _REFERENCE_ADDENDUM = """
 Reference material is provided. Use it only for sections the feedback targets.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.api.utils.artifacts.common import (
+from src.api.utils.artifacts import (
     agent_artifact_path,
     pipeline_attempt_dir,
     run_artifact_dir,

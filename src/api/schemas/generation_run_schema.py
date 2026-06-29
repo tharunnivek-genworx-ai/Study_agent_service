@@ -9,30 +9,32 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from src.api.schemas.common import (
+    GenerationRunMode,
+    GenerationRunPipeline,
+    GenerationRunStatus,
+)
 
-class GenerationRunPipeline(StrEnum):
-    STUDY_MATERIAL = "study_material"
-    QUIZ = "quiz"
-    HINT = "hint"
+# Re-exported for callers that import from this module.
+__all__ = [
+    "ACTIVE_RUN_STATUSES",
+    "GenerationRunCancelResponse",
+    "GenerationRunCreate",
+    "GenerationRunMode",
+    "GenerationRunOut",
+    "GenerationRunPipeline",
+    "GenerationRunResourceType",
+    "GenerationRunResumeResponse",
+    "GenerationRunResumeResult",
+    "GenerationRunStatus",
+    "MAX_RESUME_ATTEMPTS",
+    "RESUMABLE_RUN_STATUSES",
+]
 
 
 class GenerationRunResourceType(StrEnum):
     NODE = "node"
     QUIZ = "quiz"
-
-
-class GenerationRunStatus(StrEnum):
-    RUNNING = "running"
-    FAILED = "failed"
-    COMPLETED = "completed"
-    SUPERSEDED = "superseded"
-    CANCELLED = "cancelled"
-
-
-class GenerationRunMode(StrEnum):
-    GENERATE = "generate"
-    REGENERATE = "regenerate"
-    IMPROVE = "improve"
 
 
 ACTIVE_RUN_STATUSES = frozenset(
@@ -125,7 +127,11 @@ class GenerationRunResumeResponse(BaseModel):
     """Response after a successful resume request starts pipeline execution."""
 
     run_id: UUID
-    progress_session_id: UUID
+    progress_session_id: UUID = Field(
+        description=(
+            "Deprecated alias for run_id. Poll GET /generation-progress/{run_id}."
+        ),
+    )
     pipeline: str
     status: str = GenerationRunStatus.RUNNING.value
 

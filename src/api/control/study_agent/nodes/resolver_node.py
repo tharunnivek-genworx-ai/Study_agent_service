@@ -8,13 +8,11 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.core.exceptions.study_material_exceptions.reference_material_exceptions import (  # noqa: E501
+from src.api.core.exceptions import (  # noqa: E501
     ReferenceMaterialNotFoundForDeleteException,
 )
-from src.api.data.repositories.space_node_repository.node_repository import (
+from src.api.data.repositories import (  # noqa: E501
     NodeRepository,
-)
-from src.api.data.repositories.study_agent_repositories.reference_material_repository import (  # noqa: E501
     ReferenceMaterialRepository,
 )
 from src.api.utils.reference_media_utils.reference_download import (

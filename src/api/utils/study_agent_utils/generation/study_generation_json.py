@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from src.api.schemas.study_material_schemas.generation_document_schema import (
+from src.api.schemas.study_material_schemas import (
     GenerationDocument,
 )
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (

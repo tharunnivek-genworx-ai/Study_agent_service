@@ -2,8 +2,8 @@ from typing import Any, cast
 
 import jwt
 
-from src.api.config.dbconfig import settings
-from src.api.core.exceptions.identity_exceptions.auth_exceptions import (
+from src.api.config import settings
+from src.api.core.exceptions import (
     InvalidTokenException,
 )
 

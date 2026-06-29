@@ -1,2 +1,0 @@
-# Error handling middleware placeholder
-

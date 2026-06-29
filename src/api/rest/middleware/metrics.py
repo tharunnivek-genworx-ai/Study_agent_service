@@ -1,2 +1,0 @@
-# Metrics middleware placeholder
-
