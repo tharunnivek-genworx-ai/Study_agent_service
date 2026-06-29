@@ -47,8 +47,8 @@ class LLMSettings(BaseSettings):
     llm_model: str = "llama-3.3-70b-versatile"
     # Groq Llama 70B — study material QC verification
     qc_llm_model: str = "llama-3.3-70b-versatile"
-    # Groq Llama 8B — concept checklist
-    checklist_llm_model: str = "llama-3.1-8b-instant"
+    # Groq Llama 70B — concept checklist
+    checklist_llm_model: str = "llama-3.3-70b-versatile"
 
     # Study material generation — first draft / full regen from generation prompt
     study_generation_temperature: float = 0.25

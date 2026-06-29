@@ -29,6 +29,13 @@ _USER_MESSAGE_CLOSING = (
     "not a thin or generic plan."
 )
 
+_PREVIOUS_PLAN_PREAMBLE = (
+    "This is the previous concept plan from the prior run. "
+    "During improvement or regeneration, use it as your primary ground truth — "
+    "read it first, locate the exact topic_split sections and must_cover_checklist items here, "
+    "then apply add, remove, or modify requests against those ids and headings."
+)
+
 
 def build_concept_checklist_system_prompt(generation_type: str) -> str:
     try:
@@ -46,7 +53,19 @@ def build_concept_checklist_user_message(
     generation_mode: str = "generate",
     previous_plan: dict[str, Any] | None = None,
 ) -> str:
-    parts = [f"<topic>{topic_title}</topic>"]
+    parts: list[str] = []
+
+    if previous_plan:
+        plan_json = json.dumps(previous_plan, ensure_ascii=False)
+        if generation_mode in ("improve", "regenerate"):
+            parts.append(
+                f"<previous_plan>\n{_PREVIOUS_PLAN_PREAMBLE}\n{plan_json}\n</previous_plan>"
+            )
+        else:
+            parts.append(f"<previous_plan>\n{plan_json}\n</previous_plan>")
+
+    parts.append(f"<topic>{topic_title}</topic>")
+
     if teaching_instruction.strip():
         parts.append(
             f"\n<teaching_instruction>\n{teaching_instruction.strip()}\n</teaching_instruction>"
@@ -55,9 +74,6 @@ def build_concept_checklist_user_message(
         parts.append(f"\n<regeneration_goal>\n{mentor_feedback}\n</regeneration_goal>")
     elif generation_mode == "improve" and mentor_feedback:
         parts.append(f"\n<mentor_feedback>\n{mentor_feedback}\n</mentor_feedback>")
-    if previous_plan:
-        plan_json = json.dumps(previous_plan, ensure_ascii=False)
-        parts.append(f"\n<previous_plan>\n{plan_json}\n</previous_plan>")
     if reference_sections:
         sections_json = json.dumps(reference_sections, ensure_ascii=False)
         parts.append(f"\n<reference_sections>\n{sections_json}\n</reference_sections>")

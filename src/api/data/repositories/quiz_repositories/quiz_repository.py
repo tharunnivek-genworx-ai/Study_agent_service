@@ -176,6 +176,17 @@ class QuizRepository:
         next_llm_retry_at: datetime | None = None,
     ) -> UUID:
         """Replace an existing draft quiz's questions in-place (M10 one-draft rule)."""
+        from src.api.schemas.generation_run_schema import GenerationRunPipeline
+        from src.api.utils.generation_progress.advisory_lock import (
+            require_generation_lock,
+        )
+
+        await require_generation_lock(
+            self.db,
+            pipeline=GenerationRunPipeline.QUIZ.value,
+            resource_id=quiz_id,
+        )
+
         existing = await self.get_quiz_by_id(quiz_id)
         if existing is None:
             raise ValueError(f"Quiz {quiz_id} not found for in-place regeneration")

@@ -10,13 +10,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.control.study_agent.utils.parsing.llama_parse_extractor import (
-    LlamaParseExtractionResult,
-    ParseImageRecord,
-    compute_pdf_content_hash,
-    extract_structured_reference,
-    fetch_structured_data_from_extract_job,
-)
 from src.api.data.models.postgres.e_learning_content.reference_llamaparse_images import (
     ReferenceLlamaParseImage,
 )
@@ -25,6 +18,13 @@ from src.api.data.models.postgres.e_learning_content.reference_llamaparse_pdf im
 )
 from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (
     ReferenceLlamaParseRepository,
+)
+from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
+    LlamaParseExtractionResult,
+    ParseImageRecord,
+    compute_pdf_content_hash,
+    extract_structured_reference,
+    fetch_structured_data_from_extract_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,6 @@ async def resolve_reference_extraction(
     node_id: UUID,
     topic_title: str = "topic",
     material_label: str | None = None,
-    domain: str | None = None,
 ) -> LlamaParseExtractionResult:
     """Return cached parse output for identical PDF bytes or run a new extraction."""
     content_hash = compute_pdf_content_hash(file_path)
@@ -208,7 +207,6 @@ async def resolve_reference_extraction(
         topic_title=topic_title,
         reference_material_id=reference_material_id,
         material_label=material_label,
-        domain=domain,
     )
 
     if extraction.content_hash != content_hash:

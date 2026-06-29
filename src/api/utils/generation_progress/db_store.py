@@ -18,28 +18,14 @@ from src.api.schemas.generation_progress_schema import (
 )
 from src.api.schemas.generation_run_schema import GenerationRunStatus
 from src.api.utils.generation_progress.store import (
+    HINT_NODE_TO_STEP,
+    HINT_STEP_DEFS,
     QUIZ_CONTEXT_LOAD_NODES,
     QUIZ_NODE_TO_STEP,
     QUIZ_STEP_DEFS,
     STUDY_MATERIAL_NODE_TO_STEP,
     STUDY_MATERIAL_STEP_DEFS,
 )
-
-HINT_STEP_DEFS: list[GenerationProgressStepDef] = [
-    GenerationProgressStepDef(id="preparing", label="Preparing materials"),
-    GenerationProgressStepDef(id="generating", label="Generating hints"),
-    GenerationProgressStepDef(id="validating", label="Validating hint quality"),
-    GenerationProgressStepDef(id="saving", label="Saving hints"),
-]
-
-HINT_NODE_TO_STEP: dict[str, int] = {
-    "load_hint_context": 0,
-    "build_hint_prompt_payload": 0,
-    "invoke_hint_llm": 1,
-    "parse_hint_output": 1,
-    "validate_hint_quality": 2,
-    "persist_hints_to_questions": 3,
-}
 
 
 def _step_defs(pipeline: GenerationPipeline) -> list[GenerationProgressStepDef]:

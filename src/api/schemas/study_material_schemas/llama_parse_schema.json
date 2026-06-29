@@ -11,10 +11,8 @@
                 },
                 "detected_topics": {
                     "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "A list of the main technical topics explicitly covered in this document. Only list topics that are actually present, do not invent."
+                    "items": {"type": "string"},
+                    "description": "A list of the main topics explicitly covered in this document. Only list topics that are actually present, do not invent."
                 },
                 "total_pages": {
                     "type": "integer",
@@ -23,6 +21,10 @@
                 "has_code": {
                     "type": "boolean",
                     "description": "True if the document contains any code blocks or code snippets."
+                },
+                "has_formulas": {
+                    "type": "boolean",
+                    "description": "True if the document contains any equations, formulas, or chemical reactions."
                 },
                 "has_images": {
                     "type": "boolean",
@@ -37,6 +39,7 @@
                 "detected_title",
                 "detected_topics",
                 "has_code",
+                "has_formulas",
                 "has_images",
                 "has_tables"
             ]
@@ -79,7 +82,7 @@
                                 },
                                 "code": {
                                     "type": "string",
-                                    "description": "The full, complete code for executable or config snippets only. Do NOT put diagrams, flowcharts, mermaid, or markup syntax here — those belong in the images array. Do NOT truncate, abbreviate, or replace any part with ellipsis or placeholder text."
+                                    "description": "The full, complete code for executable or config snippets only. Do NOT put diagrams, formulas, or markup syntax here — those belong in 'images' or 'formulas'. Do NOT truncate, abbreviate, or replace any part with ellipsis or placeholder text."
                                 },
                                 "caption": {
                                     "type": "string",
@@ -94,6 +97,46 @@
                                 "block_index",
                                 "language",
                                 "code",
+                                "is_reconstructed"
+                            ]
+                        }
+                    },
+                    "formulas": {
+                        "type": "array",
+                        "description": "All equations, formulas, inequalities, and chemical reactions found within this section.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "formula_index": {
+                                    "type": "integer",
+                                    "description": "Sequential index of this formula within the section, starting from 1."
+                                },
+                                "notation": {
+                                    "type": "string",
+                                    "enum": ["latex", "plain_text"],
+                                    "description": "Notation style used to capture the formula."
+                                },
+                                "formula": {
+                                    "type": "string",
+                                    "description": "The exact formula, equation, or reaction, preserving every variable, subscript, superscript, and unit. Never paraphrase into prose-only description."
+                                },
+                                "step_order": {
+                                    "type": ["integer", "null"],
+                                    "description": "When this formula is one step of a multi-step derivation, its 1-based order within that derivation. Null if it is a standalone formula."
+                                },
+                                "caption": {
+                                    "type": "string",
+                                    "description": "Any label, equation number, or caption associated with this formula in the source. Null if none."
+                                },
+                                "is_reconstructed": {
+                                    "type": "boolean",
+                                    "description": "True if any portion of this formula was reconstructed due to a page break or rendering artifact."
+                                }
+                            },
+                            "required": [
+                                "formula_index",
+                                "notation",
+                                "formula",
                                 "is_reconstructed"
                             ]
                         }
@@ -123,15 +166,15 @@
                                 },
                                 "figure_label": {
                                     "type": "string",
-                                    "description": "The exact figure caption or title as printed in the source (e.g. 'Figure 3: System Overview', 'Fig. Agile Model'). Use the empty string if the source has no printed caption. This is NOT a semantic name — do not invent one here."
+                                    "description": "The exact figure caption or title as printed in the source. Use the empty string if the source has no printed caption. This is NOT a semantic name — do not invent one here."
                                 },
                                 "semantic_name": {
                                     "type": "string",
-                                    "description": "A short, meaningful, machine-friendly name you MUST always produce for every image, based on the nearest heading and what the image shows. Use lowercase words separated by underscores, no spaces, no punctuation, no file extension (e.g. 'waterfall_model_diagram', 'incremental_process_flow', 'agile_sprint_cycle_chart'). If several images under the same heading are similar, append a numeric suffix ('waterfall_model_diagram_1', 'waterfall_model_diagram_2'). This field is required and must never be empty."
+                                    "description": "A short, meaningful, machine-friendly name you MUST always produce for every image, based on the nearest heading and what the image shows. Use lowercase words separated by underscores, no spaces, no punctuation, no file extension. If several images under the same heading are similar, append a numeric suffix. This field is required and must never be empty."
                                 },
                                 "source_page": {
                                     "type": "integer",
-                                    "description": "The 1-based physical page index in the PDF file (page 1 = first page of the uploaded file). Do NOT use printed footer/header page labels such as 'Page 11' from the document body — count the actual page position in the PDF."
+                                    "description": "The 1-based physical page index in the PDF file (page 1 = first page of the uploaded file). Do NOT use printed footer/header page labels — count the actual page position in the PDF."
                                 },
                                 "figure_index_on_page": {
                                     "type": "integer",
@@ -143,7 +186,7 @@
                                 },
                                 "full_description": {
                                     "type": "string",
-                                    "description": "A complete, detailed description of every element visible in the image — all components, labels, arrows, values, axis names, legend entries, annotations, and text inside the image. Write 4–8 sentences minimum. Never write just a one-line summary. This text is the sole source for teaching diagram content downstream — do not rely on diagram-as-code elsewhere."
+                                    "description": "A complete, detailed description of every element visible in the image — all components, labels, arrows, values, axis names, legend entries, annotations, and text inside the image. Write 4-8 sentences minimum. Never write just a one-line summary. This text is the sole source for teaching diagram content downstream — do not rely on diagram-as-code elsewhere."
                                 },
                                 "purpose": {
                                     "type": "string",
@@ -198,14 +241,12 @@
         },
         "unsectioned_content": {
             "type": "string",
-            "description": "Any text, code, or content that appears before the first heading or outside any detected section. Preserve fully. Null if none."
+            "description": "Any text, code, formula, or content that appears before the first heading or outside any detected section. Preserve fully. Null if none."
         },
         "extraction_notes": {
             "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "description": "Any issues, anomalies, or reconstructions encountered during extraction. Examples: 'Code block on page 4 had a page break mid-function, reconstructed.', 'Figure 2 caption was partially cut off.' Leave empty array if no issues."
+            "items": {"type": "string"},
+            "description": "Any issues, anomalies, or reconstructions encountered during extraction. Leave empty array if no issues."
         }
     },
     "required": [

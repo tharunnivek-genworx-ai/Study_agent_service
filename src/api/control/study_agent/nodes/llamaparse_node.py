@@ -67,7 +67,6 @@ async def llamaparse_node(
             node_id=node_id,
             topic_title=topic_title,
             material_label=material_label,
-            domain=state.get("domain"),
         )
     except Exception as exc:
         logger.exception("LlamaParse extraction failed")

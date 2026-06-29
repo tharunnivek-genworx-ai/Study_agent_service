@@ -69,6 +69,7 @@ HINT_NODE_TO_STEP: dict[str, int] = {
     "parse_hint_output": 1,
     "validate_hint_quality": 2,
     "persist_hints_to_questions": 3,
+    "persist_hint_failure_diagnostics": 3,
 }
 
 

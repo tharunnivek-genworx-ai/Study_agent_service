@@ -316,6 +316,15 @@ class QuizOut(BaseModel):
     qc_result: GenerationDiagnosticsOut | None = None
     next_llm_retry_at: datetime | None = None
 
+    run_id: UUID | None = Field(
+        default=None,
+        description="Durable generation run id for resume and progress polling.",
+    )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Alias for run_id when polling generation progress.",
+    )
+
 
 class QuizSummaryOut(BaseModel):
     """

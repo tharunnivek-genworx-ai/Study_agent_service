@@ -48,3 +48,17 @@ async def resume_generation_run(
         mentor_id=current_user.sub,
         role=current_user.role,
     )
+
+
+@router.post(
+    "/generation-runs/{run_id}/cancel",
+    response_model=GenerationRunOut,
+)
+async def cancel_generation_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> GenerationRunOut:
+    """Cancel an in-flight generation run."""
+    service = GenerationRunService(db)
+    return await service.cancel_run(run_id, mentor_id=current_user.sub)

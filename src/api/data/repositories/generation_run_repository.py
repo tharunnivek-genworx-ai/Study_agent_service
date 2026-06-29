@@ -38,7 +38,7 @@ class GenerationRunRepository:
             attempt_count=0,
         )
         self.db.add(run)
-        await self.db.flush()
+        await self.db.commit()
         return run
 
     async def get_by_id(self, run_id: UUID) -> GenerationRun | None:
@@ -116,7 +116,7 @@ class GenerationRunRepository:
             )
             .values(**values)
         )
-        await self.db.flush()
+        await self.db.commit()
         return await self.get_by_id(run_id)
 
     async def update_progress(
@@ -155,6 +155,7 @@ class GenerationRunRepository:
                 updated_at=datetime.now(UTC),
             )
         )
+        await self.db.commit()
 
     async def complete_run(self, run_id: UUID) -> None:
         now = datetime.now(UTC)
@@ -169,6 +170,7 @@ class GenerationRunRepository:
                 error_type=None,
             )
         )
+        await self.db.commit()
 
     async def mark_running(self, run_id: UUID) -> None:
         await self.db.execute(
@@ -181,6 +183,7 @@ class GenerationRunRepository:
                 error_type=None,
             )
         )
+        await self.db.commit()
 
     async def increment_attempt_count(self, run_id: UUID) -> int:
         run = await self.get_by_id(run_id)
@@ -195,7 +198,35 @@ class GenerationRunRepository:
                 updated_at=datetime.now(UTC),
             )
         )
+        await self.db.commit()
         return new_count
+
+    async def cancel_run(self, run_id: UUID) -> bool:
+        """Mark a running or failed generation run as cancelled."""
+        result = await self.db.execute(
+            update(GenerationRun)
+            .where(
+                and_(
+                    GenerationRun.run_id == run_id,
+                    GenerationRun.status.in_(
+                        (
+                            GenerationRunStatus.RUNNING.value,
+                            GenerationRunStatus.FAILED.value,
+                        )
+                    ),
+                )
+            )
+            .values(
+                status=GenerationRunStatus.CANCELLED.value,
+                error_message="Cancelled by mentor.",
+                error_type="cancelled",
+                updated_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+            )
+        )
+        await self.db.commit()
+        rowcount = getattr(result, "rowcount", 0)
+        return int(rowcount or 0) > 0
 
     async def supersede_stale_runs(
         self,
@@ -207,12 +238,7 @@ class GenerationRunRepository:
         conditions = [
             GenerationRun.resource_id == resource_id,
             GenerationRun.pipeline == pipeline,
-            GenerationRun.status.in_(
-                (
-                    GenerationRunStatus.RUNNING.value,
-                    GenerationRunStatus.FAILED.value,
-                )
-            ),
+            GenerationRun.status.in_((GenerationRunStatus.FAILED.value,)),
         ]
         if except_run_id is not None:
             conditions.append(GenerationRun.run_id != except_run_id)
@@ -225,5 +251,6 @@ class GenerationRunRepository:
                 updated_at=datetime.now(UTC),
             )
         )
+        await self.db.commit()
         rowcount = getattr(result, "rowcount", 0)
         return int(rowcount or 0)

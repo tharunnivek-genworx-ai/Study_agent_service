@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 from sqlalchemy import text
@@ -13,10 +14,16 @@ from src.api.core.exceptions.generation_run_exceptions import (
 
 
 def _lock_keys(pipeline: str, resource_id: UUID) -> tuple[int, int]:
-    """Derive two int32 advisory-lock keys from pipeline + resource id."""
-    combined = f"{pipeline}:{resource_id}"
-    key1 = hash(combined) & 0x7FFFFFFF
-    key2 = hash(combined[::-1]) & 0x7FFFFFFF
+    """Derive two stable int32 advisory-lock keys from pipeline + resource id.
+
+    Uses SHA-256 so keys are identical across all worker processes regardless
+    of PYTHONHASHSEED (Python's built-in hash() is randomised per-process and
+    must NOT be used here).
+    """
+    combined = f"{pipeline}:{resource_id}".encode()
+    digest = hashlib.sha256(combined).digest()
+    key1 = int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+    key2 = int.from_bytes(digest[4:8], "big") & 0x7FFFFFFF
     return key1, key2
 
 

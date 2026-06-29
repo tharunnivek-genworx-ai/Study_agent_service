@@ -25,6 +25,9 @@ from src.api.utils.quiz_utils.graph.node_helpers import (
 from src.api.utils.quiz_utils.quality_check_utils.checks.deterministic import (
     run_deterministic_quiz_checks,
 )
+from src.api.utils.quiz_utils.quality_check_utils.core.frozen_questions import (
+    accumulate_frozen_question_ids,
+)
 from src.api.utils.quiz_utils.quality_check_utils.document.targeted_merge import (
     merge_targeted_qc_checks,
 )
@@ -86,6 +89,11 @@ async def quality_check_node(
     verification_mode = "targeted" if is_targeted else "full"
 
     build_user: Any
+    frozen_ids: set[str] = set()
+    reverify_for_merge: list[str] = []
+    prior_qc_result: dict[str, Any] | None = None
+    questions_for_eval = questions_for_qc_payload
+
     if is_targeted:
         prior_qc_result = state.get("qc_result") or {}
         build_user = quiz_qc_retry_verification_prompt.build_user_message
@@ -103,23 +111,45 @@ async def quality_check_node(
         graph_node = "qc_retry_verification"
         pass_label = "Quiz targeted QC"
     else:
-        prior_qc_result = None
+        prior_qc_result = (
+            state.get("qc_result") if state.get("qc_frozen_question_ids") else None
+        )
+        frozen_ids = {
+            str(question_id).strip()
+            for question_id in (state.get("qc_frozen_question_ids") or [])
+            if str(question_id).strip()
+        }
+        questions_for_eval = questions_for_qc_payload
+        if frozen_ids:
+            reverify_for_merge = [
+                str(q.get("question_id", "")).strip()
+                for q in questions_for_qc_payload
+                if str(q.get("question_id", "")).strip()
+                and str(q.get("question_id", "")).strip() not in frozen_ids
+            ]
+            questions_for_eval = [
+                q
+                for q in questions_for_qc_payload
+                if str(q.get("question_id", "")).strip() not in frozen_ids
+            ]
+
         build_user = quiz_qc_prompt.build_user_message
         user_kwargs = {
             "topic_title": state.get("node_title") or "",
             "difficulty": state.get("difficulty") or "mixed",
-            "question_count": len(questions_for_qc_payload),
+            "question_count": len(questions_for_eval),
             "generation_mode": state.get("mode") or "generate",
             "study_material_content": state.get("study_material_content") or "",
-            "quiz_questions": questions_for_qc_payload,
+            "quiz_questions": questions_for_eval,
             "domain": state.get("domain"),
+            "frozen_question_ids": sorted(frozen_ids) if frozen_ids else None,
         }
         system_prompt = quiz_qc_prompt.build_system_prompt(domain=state.get("domain"))
         graph_node = "quality_check"
         pass_label = "Quiz QC"
 
     qc_question_count = (
-        len(fixed_questions or []) if is_targeted else len(questions_for_qc_payload)
+        len(fixed_questions or []) if is_targeted else len(questions_for_eval)
     )
 
     verification, verification_meta = await run_quiz_verification_pass(
@@ -186,6 +216,13 @@ async def quality_check_node(
             reverify_question_ids=list(state.get("qc_reverify_question_ids") or []),
         )
         verification_for_build = {**verification, "checks": merged_checks}
+    elif frozen_ids and prior_qc_result is not None:
+        merged_checks = merge_targeted_qc_checks(
+            prior_qc_result,
+            verification,
+            reverify_question_ids=reverify_for_merge,
+        )
+        verification_for_build = {**verification, "checks": merged_checks}
     else:
         verification_for_build = verification
 
@@ -231,6 +268,13 @@ async def quality_check_node(
         routing=routing,
     )
 
+    frozen_question_ids: list[str] | None = None
+    if not is_targeted:
+        frozen_question_ids = accumulate_frozen_question_ids(
+            qc_result.get("checks", []),
+            state.get("qc_frozen_question_ids"),
+        )
+
     base_return: dict[str, Any] = {
         "qc_attempt": new_attempt,
         "qc_result": qc_result,
@@ -239,6 +283,7 @@ async def quality_check_node(
         "qc_reverify_question_ids": routing.failed_question_ids,
         "qc_missing_concepts": routing.missing_concepts,
         "qc_question_failures": routing.question_failures,
+        "qc_frozen_question_ids": frozen_question_ids,
         "fixed_questions": None,
     }
 

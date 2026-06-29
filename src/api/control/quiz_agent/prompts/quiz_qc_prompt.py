@@ -110,13 +110,33 @@ def build_user_message(
     study_material_content: str,
     quiz_questions: list[dict],
     domain: str | None = None,
+    frozen_question_ids: list[str] | None = None,
 ) -> str:
-    return USER_MESSAGE_TEMPLATE.format(
-        topic_title=topic_title,
-        domain=domain or "",
-        difficulty=difficulty,
-        question_count=question_count,
-        generation_mode=generation_mode,
-        study_material_content=study_material_content,
-        quiz_questions_json=json.dumps(quiz_questions, ensure_ascii=False, default=str),
+    frozen_block = ""
+    frozen_ids = [
+        str(question_id).strip()
+        for question_id in (frozen_question_ids or [])
+        if str(question_id).strip()
+    ]
+    if frozen_ids:
+        frozen_lines = "\n".join(f"  - {question_id}" for question_id in frozen_ids)
+        frozen_block = (
+            f"\n<frozen_question_ids>\n{frozen_lines}\n</frozen_question_ids>\n"
+            "Do NOT re-evaluate questions listed in frozen_question_ids — "
+            "they already passed QC on a prior attempt.\n"
+        )
+
+    return (
+        USER_MESSAGE_TEMPLATE.format(
+            topic_title=topic_title,
+            domain=domain or "",
+            difficulty=difficulty,
+            question_count=question_count,
+            generation_mode=generation_mode,
+            study_material_content=study_material_content,
+            quiz_questions_json=json.dumps(
+                quiz_questions, ensure_ascii=False, default=str
+            ),
+        )
+        + frozen_block
     )

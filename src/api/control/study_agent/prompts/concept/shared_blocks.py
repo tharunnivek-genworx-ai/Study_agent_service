@@ -13,17 +13,47 @@ Classify by what the topic itself fundamentally IS, not by how rigorous its expl
 If the topic is Mixed, this top-level label is only used for routing later pipeline steps. Every individual checklist item still gets its OWN evidence family decided independently — see the must_cover_checklist rules below. Decide each item's family from what that specific item is about, never from the document's overall label."""
 
 EVIDENCE_FAMILY_BLOCK = """\
-Every must_cover_checklist item belongs to exactly ONE of the three evidence families below. Pick the family for each item individually based on what that specific item is actually about. For each family, copy its depth_gate skeleton and fill in only the bracketed parts — do not invent a new sentence structure, and do not blend wording from a different family's skeleton.
+Every must_cover_checklist item belongs to exactly ONE of the three evidence families below. Decide the family for each item individually, based on what that specific item is actually about — never from the document's overall "domain" label, and never from surface vocabulary in the topic, teaching_instruction, or your own draft wording. Words like "implement," "apply," "method," "technique," "process," "procedure," or "system" occur naturally in STEM and Conceptual writing and do NOT, by themselves, indicate Family B.
 
-FAMILY A — MATHEMATICAL
-Use only when the item's own correctness rests on an equation, proof, or empirical/physical fact (this is the STEM standard).
+FAMILY DECISION TEST — before drafting each item, run these checks in order and stop at the first one that matches:
+1. CODE TEST: Would correctly satisfying this item require producing source code that runs in a programming language (a function, script, API call, data structure, or algorithm implementation), where the actual evidence of mastery is the code itself plus its runtime behaviour?
+   - YES -> FAMILY B.
+   - NO -> continue. A mathematical technique (a solving method, a multi-step algebraic or numeric procedure), a chemical or physical mechanism, or any pencil-and-paper or laboratory procedure is NOT code merely because it proceeds in steps. Having ordered steps is necessary but nowhere near sufficient for Family B — code is the specific, narrow case where those steps are written as an executable program.
+2. EQUATION/EMPIRICAL TEST: Does this item's own correctness rest on an equation, a derivation or proof, or a quantitative/empirical/physical fact (a formula, a reaction mechanism, a measured or computed result)?
+   - YES -> FAMILY A. Continue to the A1/A2 DEPTH TEST below before drafting.
+   - NO -> continue.
+3. NAMED-CASE TEST: Does this item's own correctness rest on a named case, ruling, organisation, event, or other real-world particular, explained through prose reasoning?
+   - YES -> FAMILY C.
+
+If you are torn between two families for the same item, prefer A or C over B. Family B is the narrowest and most specific of the three families and must never be treated as a default or a fallback. A STEM-domain plan with several Family A items and zero Family B items is the normal, expected shape for a topic with no software component — do not manufacture a Family B item just because the plan's overall domain label is STEM or Mixed. Conversely, a Programming-domain plan can still contain Family A or C items (e.g. a complexity proof, or a named historical protocol decision) when that specific item's own correctness doesn't hinge on runnable code.
+
+A1/A2 DEPTH TEST — every item that reaches FAMILY A by the test above still splits into exactly one of two depth modes. This decision is NOT optional and is NOT a stylistic preference — it is the single most commonly mis-applied step in this prompt, so run it explicitly, every time, for every Family A item:
+   - A1 (ground-up derivation) applies ONLY when the section's whole pedagogical point is watching a result get built from a more primitive definition or law — i.e. the concept IS the derivation, not a fact that merely happens to have a derivation behind it. This is rare: most documents have zero or one moment like this, occasionally two when the document covers two genuinely separate foundational pillars (e.g. differentiation and integration both built from their own limit definitions in the same calculus document).
+   - A2 (applied/worked use) is the default for every other Family A item — including the large majority of equation- or fact-grounded concepts: applying an already-established formula, rule, or law to a concrete case; reading a value off a model or mechanism; computing a result from given data. A2 is just as rigorous and falsifiable as A1 — it is not a downgrade to vague prose — it simply does not re-derive the underlying equation from first principles.
+   - Default to A2. Only choose A1 if you can name, in one sentence, why a learner seeing the from-scratch build-up (rather than a correct worked application) is the actual point of that specific section. If you can't name that reason in one sentence, it's A2.
+   - Hard ceiling: across the ENTIRE must_cover_checklist you output, at most 2 items total may be A1. This ceiling is a property of the whole document, not of any one section. If you find yourself wanting a 3rd A1 item, every concept past the first one or two foundational build-ups is, by definition, an application of an already-established result — write it as A2.
+
+For each family/mode, copy its requirement and depth_gate skeleton and fill in only the bracketed parts — do not invent a new sentence structure, and do not blend wording from a different family's or mode's skeleton.
+
+FAMILY A1 — MATHEMATICAL DERIVATION
+Use ONLY for the concepts in the entire document where the point is to build a result from first principles.
 requirement skeleton:
-  "<Derive/Prove/Calculate/Show that> <target>, starting from <named equation or law>, showing <the required steps> until <the final result>."
+  "<Derive/Prove/Show that> <target>, starting from <named equation or law>, showing <the required steps> until <the final result>."
 depth_gate skeleton (fill only the brackets, keep the rest of the sentence exactly as written):
   "Derivation begins from [named starting equation or law]; each algebraic or logical step is shown explicitly in formula notation; all variables defined with units; correct final result [state the result] reached and stated."
 Worked example:
   requirement:  "Derive the time complexity of merge sort step-by-step from the recurrence relation T(n) = 2T(n/2) + n, showing each substitution until the closed form is reached."
   depth_gate:   "Derivation begins from the recurrence relation T(n) = 2T(n/2) + n; each algebraic step is shown explicitly via substitution; all variables defined; correct closed-form result O(n log n) reached and stated."
+
+FAMILY A2 — MATHEMATICAL/EMPIRICAL APPLICATION
+Use for every other equation-, formula-, or fact-grounded item: applying a named law, rule, or formula to a specific case, or reading/computing a result from given data. This is the default Family A mode.
+requirement skeleton:
+  "<Calculate/Apply/Determine/Solve for> <target> using <the named equation, rule, or law>, substituting <the specific values or variables involved>, and explain what the result means."
+depth_gate skeleton (fill only the brackets, keep the rest of the sentence exactly as written):
+  "States the applicable [named equation, rule, or law]; substitutes the specific [values or variables] used; arrives at the correct result [state the result]; explains what the result means in context."
+Worked example:
+  requirement:  "Calculate the resonance stabilization energy of benzene using experimental heats of hydrogenation, substituting the measured values for cyclohexene and benzene, and explain what the result indicates about aromatic stability."
+  depth_gate:   "States the applicable heats of hydrogenation for cyclohexene and benzene; substitutes the specific measured values; arrives at the correct resonance energy of approximately 36 kcal/mol reached and stated; explains what this value indicates about benzene's stability relative to a hypothetical non-aromatic cyclohexatriene."
 
 FAMILY B — IMPLEMENTATION
 Use for code, algorithms, data structures, APIs, frameworks, protocols — anything whose own correctness rests on syntax and runtime behaviour (this is the Programming standard).
@@ -46,12 +76,17 @@ Worked example:
   depth_gate:   "Separation of powers is defined in prose; the specific case Marbury v. Madison (1803) is named and presented; the causal/interpretive reasoning connecting the ruling to the establishment of judicial review is explained."
 
 HARD WORD BAN — apply after drafting, before output
-These words belong ONLY to Family A. If the item you are writing is Family B or Family C, none of these words may appear anywhere in its requirement or its depth_gate, no matter how naturally they seem to fit the topic:
+These words belong ONLY to Family A1. If the item you are writing is A2, B, or C, none of these words may appear anywhere in its requirement or its depth_gate, no matter how naturally they seem to fit the topic:
   derive, derivation, derived, prove, proof, theorem, algebraic, formula notation, closed form, recurrence relation.
-If you catch one of these words in a Family B or C item, delete the sentence and rewrite it from that family's skeleton above. There is no topic for which a Family B or C item is allowed to use Family A's vocabulary.
-These words belong ONLY to Family B. They must not appear in a Family A or Family C item's requirement or depth_gate:
+If you catch one of these words in an A2, B, or C item, delete the sentence and rewrite it from that family/mode's skeleton above. There is no topic for which an A2, B, or C item is allowed to use Family A1's vocabulary.
+These words belong ONLY to Family B. They must not appear in an A1, A2, or Family C item's requirement or depth_gate:
   code block, runnable, function call, API.
-(Exception: if the teaching instruction explicitly asks for a supporting code example inside a STEM or Conceptual section, that code is additive to — never a substitute for — that item's own Family A or Family C evidence.)"""
+(Exception: if the teaching instruction explicitly asks for a supporting code example inside a STEM or Conceptual section, that code is additive to — never a substitute for — that item's own A1/A2 or Family C evidence.)
+
+SKELETON COMPLETION CHECK — apply after drafting, before output
+- Every bracketed placeholder copied from a skeleton (anything written as [like this]) must be replaced with real, topic-specific content before output. A literal "[" or "]" surviving into a requirement or depth_gate is the same failure as leaving the skeleton template unfilled, even when the family classification itself was correct.
+- Re-read each finished requirement and depth_gate as a reviewer who has never seen these skeletons: if a sentence only parses as a fill-in-the-blank form rather than a complete, topic-specific statement, rewrite it before output.
+- Count your A1 items across the whole checklist one more time. If the count is 3 or more, this is an automatic failure — pick the weakest-justified one(s) and rewrite as A2 before output."""
 
 CHECKLIST_RULES_BLOCK = """\
 - A depth_gate must be a bar that generic or surface-level coverage cannot satisfy. "A clear description is provided" or "examples are given" is never acceptable on its own — the filled skeleton above already enforces this; do not weaken it.

@@ -12,6 +12,7 @@ from src.api.core.exceptions.generation_run_exceptions import (
     GenerationPipelineResumeNotImplementedException,
     GenerationResumeTooEarlyException,
     GenerationRunConflictException,
+    GenerationRunNotCancellableException,
     GenerationRunNotFoundException,
     GenerationRunNotResumableException,
 )
@@ -173,20 +174,27 @@ class GenerationRunService:
             resource_id=run.resource_id,
         )
 
+        # Extract all attributes before committing — each commit() expires ORM
+        # objects in the session, and accessing expired attributes in an async
+        # session raises a greenlet error (lazy load without I/O permission).
+        checkpoint = run.checkpoint_state or {}
+        request_params = run.request_params or {}
+        run_pipeline = run.pipeline
+        run_generation_mode = run.generation_mode
+        last_completed_node = run.last_completed_node
+        artifact_run_id = run.artifact_run_id
+
         await self.repo.increment_attempt_count(run_id)
         await self.repo.mark_running(run_id)
 
-        checkpoint = run.checkpoint_state or {}
-        request_params = run.request_params or {}
-
         return GenerationRunResumeResult(
-            run_id=run.run_id,
-            pipeline=run.pipeline,
-            generation_mode=run.generation_mode,
+            run_id=run_id,
+            pipeline=run_pipeline,
+            generation_mode=run_generation_mode,
             checkpoint_state=checkpoint,
             request_params=request_params,
-            last_completed_node=run.last_completed_node,
-            artifact_run_id=run.artifact_run_id,
+            last_completed_node=last_completed_node,
+            artifact_run_id=artifact_run_id,
         )
 
     async def execute_resume(
@@ -205,15 +213,9 @@ class GenerationRunService:
             raise GenerationPipelineResumeNotImplementedException(run.pipeline)
 
         resume_result = await self.resume_run(run_id, mentor_id=mentor_id)
-        try:
-            await handler(self.session, resume_result, mentor_id=mentor_id, role=role)
-        except Exception:
-            await self.fail_run(
-                run_id,
-                error_message="Resume execution failed.",
-                error_type="resume_execution_failed",
-            )
-            raise
+        # Pipeline handler (and graph_runner inside it) call fail_run with specific
+        # diagnostics on any exception — no catch needed here.
+        await handler(self.session, resume_result, mentor_id=mentor_id, role=role)
 
         return GenerationRunResumeResponse(
             run_id=run_id,
@@ -231,6 +233,41 @@ class GenerationRunService:
     @staticmethod
     def resource_for_quiz(quiz_id: UUID) -> tuple[GenerationRunResourceType, UUID]:
         return GenerationRunResourceType.QUIZ, quiz_id
+
+    @staticmethod
+    def resource_for_quiz_generation(
+        node_id: UUID,
+        *,
+        quiz_id: UUID | None = None,
+    ) -> tuple[GenerationRunResourceType, UUID]:
+        """Scope generation runs to quiz_id when replacing a draft, else node_id."""
+        if quiz_id is not None:
+            return GenerationRunResourceType.QUIZ, quiz_id
+        return GenerationRunResourceType.NODE, node_id
+
+    @staticmethod
+    def resource_for_hint(quiz_id: UUID) -> tuple[GenerationRunResourceType, UUID]:
+        return GenerationRunResourceType.QUIZ, quiz_id
+
+    async def cancel_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
+        """Cancel a running or failed generation run."""
+        run = await self._get_run_for_mentor(run_id, mentor_id)
+        if run.status not in (
+            GenerationRunStatus.RUNNING.value,
+            GenerationRunStatus.FAILED.value,
+        ):
+            raise GenerationRunNotCancellableException(
+                f"Generation run cannot be cancelled while status is '{run.status}'."
+            )
+
+        cancelled = await self.repo.cancel_run(run_id)
+        if not cancelled:
+            raise GenerationRunNotCancellableException()
+
+        updated = await self.repo.get_by_id(run_id)
+        if updated is None:
+            raise GenerationRunNotFoundException()
+        return GenerationRunOut.from_orm_run(updated)
 
 
 PipelineResumeHandler = Any

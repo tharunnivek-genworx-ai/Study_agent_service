@@ -63,3 +63,16 @@ class GenerationPipelineResumeNotImplementedException(HTTPException):
                 f"Resume execution for pipeline '{pipeline}' is not available yet."
             ),
         )
+
+
+class GenerationRunNotCancellableException(HTTPException):
+    """Raised when a generation run cannot be cancelled in its current status."""
+
+    def __init__(
+        self,
+        detail: str = "This generation run cannot be cancelled.",
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=detail,
+        )

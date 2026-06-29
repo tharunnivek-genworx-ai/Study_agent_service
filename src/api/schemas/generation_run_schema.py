@@ -26,6 +26,7 @@ class GenerationRunStatus(StrEnum):
     FAILED = "failed"
     COMPLETED = "completed"
     SUPERSEDED = "superseded"
+    CANCELLED = "cancelled"
 
 
 class GenerationRunMode(StrEnum):
@@ -127,6 +128,13 @@ class GenerationRunResumeResponse(BaseModel):
     progress_session_id: UUID
     pipeline: str
     status: str = GenerationRunStatus.RUNNING.value
+
+
+class GenerationRunCancelResponse(BaseModel):
+    """Response after cancelling a generation run."""
+
+    run_id: UUID
+    status: str = GenerationRunStatus.CANCELLED.value
 
 
 class GenerationRunResumeResult(BaseModel):

@@ -1,6 +1,7 @@
 # src/api/control/study_agent/prompts/concept_checklist_prompt.py
 """Concept checklist prompt — generates a lean topic plan and must-cover checklist."""
 
+# Deprecated
 from __future__ import annotations
 
 import json

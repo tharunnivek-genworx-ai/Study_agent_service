@@ -33,3 +33,9 @@ class HintGraphState(TypedDict, total=False):
     artifact_run_id: str | None
     node_title: str | None
     domain: str | None
+
+    # Incremental hint writes and resume routing
+    hints_written: dict[str, dict[str, Any]] | None
+    failed_question_ids: list[str] | None
+    _is_resume: bool
+    _last_completed_node: str | None

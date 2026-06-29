@@ -38,6 +38,7 @@ class QuizGraphState(TypedDict, total=False):
 
     # QC retry routing (mirrors study agent)
     qc_retry_mode: str
+    qc_frozen_question_ids: list[str]
     qc_reverify_question_ids: list[str]
     qc_missing_concepts: list[str]
     qc_question_failures: list[dict]
@@ -63,3 +64,7 @@ class QuizGraphState(TypedDict, total=False):
     provider_meta: dict[str, Any] | None
     next_llm_retry_at: datetime | None
     artifact_run_id: str | None
+
+    # Resume routing (cross-request checkpoint restore)
+    _is_resume: bool
+    _last_completed_node: str | None

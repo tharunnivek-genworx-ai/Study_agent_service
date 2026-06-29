@@ -26,7 +26,7 @@ from src.api.utils.study_agent_utils.artifacts.artifact_paths import (
 logger = logging.getLogger(__name__)
 
 _SCHEMA_PATH = (
-    Path(__file__).resolve().parents[3]
+    Path(__file__).resolve().parents[2]
     / "schemas"
     / "study_material_schemas"
     / "llama_parse_schema.json"
@@ -260,7 +260,6 @@ def extract_structured_reference(
     reference_material_id: UUID | None = None,
     material_label: str | None = None,
     artifact_stamp: str | None = None,
-    domain: str | None = None,
 ) -> LlamaParseExtractionResult:
     """Upload a PDF, extract structured JSON, and download reference figure files."""
     source = Path(file_path)
@@ -286,7 +285,7 @@ def extract_structured_reference(
     file_obj = client.files.create(file=str(source), purpose="extract")
     file_id = file_obj.id
 
-    parsing_instruction = build_parsing_instruction(domain=domain)
+    parsing_instruction = build_parsing_instruction()
 
     job = client.extract.create(
         file_input=file_id,

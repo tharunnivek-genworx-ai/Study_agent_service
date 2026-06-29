@@ -302,9 +302,6 @@ class StudyMaterialActivateRequest(BaseModel):
     )
 
 
-# ── Response Schemas ─────────────────────────────────────────────────────────
-
-
 class StudyMaterialVersionOut(BaseModel):
     """
     Full representation of a study_material_versions row.
@@ -357,6 +354,13 @@ class StudyMaterialVersionOut(BaseModel):
     @property
     def display_label(self) -> str:
         return build_version_display_label(self.version_number, self.generation_type)
+
+
+class StudyMaterialGenerateResponse(StudyMaterialVersionOut):
+    """Generate endpoint response including durable run metadata for resume/progress."""
+
+    run_id: UUID
+    progress_session_id: UUID
 
 
 class StudyMaterialVersionSummary(BaseModel):
@@ -640,3 +644,5 @@ class StudyMaterialFeedbackResponse(BaseModel):
     qc_failed_permanently: bool = False
     qc_result: GenerationDiagnosticsOut | None = None
     next_llm_retry_at: datetime | None = None
+    run_id: UUID | None = None
+    progress_session_id: UUID | None = None

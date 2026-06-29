@@ -89,6 +89,33 @@ class QualityCheckItemOut(BaseModel):
     severity: Literal["critical", "major", "minor"]
     evidence: str = ""
     corrective_hint: str = ""
+    section_id: str | None = None
+    checklist_id: str | None = None
+
+
+class DetFailureDisplayOut(BaseModel):
+    check_id: str
+    section_label: str
+    subsection_label: str | None = None
+    user_message: str
+    tier: Literal["formatting", "structure", "evidence"]
+
+
+class QcWarningPresentationOut(BaseModel):
+    kind: Literal["det_only", "llm_content", "mixed"]
+    alert_title: str
+    alert_body: str
+    det_summary: str | None = None
+    reassurance: str | None = None
+    formatting_items: list[DetFailureDisplayOut] = Field(default_factory=list)
+    structure_items: list[DetFailureDisplayOut] = Field(default_factory=list)
+    evidence_items: list[DetFailureDisplayOut] = Field(default_factory=list)
+    formatting_list_label: str
+    structure_list_label: str
+    evidence_list_label: str
+    det_only_list_label: str
+    is_formatting_only: bool = False
+    content_issues_label: str
 
 
 class GenerationDiagnosticsOut(BaseModel):
@@ -114,8 +141,11 @@ class GenerationDiagnosticsOut(BaseModel):
     scores: dict[str, Any] | None = None
     checks: list[QualityCheckItemOut] | None = None
     issues: list[str] = Field(default_factory=list)
+    humanized_issues: list[str] | None = None
     corrective_instructions: str = ""
+    humanized_corrective_instructions: str | None = None
     summary: str = ""
+    warning_presentation: QcWarningPresentationOut | None = None
 
     # ── Study material two-pass QC metadata (optional) ────────────────────
     must_cover_checklist: list[dict[str, Any]] | None = None

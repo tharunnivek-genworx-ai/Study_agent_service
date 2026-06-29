@@ -8,15 +8,15 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.control.study_agent.utils.parsing.llama_parse_extractor import (
-    LlamaParseExtractionResult,
-    ParseImageRecord,
-)
 from src.api.data.models.postgres.e_learning_content.reference_llamaparse_images import (
     ReferenceLlamaParseImage,
 )
 from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (
     ReferenceLlamaParseRepository,
+)
+from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
+    LlamaParseExtractionResult,
+    ParseImageRecord,
 )
 
 logger = logging.getLogger(__name__)

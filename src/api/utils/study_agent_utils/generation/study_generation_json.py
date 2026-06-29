@@ -165,8 +165,51 @@ def _is_math_like_language(language: str) -> bool:
     }
 
 
-def _render_formula_block(formula: str, *, notation: str = "") -> list[str]:
+def _strip_math_delimiters(formula: str) -> str:
+    """Strip leading/trailing LaTeX math delimiters ($, $$) from a formula string.
+
+    The LLM often outputs formulas that already include ``$...$`` or
+    ``$$...$$`` delimiters.  If we blindly wrap those in ``$$\\n...\\n$$``
+    we end up with ``$$\\n$formula$\\n$$`` which KaTeX cannot parse and
+    renders as raw red text.  This helper normalises the body so the
+    caller always gets bare LaTeX.
+    """
     body = formula.strip()
+    # Display math: $$...$$
+    if body.startswith("$$") and body.endswith("$$") and len(body) > 4:
+        return body[2:-2].strip()
+    # Inline math: $...$  (but avoid stripping a lone $ sign)
+    if body.startswith("$") and body.endswith("$") and len(body) > 2:
+        return body[1:-1].strip()
+    return body
+
+
+def _strip_markdown_fences(text: str) -> str:
+    """Remove outer markdown code fences when the LLM already wrapped the payload."""
+    body = text.strip()
+    for _ in range(3):
+        if not body.startswith("```"):
+            return body
+        lines = body.split("\n")
+        close_idx = next(
+            (
+                index
+                for index in range(len(lines) - 1, 0, -1)
+                if lines[index].strip() == "```"
+            ),
+            None,
+        )
+        if close_idx is None:
+            return body
+        inner = "\n".join(lines[1:close_idx]).strip("\n")
+        if inner == body:
+            return body
+        body = inner
+    return body
+
+
+def _render_formula_block(formula: str, *, notation: str = "") -> list[str]:
+    body = _strip_math_delimiters(_strip_markdown_fences(formula).strip())
     if not body:
         return []
     notation_key = notation.strip().lower()
@@ -180,7 +223,7 @@ def _append_code_or_formula_blocks(parts: list[str], blocks: list[Any]) -> None:
         if not isinstance(block, dict):
             continue
         lang = str(block.get("language", "")).strip()
-        code = str(block.get("code", "")).rstrip()
+        code = _strip_markdown_fences(str(block.get("code", "")).rstrip())
         if not code:
             continue
         if _is_math_like_language(lang):

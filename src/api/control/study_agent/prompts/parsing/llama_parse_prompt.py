@@ -1,27 +1,19 @@
 # src/api/control/study_agent/prompts/parsing/llama_parse_prompt.py
-"""LlamaParse PDF extraction prompt — domain-aware, modular.
+"""LlamaParse PDF extraction prompt — merged, schema-aligned.
 
-Previously the monolithic LLAMAPARSE_PARSING_INSTRUCTION lived inside
-regeneration_prompt.py. This module replaces it. Import from here:
+LlamaParse runs before domain classification (concept checklist). The instruction
+therefore includes every extraction rule block and targets the structured JSON schema
+in ``llama_parse_schema.json`` — no domain filtering.
 
     from src.api.control.study_agent.prompts.parsing.llama_parse_prompt import (
         build_parsing_instruction,
         LLAMAPARSE_PARSING_INSTRUCTION,
     )
-
-Or via the package / legacy shim:
-
-    from src.api.control.study_agent.prompts.parsing import build_parsing_instruction
-    from src.api.control.study_agent.prompts.llamaparse_prompt import (
-        build_parsing_instruction,
-    )
 """
 
 from __future__ import annotations
 
-from src.api.utils.prompt_utils.domain_merge import domains_to_include
-
-# ── Universal Blocks (always included regardless of domain) ───────────────────
+# ── Universal Blocks ──────────────────────────────────────────────────────────
 
 _GENERAL_RULES_BLOCK = """\
 GENERAL EXTRACTION RULES
@@ -96,7 +88,9 @@ For every image, diagram, chart, screenshot, or figure present:
     as mermaid, pseudo-code, or markup syntax."""
 
 _TABLES_BLOCK = """\
-TABLES
+TABLES — STRUCTURED OUTPUT
+Every table MUST appear in the section's "tables" array with table_index, caption (or null),
+and markdown_table. Also apply these rules:
 1. Render every table in full markdown table format.
 2. Include the table title or caption above the table if present.
 3. Do not summarize or collapse rows. Every row must appear in the output.
@@ -113,31 +107,6 @@ MULTI-PAGE AND CROSS-PAGE CONTINUITY
 4. If a section heading appears at the bottom of a page with no body text following
    it on that page, still include it and continue with its body from the next page."""
 
-_OUTPUT_STRUCTURE_BLOCK = """\
-OUTPUT STRUCTURE
-Produce the output in the following order, using the exact section markers below.
-If a section is not present in the source document, write:
-[SECTION NOT PRESENT IN SOURCE]
----
-## EXTRACTED CONTENT
-<All main body text, headings, paragraphs, lists, tables, code blocks, and image
-descriptions in the order they appear in the source document.>
-## SUMMARY OF KEY TOPICS
-<A bullet list of the main technical topics and concepts covered in this document.
-Do not invent topics — only list what is explicitly covered.>
-## CODE BLOCKS INVENTORY
-<A numbered list of every code block found, with:
-- Block number
-- Language detected
-- First line of the block (for identification)
-- Page range it appeared on (approximate)>
-## IMAGES AND DIAGRAMS INVENTORY
-<A numbered list of every image/diagram found, with:
-- Image number (document_figure_index)
-- source_page and figure_index_on_page
-- Type (diagram, chart, screenshot, table, etc.)
-- Brief label from the document if present>
----"""
 
 _ABSOLUTE_RULES_BLOCK = """\
 ABSOLUTE RULES
@@ -151,9 +120,7 @@ ABSOLUTE RULES
   [ILLEGIBLE: approximate location or context]"""
 
 
-# ── Domain-Specific Code Extraction Blocks ────────────────────────────────────
-# Priority: Programming (most comprehensive) > STEM (computational only) > Conceptual (minimal).
-# Mixed/None uses the Programming block since it covers all executable code types.
+# ── Code Extraction Blocks (all included) ─────────────────────────────────────
 
 _PROGRAMMING_CODE_EXTRACTION_BLOCK = """\
 CODE EXTRACTION — CRITICAL
@@ -189,8 +156,8 @@ data processing. Do not extract mathematical notation or derivation steps as cod
 4. Preserve all indentation, inline comments, and block comments exactly.
 5. Never merge two separate code blocks into one.
 6. Do NOT extract mathematical equations, derivation steps, or chemical reactions as
-   code blocks — those belong in the body text as notation or in the "images" array if
-   they appear as rendered figures.
+   code blocks — those belong in the section's "formulas" array (or in "images" if
+   they appear only as rendered figures).
 7. Do NOT generate mermaid, pseudo-code, or any diagram-as-code. Visual figures belong
    in the "images" array only."""
 
@@ -207,37 +174,33 @@ Conceptual documents rarely contain executable source code. Apply these rules:
    code blocks or mermaid markup. All visual figures belong in the "images" array."""
 
 
-# ── Domain-Specific Content Extraction Blocks ─────────────────────────────────
+# ── Content Extraction Blocks (all included) ──────────────────────────────────
 
 _STEM_EXTRACTION_BLOCK = """\
 FORMULA, EQUATION, AND DERIVATION EXTRACTION — STEM CRITICAL
 Mathematical equations, chemical reactions, derivation steps, and scientific notation
-are primary content in STEM documents. Apply these rules with the same strictness as
-code extraction in a Programming document — these are the most important content here.
+are primary content in STEM documents. Each one MUST appear in the section's "formulas"
+array (see FORMULAS — STRUCTURED OUTPUT below) — never only as prose in "body_text".
+Apply these rules with the same strictness as code extraction:
 1. Extract every formula, equation, reaction, and derivation step completely. Never
    paraphrase, abbreviate, or substitute a prose description for the actual notation.
 2. Preserve every variable, subscript, superscript, Greek letter, and operator symbol
    exactly as it appears. If LaTeX or MathML is visible in the source, extract it
-   verbatim. If only a rendered image of the equation is present, represent it in
-   unambiguous plain-text notation (e.g. "E = m*c^2", "integral from 0 to T of f(x) dx",
-   "delta_G = delta_H - T*delta_S").
+   verbatim with notation="latex". Otherwise use notation="plain_text" with unambiguous
+   plain-text notation (e.g. "E = m*c^2", "integral from 0 to T of f(x) dx").
 3. For derivation sequences: preserve the reading order of every step — never merge two
-   derivation steps into one line. If steps span multiple pages, join them seamlessly in
-   the correct logical sequence without inserting a page-break marker between steps.
+   derivation steps into one entry. Set step_order for each step in the sequence. If steps
+   span multiple pages, join them seamlessly without inserting a page-break marker.
 4. Carry variable definitions forward: when the source defines a variable inline
-   (e.g. "where v is velocity in m/s"), include that definition in the extracted text
-   immediately following the formula that introduces the variable.
+   (e.g. "where v is velocity in m/s"), include that definition in "body_text"
+   immediately following the formula entry that introduces the variable.
 5. For chemical reactions: extract reactants, arrow notation, products, and any stated
-   conditions (temperature, pressure, catalyst, solvent) exactly as written. Never
-   reorder, abbreviate, or balance a reaction beyond what the source shows.
+   conditions (temperature, pressure, catalyst, solvent) exactly as written.
 6. Physical and mathematical constants must be extracted with their stated values and
-   units. Do not substitute a constant's value when the source uses its symbol — preserve
-   the symbol and extract any adjacent value definition verbatim.
-7. Worked numerical examples must be extracted step by step. If a worked example spans
-   multiple pages, join all steps into one continuous extraction block.
+   units. Preserve the symbol and extract any adjacent value definition verbatim.
+7. Worked numerical examples must be extracted step by step across pages when needed.
 8. Tables containing numerical data, unit conversions, physical constants, or experimental
-   results must be extracted in full markdown table format — do not summarise rows,
-   collapse ranges, or omit units from column headers."""
+   results must be extracted in full markdown table format in the "tables" array."""
 
 _PROGRAMMING_EXTRACTION_BLOCK = """\
 ARCHITECTURE, API, AND SYSTEM DESIGN EXTRACTION
@@ -294,8 +257,7 @@ and analytical frameworks. These are primary content — extract their structure
    every cell matters and must be preserved exactly."""
 
 
-# ── Domain-Specific Image Addition Blocks ─────────────────────────────────────
-# These supplement _IMAGE_EXTRACTION_COMMON_BLOCK with domain-specific guidance.
+# ── Image Addition Blocks (all included) ──────────────────────────────────────
 
 _STEM_IMAGE_ADDITION_BLOCK = """\
 STEM IMAGE RULES (supplement to IMAGE AND DIAGRAM EXTRACTION above)
@@ -343,74 +305,56 @@ CONCEPTUAL IMAGE RULES (supplement to IMAGE AND DIAGRAM EXTRACTION above)
 - TIMELINE DIAGRAMS: extract every labelled event or milestone in chronological order,
   with its position on the timeline (date, period, or relative label such as "Phase 1")."""
 
+_FORMULAS_BLOCK = """\
+FORMULAS — STRUCTURED OUTPUT
+Every equation, formula, inequality, chemical reaction, or derivation step MUST be stored
+in the section's "formulas" array. Do not leave formulas only in "body_text".
+For each entry populate:
+- "formula_index": 1-based index within the section.
+- "notation": "latex" when LaTeX/MathML is visible; otherwise "plain_text".
+- "formula": the exact notation — never paraphrase into prose-only description.
+- "step_order": 1-based order within a multi-step derivation, or null for standalone.
+- "caption": equation number or label from the source, or null if none.
+- "is_reconstructed": true when any portion was reconstructed from a page break.
+Rendered equation images with no extractable notation belong in "images", not "formulas"."""
 
-# ── Build Functions ───────────────────────────────────────────────────────────
-
-
-def _build_code_extraction_block(domain: str | None) -> str:
-    """
-    Programming and Mixed/None: full critical code extraction (covers all executable code).
-    STEM only: computational-code extraction (no programming language details).
-    Conceptual only: minimal extraction (warns against treating prose as code).
-    """
-    included = domains_to_include(domain)
-    if "Programming" in included:
-        return _PROGRAMMING_CODE_EXTRACTION_BLOCK
-    if "STEM" in included:
-        return _STEM_CODE_EXTRACTION_BLOCK
-    return _CONCEPTUAL_CODE_EXTRACTION_BLOCK
-
-
-def _build_domain_extraction_block(domain: str | None) -> str:
-    """Include all domain-specific content extraction supplements."""
-    included = domains_to_include(domain)
-    parts: list[str] = []
-    if "STEM" in included:
-        parts.append(_STEM_EXTRACTION_BLOCK)
-    if "Programming" in included:
-        parts.append(_PROGRAMMING_EXTRACTION_BLOCK)
-    if "Conceptual" in included:
-        parts.append(_CONCEPTUAL_EXTRACTION_BLOCK)
-    return "\n\n".join(parts)
+_STRUCTURED_OUTPUT_BLOCK = """\
+STRUCTURED JSON OUTPUT (schema-aligned)
+Your output MUST conform exactly to the provided JSON schema. Key fields:
+- "document_metadata": detected_title, detected_topics, total_pages, has_code, has_formulas,
+  has_images, has_tables — infer from the full document; do not invent topics.
+- "sections": ordered array; each section requires section_index, heading, heading_level,
+  body_text, and optional arrays code_blocks, formulas, images, tables.
+- "unsectioned_content": content before the first heading, or null if none.
+- "extraction_notes": list any illegible content, reconstructions, or anomalies.
+Place executable code in "code_blocks", equations in "formulas", figures in "images", and
+tabular data in "tables". Never put diagrams or flowcharts in "code_blocks"."""
 
 
-def _build_image_addition_block(domain: str | None) -> str:
-    """Include all domain-specific image extraction supplements."""
-    included = domains_to_include(domain)
-    parts: list[str] = []
-    if "STEM" in included:
-        parts.append(_STEM_IMAGE_ADDITION_BLOCK)
-    if "Programming" in included:
-        parts.append(_PROGRAMMING_IMAGE_ADDITION_BLOCK)
-    if "Conceptual" in included:
-        parts.append(_CONCEPTUAL_IMAGE_ADDITION_BLOCK)
-    return "\n\n".join(parts)
+# ── Build Function ────────────────────────────────────────────────────────────
 
 
-def build_parsing_instruction(domain: str | None = None) -> str:
-    """
-    Build the LlamaParse extraction instruction for a specific domain.
-
-    domain=None or domain="" → all-domain version (safe default when domain is unknown).
-    domain="STEM"            → formula/equation focus; minimal code extraction.
-    domain="Programming"     → critical code extraction; architecture/API extraction.
-    domain="Conceptual"      → argument/case-study extraction; minimal code extraction.
-    domain="Mixed"           → all blocks included (same as None).
-    """
+def build_parsing_instruction() -> str:
+    """Build the full LlamaParse extraction instruction (all rule blocks merged)."""
     blocks = [
         _GENERAL_RULES_BLOCK,
-        _build_code_extraction_block(domain),
-        _build_domain_extraction_block(domain),
+        _STRUCTURED_OUTPUT_BLOCK,
+        _PROGRAMMING_CODE_EXTRACTION_BLOCK,
+        _STEM_CODE_EXTRACTION_BLOCK,
+        _CONCEPTUAL_CODE_EXTRACTION_BLOCK,
+        _STEM_EXTRACTION_BLOCK,
+        _PROGRAMMING_EXTRACTION_BLOCK,
+        _CONCEPTUAL_EXTRACTION_BLOCK,
         _IMAGE_EXTRACTION_COMMON_BLOCK,
-        _build_image_addition_block(domain),
+        _STEM_IMAGE_ADDITION_BLOCK,
+        _PROGRAMMING_IMAGE_ADDITION_BLOCK,
+        _CONCEPTUAL_IMAGE_ADDITION_BLOCK,
+        _FORMULAS_BLOCK,
         _TABLES_BLOCK,
         _CONTINUITY_BLOCK,
-        _OUTPUT_STRUCTURE_BLOCK,
         _ABSOLUTE_RULES_BLOCK,
     ]
     return "\n\n".join(b for b in blocks if b.strip())
 
 
-# Backward-compatible constant — all-domain version; equivalent to the original
-# monolithic LLAMAPARSE_PARSING_INSTRUCTION that lived in regeneration_prompt.py.
-LLAMAPARSE_PARSING_INSTRUCTION = build_parsing_instruction(domain=None)
+LLAMAPARSE_PARSING_INSTRUCTION = build_parsing_instruction()
