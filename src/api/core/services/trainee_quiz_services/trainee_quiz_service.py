@@ -61,9 +61,14 @@ from src.api.utils.content_lifecycle import (
 )
 from src.api.utils.content_lifecycle.archive_gates import (
     assert_archive_list_gate,
+    assert_archived_quiz_access,
     assert_trainee_archive_context,
 )
-from src.api.utils.content_lifecycle.constants import LIFECYCLE_ACTIVE, LIFECYCLE_HIDDEN
+from src.api.utils.content_lifecycle.constants import (
+    LIFECYCLE_ACTIVE,
+    LIFECYCLE_ARCHIVED,
+    LIFECYCLE_HIDDEN,
+)
 from src.api.utils.quiz_utils.study_material_link import (
     validate_study_material_is_currently_published_for_node,
 )
@@ -223,7 +228,7 @@ class TraineeQuizService:
             raise QuizNotFoundException()
         if quiz.is_published and quiz.lifecycle_status == LIFECYCLE_ACTIVE:
             return quiz
-        if quiz.lifecycle_status == LIFECYCLE_HIDDEN:
+        if quiz.lifecycle_status in (LIFECYCLE_HIDDEN, LIFECYCLE_ARCHIVED):
             attempts = await self.repo.list_attempts_by_quiz_and_trainee(
                 quiz.quiz_id, attempt.trainee_id
             )
@@ -244,7 +249,7 @@ class TraineeQuizService:
             raise QuizNotFoundException()
         if quiz.is_published and quiz.lifecycle_status == LIFECYCLE_ACTIVE:
             return quiz
-        if quiz.lifecycle_status == LIFECYCLE_HIDDEN:
+        if quiz.lifecycle_status in (LIFECYCLE_HIDDEN, LIFECYCLE_ARCHIVED):
             attempts = await self.repo.list_attempts_by_quiz_and_trainee(
                 quiz_id, trainee_id
             )
@@ -708,12 +713,9 @@ class TraineeQuizService:
         await assert_trainee_archive_context(
             self.session, node_id=node_id, user_id=user_id, role=role
         )
-        if not await assert_archive_list_gate(self.session, node_id=node_id):
-            raise QuizNotFoundException()
-
-        quiz = await self.repo.get_archived_quiz_by_id(node_id, quiz_id)
-        if quiz is None:
-            raise QuizNotFoundException()
+        quiz = await assert_archived_quiz_access(
+            self.session, node_id=node_id, quiz_id=quiz_id
+        )
 
         from src.api.data.repositories import (  # noqa: PLC0415
             StudyMaterialRepository,

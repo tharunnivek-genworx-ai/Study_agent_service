@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 
 from src.api.config import llm_settings
+from src.api.control.study_agent.prompts.qc import qc_retry_verification_prompt
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     canonicalize_generation_json,
@@ -192,6 +193,11 @@ async def quality_check_node(
         )
 
         assert fixed_sections is not None
+        prior_teaching_alignment = (
+            qc_retry_verification_prompt.extract_prior_teaching_alignment_failure(
+                prior_qc_result
+            )
+        )
         verification, verification_meta = await run_retry_verification_pass(
             teaching_instruction=teaching_instruction,
             document_outline=build_document_outline(document),
@@ -200,6 +206,7 @@ async def quality_check_node(
             must_cover_checklist=scoped_checklist,
             topic_split=scoped_topic_split,
             domain=domain,
+            prior_teaching_alignment_failure=prior_teaching_alignment,
         )
         verification_mode = "targeted"
     else:

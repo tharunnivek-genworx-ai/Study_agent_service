@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from src.api.control.quiz_agent.graph.resume_router import (
+from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
     hydrate_checkpoint_state,
     resolve_resume_next_node,
 )

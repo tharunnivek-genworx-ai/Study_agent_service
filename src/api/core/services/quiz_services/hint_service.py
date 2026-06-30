@@ -27,6 +27,7 @@ from src.api.core.exceptions import (
     HintsAlreadyCompleteException,
     HintsCannotGenerateOnPublishedQuizException,
     HintsNothingToDeleteException,
+    HintsNothingToRegenerateException,
     QuizHasNoQuestionsException,
     QuizNotFoundException,
 )
@@ -320,15 +321,29 @@ class HintService:
         user_id: UUID,
         role: str,
     ) -> QuizOut:
-        """Selectively regenerate hints for specific questions via the Hint Agent LangGraph."""
+        """Regenerate hints for selective questions or the whole quiz via the Hint Agent."""
         repo, quiz = await self._get_unpublished_quiz(node_id, quiz_id, user_id, role)
 
         active_questions = await repo.get_active_questions_by_quiz(quiz_id)
         if not active_questions:
             raise QuizHasNoQuestionsException()
 
-        payload_ids = set(request.question_ids)
-        matched = await repo.get_active_questions_by_ids(quiz_id, request.question_ids)
+        if request.scope == "all":
+            questions_with_hints = await repo.get_active_questions_with_complete_hints(
+                quiz_id
+            )
+            if not questions_with_hints:
+                raise HintsNothingToRegenerateException()
+            question_ids = [q.question_id for q in questions_with_hints]
+            mentor_feedback = (request.mentor_feedback or "").strip()
+        else:
+            question_ids = list(request.question_ids or [])
+            mentor_feedback = (
+                request.mentor_feedback.strip() if request.mentor_feedback else None
+            )
+
+        payload_ids = set(question_ids)
+        matched = await repo.get_active_questions_by_ids(quiz_id, question_ids)
         matched_ids = {q.question_id for q in matched}
 
         if matched_ids != payload_ids:
@@ -349,8 +364,9 @@ class HintService:
                 "node_id": str(node_id),
                 "quiz_id": str(quiz_id),
                 "mentor_id": str(user_id),
-                "questions_filter_ids": [str(qid) for qid in request.question_ids],
-                "mentor_feedback": request.mentor_feedback,
+                "scope": request.scope,
+                "questions_filter_ids": [str(qid) for qid in question_ids],
+                "mentor_feedback": mentor_feedback,
             },
         )
 
@@ -358,8 +374,8 @@ class HintService:
             "mentor_id": user_id,
             "node_id": node_id,
             "quiz_id": quiz_id,
-            "questions_filter_ids": request.question_ids,
-            "mentor_feedback": request.mentor_feedback,
+            "questions_filter_ids": question_ids,
+            "mentor_feedback": mentor_feedback,
         }
 
         await self._run_hint_graph(initial_state=initial_state, run_id=run_id)

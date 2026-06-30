@@ -132,6 +132,62 @@ async def download_topic_resource_file(
     )
 
 
+@router.get("/nodes/{node_id}/topic-resources/reference/{material_id}/file")
+async def view_reference_topic_resource_file(
+    node_id: UUID,
+    material_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> Response:
+    """Stream a trainee-visible reference material inline."""
+    service = TraineeStudyService(db)
+    (
+        content,
+        _filename,
+        mime_type,
+        disposition,
+    ) = await service.get_reference_material_file(
+        node_id,
+        material_id,
+        current_user.sub,
+        current_user.role,
+        as_attachment=False,
+    )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@router.get("/nodes/{node_id}/topic-resources/reference/{material_id}/download")
+async def download_reference_topic_resource_file(
+    node_id: UUID,
+    material_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> Response:
+    """Download a trainee-visible reference material as an attachment."""
+    service = TraineeStudyService(db)
+    (
+        content,
+        _filename,
+        mime_type,
+        disposition,
+    ) = await service.get_reference_material_file(
+        node_id,
+        material_id,
+        current_user.sub,
+        current_user.role,
+        as_attachment=True,
+    )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": disposition},
+    )
+
+
 @router.get(
     "/nodes/{node_id}/study-material/archive",
     response_model=TraineeArchivedSmListOut,

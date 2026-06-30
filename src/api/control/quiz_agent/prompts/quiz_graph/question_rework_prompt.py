@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from src.api.control.quiz_agent.prompts.quiz_prompt import (
+from src.api.control.quiz_agent.prompts.quiz_graph.quiz_prompt import (
     DIFFICULTY_RULES_BLOCK,
     OUTPUT_FORMAT_BLOCK,
     QUESTION_QUALITY_BLOCK,

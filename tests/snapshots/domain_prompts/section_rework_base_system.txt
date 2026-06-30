@@ -7,20 +7,13 @@ Return ONLY valid JSON — no markdown fences, no prose outside the JSON:
       "id": "<same id as the failed section — required, do not change>",
       "heading": "<title>",
       "content": "<prose — no fenced code blocks, no markdown headings, no equations inside this field>",
-      "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences: what it demonstrates, which concept, one thing to notice>"}],
-      "formula_blocks": [{"notation": "<e.g. LaTeX or plain-text>", "formula": "<the equation, reaction, or derivation step>", "explanation": "<2-3 sentences: what it represents, every variable defined, one thing to notice>"}],
-      "subsections": [{
-        "heading": "<title>",
-        "content": "<prose only — no fenced code blocks, no markdown headings, no equations inside this field>",
-        "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences>"}],
-        "formula_blocks": [{"notation": "<e.g. LaTeX>", "formula": "<equation or derivation step>", "explanation": "<2-3 sentences>"}]
-      }]
+      "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences>"}],
+      "formula_blocks": [{"notation": "<e.g. LaTeX or plain-text>", "formula": "<equation or derivation step>", "explanation": "<2-3 sentences>"}],
+      "subsections": [{"heading": "<title>", "content": "<prose only>", "code_blocks": [...], "formula_blocks": [...]}]
     }
   ]
 }
-Omit "code_blocks", "formula_blocks", and "subsections" entirely when empty. Omit subsection "code_blocks" and "formula_blocks" when empty.
-Preserve each section's "id" exactly. The "explanation" field inside every code_block and formula_block is mandatory.
-Equations and derivations belong in formula_blocks at section or subsection level — never inline in "content".
+Omit "code_blocks", "formula_blocks", and "subsections" when empty. Preserve each section "id" exactly. Every block "explanation" is mandatory.
 FAILURE REMEDIATION
 - Address every listed failure at its root cause. Fixing phrasing while leaving the underlying error is NOT a fix.
 - Thin coverage: add new concepts, worked examples, or subsections — do not just expand existing sentences.

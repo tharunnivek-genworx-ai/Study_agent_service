@@ -124,8 +124,10 @@ async def load_hint_context(
     if not questions:
         raise QuizHasNoQuestionsException()
 
-    questions_for_hinting = [
-        {
+    is_regeneration = bool(filter_ids)
+
+    def _question_for_hinting(q: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "question_id": str(q.question_id),
             "question_text": q.question_text,
             "option_a": q.option_a,
@@ -135,8 +137,15 @@ async def load_hint_context(
             "correct_option": q.correct_option,
             "explanation": q.explanation,
         }
-        for q in questions
-    ]
+        if is_regeneration:
+            payload["previous_hints"] = {
+                "hint_1": q.hint_1 or "",
+                "hint_2": q.hint_2 or "",
+                "hint_3": q.hint_3 or "",
+            }
+        return payload
+
+    questions_for_hinting = [_question_for_hinting(q) for q in questions]
 
     hints_written = dict(state.get("hints_written") or {})
     if hints_written:

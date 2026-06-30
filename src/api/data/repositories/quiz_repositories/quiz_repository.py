@@ -391,6 +391,20 @@ class QuizRepository:
         )
         return list(result.scalars().all())
 
+    async def get_active_questions_by_ids(
+        self, quiz_id: UUID, question_ids: list[UUID]
+    ) -> list[QuizQuestion]:
+        result = await self.db.execute(
+            select(QuizQuestion).where(
+                and_(
+                    QuizQuestion.quiz_id == quiz_id,
+                    QuizQuestion.is_active.is_(True),
+                    QuizQuestion.question_id.in_(question_ids),
+                )
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_active_questions_missing_hints(
         self, quiz_id: UUID
     ) -> list[QuizQuestion]:
@@ -475,6 +489,59 @@ class QuizRepository:
         await self.db.flush()
         await self.db.refresh(question)
         return question
+
+    async def patch_questions_from_ai(
+        self,
+        quiz_id: UUID,
+        patches: list[dict],
+        *,
+        commit: bool = True,
+    ) -> list[str]:
+        """Apply AI question patches in-place; clear hints on patched rows.
+
+        Caller must already hold the quiz generation advisory lock (started by
+        ``GenerationRunService.start_run``) when invoked from the regen graph.
+        """
+        patched_ids: list[str] = []
+        now = datetime.now(UTC)
+
+        for patch in patches:
+            raw_id = patch.get("question_id")
+            if isinstance(raw_id, str):
+                question_id = UUID(raw_id)
+            elif isinstance(raw_id, UUID):
+                question_id = raw_id
+            else:
+                continue
+
+            question = await self.get_question_by_id(question_id)
+            if (
+                question is None
+                or question.quiz_id != quiz_id
+                or not question.is_active
+            ):
+                continue
+
+            question.question_text = patch["question_text"]
+            question.option_a = patch["option_a"]
+            question.option_b = patch["option_b"]
+            question.option_c = patch.get("option_c")
+            question.option_d = patch.get("option_d")
+            question.correct_option = patch["correct_option"]
+            question.explanation = patch.get("explanation")
+            question.hint_1 = None
+            question.hint_2 = None
+            question.hint_3 = None
+            patched_ids.append(str(question_id))
+
+        quiz = await self.get_quiz_by_id(quiz_id)
+        if quiz is not None:
+            quiz.updated_at = now
+
+        await self.db.flush()
+        if commit:
+            await self.db.commit()
+        return patched_ids
 
     async def soft_delete_question(self, question: QuizQuestion) -> None:
         question.is_active = False

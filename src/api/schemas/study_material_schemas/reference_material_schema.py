@@ -49,7 +49,7 @@ class ReferenceMaterialUploadRequest(BaseModel):
         description="Required when scope='node'. Must be None when scope='space'.",
     )
     is_visible_to_trainees: bool = Field(
-        default=True,
+        default=False,
         description="Whether trainees see this file in their Resources panel.",
     )
 

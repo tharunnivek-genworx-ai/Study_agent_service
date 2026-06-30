@@ -52,3 +52,33 @@ class TestHintPrompt:
     def test_regeneration_appends_regenerate_rules(self):
         system = hint_prompt.build_hint_system_prompt(domain="", is_regeneration=True)
         assert "RULE — REGENERATION MODE" in system
+        assert "previous_hints" in system
+
+    def test_regenerate_user_message_includes_previous_hints_and_feedback(self):
+        payload = hint_prompt.build_hint_prompt(
+            questions_for_hinting=[
+                {
+                    "question_id": "q1",
+                    "question_text": "What is 2+2?",
+                    "option_a": "3",
+                    "option_b": "4",
+                    "option_c": "5",
+                    "option_d": "6",
+                    "correct_option": "B",
+                    "explanation": "Basic addition.",
+                    "previous_hints": {
+                        "hint_1": "Think about counting.",
+                        "hint_2": "Add one more to one.",
+                        "hint_3": "Two groups of two.",
+                    },
+                }
+            ],
+            topic_title="Arithmetic",
+            domain="STEM",
+            is_regeneration=True,
+            mentor_feedback="Make hints more subtle.",
+        )
+        assert "<mentor_feedback>" in payload["user_message"]
+        assert "Make hints more subtle." in payload["user_message"]
+        assert "previous_hints" in payload["user_message"]
+        assert "Think about counting." in payload["user_message"]

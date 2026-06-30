@@ -10,7 +10,9 @@ GENERATION WORKFLOW — follow this order strictly
 1. CLASSIFY domain from <domain> or the study material content.
 2. PLAN difficulty: spread easy, medium, and hard across the full set.
 3. WRITE questions with correct_option spread evenly across A, B, C, and D.
-4. SELF-CHECK: verify difficulty balance and correct_option distribution.
+4. SELF-CHECK: read each question_text in isolation — embed any missing context so a
+   trainee can answer from the quiz alone; verify difficulty balance and correct_option
+   distribution.
 5. OUTPUT the JSON array only.
 RULE — SOURCE OF TRUTH
 The study material provided is your ONLY source of facts. Do not introduce facts, APIs,
@@ -71,6 +73,8 @@ contains.
 - Any numeric setup in question_text must be internally consistent (units,
   given values, and what is being asked for must all match) and solvable
   using only the formulas and constants in the study material.
+- Include in question_text every value, unit, and constraint the trainee needs to
+  answer; do not refer to setups that appear only in the study material.
 - Distractors must be plausible computation or conceptual errors (e.g. a sign
   error, a wrong unit conversion, mixing up two related formulas, an off-by-
   one in a series) — not random unrelated numbers.
@@ -87,8 +91,11 @@ question among the medium/hard questions — but only if the study material's co
 support it.
 - The code snippet shown in question_text must be CORRECT, minimal, and self-contained
   (no undefined variables, no missing imports needed to determine the output).
-- Embed code in question_text using a fenced block, e.g.:
-    "What is the output of the following code?\n\n```python\nprint(2 ** 3)\n```"
+- When behaviour depends on executable text, embed the minimal snippet in question_text
+  as a fenced block per QUIZ-ONLY ANSWERABILITY.
+- For execution or output questions, prefer a small variant of a material example — same
+  API or language feature, different literals or structure — rather than a verbatim copy
+  of the reading passage; this tests execution understanding, not recall.
 - All 4 options must be plausible outputs (e.g. off-by-one results, type confusion, common
   misreadings) — not random unrelated strings.
 - Do NOT fabricate behaviour. If you are not certain what a snippet outputs, do not use it —
@@ -104,6 +111,8 @@ that asks the trainee to apply a principle to a specific named case, ruling, eve
 scenario drawn from the study material — not just "define X."
 - Named facts used in the question stem or options (dates, people, organisations, rulings)
   must come directly from the study material or be well-established public knowledge.
+- State in question_text the defining facts of any specific case, ruling, event, or
+  scenario being tested; do not rely on a label the trainee would only know from reading.
 - Distractors should reflect plausible misreadings of the same case or a confusion between
   two related principles/events — not random unrelated claims.
 - Do NOT invent a statistic, percentage, or outcome attributed to a named organisation.
@@ -123,6 +132,24 @@ RULE — QUESTION QUALITY
 - explanation must be self-contained: a trainee reading only the explanation after submitting
   should understand WHY the correct option is right and why the most tempting wrong option
   is wrong.
+RULE — QUIZ-ONLY ANSWERABILITY
+Trainees answer from the quiz screen alone — question_text and the four options are the
+entire visible context; the study material is not shown during the attempt.
+- question_text must include every fact, artifact, setup, and constraint required to
+  select the correct answer. Never assume prior reading, external documents, or memory of
+  content that appears only in the study material.
+- Do not use stems that point to unstated context unless that context is reproduced in
+  question_text (e.g. deferring to "the example above", "the passage", or identifiers
+  the trainee would only know from reading).
+- When the tested idea depends on domain-specific artifacts, embed the minimal version
+  in question_text:
+    STEM         — given values, units, and any formula or setup needed to compute or compare.
+    Programming  — the minimal correct code, command, query, or config snippet, as a fenced
+                   block with the opening fence on its own line after a blank line and the
+                   closing fence on its own line.
+    Conceptual   — the defining facts of any named case, ruling, event, or scenario under test.
+- Before outputting, read each question_text in isolation: if you could not answer it
+  without the study material, add the missing context or rewrite the stem.
 - Every question MUST include non-empty option_a, option_b, option_c, and option_d.
   Never omit, blank, or use placeholders ("N/A", "None of the above" are prohibited).
 - All four options must be plausible distractors reflecting common misconceptions or

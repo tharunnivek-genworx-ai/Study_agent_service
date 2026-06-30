@@ -4,7 +4,8 @@ Repository for reference_materials and node_media DB operations.
 
 Reference materials:
   - Lookup by id, by space, by node (active only, deleted_at IS NULL)
-  - Insert, soft-delete (set deleted_at), update visibility
+  - Insert, soft-delete (set deleted_at), bulk soft-delete for EC-17 replacement
+  - update visibility
 
 Node media:
   - Lookup by id, by node (active only)
@@ -87,6 +88,22 @@ class ReferenceMaterialRepository:
         )
         return cast(ReferenceMaterial | None, result.scalars().first())
 
+    async def get_visible_by_node(self, node_id: UUID) -> list[ReferenceMaterial]:
+        """Active node-scoped materials trainees may see in topic resources."""
+        result = await self.db.execute(
+            select(ReferenceMaterial)
+            .where(
+                and_(
+                    ReferenceMaterial.node_id == node_id,
+                    ReferenceMaterial.scope == "node",
+                    ReferenceMaterial.is_visible_to_trainees.is_(True),
+                    ReferenceMaterial.deleted_at.is_(None),
+                )
+            )
+            .order_by(ReferenceMaterial.created_at.asc())
+        )
+        return list(result.scalars().all())
+
     # ── Reference Material Writes ────────────────────────────────────────
 
     async def create_reference_material_with_id(
@@ -137,6 +154,40 @@ class ReferenceMaterialRepository:
     async def soft_delete(self, material: ReferenceMaterial) -> None:
         material.deleted_at = datetime.now(UTC)
         await self.db.flush()
+
+    async def soft_delete_active_for_node(self, node_id: UUID) -> int:
+        """Soft-delete all active node-scoped materials for a node (EC-17 replacement)."""
+        now = datetime.now(UTC)
+        result = await self.db.execute(
+            update(ReferenceMaterial)
+            .where(
+                and_(
+                    ReferenceMaterial.node_id == node_id,
+                    ReferenceMaterial.scope == "node",
+                    ReferenceMaterial.deleted_at.is_(None),
+                )
+            )
+            .values(deleted_at=now)
+        )
+        await self.db.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def soft_delete_active_for_space(self, space_id: UUID) -> int:
+        """Soft-delete all active space-scoped materials for a space (EC-17 replacement)."""
+        now = datetime.now(UTC)
+        result = await self.db.execute(
+            update(ReferenceMaterial)
+            .where(
+                and_(
+                    ReferenceMaterial.space_id == space_id,
+                    ReferenceMaterial.scope == "space",
+                    ReferenceMaterial.deleted_at.is_(None),
+                )
+            )
+            .values(deleted_at=now)
+        )
+        await self.db.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     # ── Node Media Lookups ───────────────────────────────────────────────
 

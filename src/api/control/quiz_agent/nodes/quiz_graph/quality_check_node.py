@@ -12,7 +12,7 @@ from src.api.control.quiz_agent.prompts import (
     quiz_qc_prompt,
     quiz_qc_retry_verification_prompt,
 )
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 from src.api.schemas.common import QcInfraErrorType
 from src.api.schemas.qc_schemas import QuizRetryRoutingResult
 from src.api.utils.quiz_utils.generation.question_parsing import questions_for_qc

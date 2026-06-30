@@ -199,6 +199,27 @@ class QuizQuestionUpdateRequest(BaseModel):
         return self
 
 
+class QuizQuestionRegenerateRequest(BaseModel):
+    """
+    Body for POST /nodes/:id/quizzes/:quiz_id/questions/regenerate.
+
+    Reworks one or more active questions in-place using mentor feedback and
+    the published study material as source context.
+    """
+
+    question_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        description="Active question_ids to rework (must belong to this quiz).",
+    )
+    mentor_feedback: str = Field(
+        ...,
+        min_length=10,
+        max_length=4000,
+        description="Mentor instructions describing what to change.",
+    )
+
+
 class QuizQuestionReorderRequest(BaseModel):
     """
     Body for PATCH /nodes/:id/quizzes/:quiz_id/questions/reorder.
@@ -269,6 +290,13 @@ class QuizOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     hints_status: str = "none"  # "none" | "partial" | "complete"
+    hints_stale_question_ids: list[UUID] = Field(
+        default_factory=list,
+        description=(
+            "Question IDs whose hints were cleared after AI rework; "
+            "mentor should regenerate hints for these questions."
+        ),
+    )
     questions: list[QuizQuestionOut] = Field(default_factory=list)
 
     # ── Quality-Check fields ──────────────────────────────────────

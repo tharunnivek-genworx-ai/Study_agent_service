@@ -64,6 +64,25 @@ class HintRepository:
         )
         return list(result.scalars().all())
 
+    async def get_active_questions_with_complete_hints(
+        self, quiz_id: UUID
+    ) -> list[QuizQuestion]:
+        """Active questions where hint_1, hint_2, and hint_3 are all populated."""
+        result = await self.db.execute(
+            select(QuizQuestion)
+            .where(
+                and_(
+                    QuizQuestion.quiz_id == quiz_id,
+                    QuizQuestion.is_active.is_(True),
+                    QuizQuestion.hint_1.isnot(None),
+                    QuizQuestion.hint_2.isnot(None),
+                    QuizQuestion.hint_3.isnot(None),
+                )
+            )
+            .order_by(QuizQuestion.order_index.asc())
+        )
+        return list(result.scalars().all())
+
     async def get_active_questions_by_ids(
         self, quiz_id: UUID, question_ids: list[UUID]
     ) -> list[QuizQuestion]:

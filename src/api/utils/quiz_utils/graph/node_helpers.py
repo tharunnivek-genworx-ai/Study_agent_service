@@ -14,7 +14,7 @@ from src.api.control.quiz_agent.prompts import (
     question_insert_prompt,
     question_rework_prompt,
 )
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 from src.api.schemas.common import QcInfraErrorType
 from src.api.schemas.qc_schemas import QuizRetryRoutingResult
 from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation

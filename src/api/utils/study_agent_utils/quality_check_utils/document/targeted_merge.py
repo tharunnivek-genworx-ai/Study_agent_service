@@ -117,7 +117,8 @@ def check_targets_reverify(
     if category == "teaching_alignment":
         if section_id:
             return section_id in reverify_section_ids
-        return False
+        # Document-level teaching_alignment is stale after any section revision.
+        return bool(reverify_section_ids)
 
     return False
 

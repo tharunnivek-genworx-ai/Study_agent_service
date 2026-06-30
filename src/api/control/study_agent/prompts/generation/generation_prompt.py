@@ -3,36 +3,14 @@
 
 from __future__ import annotations
 
+from src.api.control.study_agent.prompts.generation.output_schemas import (
+    build_json_output_schema,
+)
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     format_must_cover_checklist_line,
 )
 
-JSON_OUTPUT_SCHEMA = """\
-Output format — return ONLY valid JSON, nothing else:
-{
-  "sections": [
-    {
-      "id": "<topic_split id when provided; checklist id otherwise; null for unlisted sections>",
-      "heading": "<title>",
-      "content": "<prose only — no fenced code blocks, no markdown headings, no equations inside this field>",
-      "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences: what this demonstrates, which concept it illustrates, one thing the reader must notice>"}],
-      "formula_blocks": [{"notation": "<e.g. LaTeX or plain-text>", "formula": "<the equation, chemical reaction, or derivation step>", "explanation": "<2-3 sentences: what this represents, every variable or term defined, one thing the reader must notice>"}],
-      "subsections": [{
-        "heading": "<title>",
-        "content": "<prose only — no fenced code blocks, no markdown headings, no equations inside this field>",
-        "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences: what this demonstrates, which concept it illustrates, one thing the reader must notice>"}],
-        "formula_blocks": [{"notation": "<e.g. LaTeX or plain-text>", "formula": "<the equation, chemical reaction, or derivation step>", "explanation": "<2-3 sentences: what this represents, every variable or term defined, one thing the reader must notice>"}]
-      }]
-    }
-  ]
-}
-Rules: omit "code_blocks", "formula_blocks", and "subsections" entirely when empty. When <topic_split> is present, create exactly one
-section per entry with matching id and heading. Source code lives ONLY inside "code_blocks". Equations, chemical reactions, and
-mathematical derivations live ONLY inside "formula_blocks" — never inside "code_blocks" and never as a fenced block inside "content".
-A formula_block is not source code: never give it a programming-language "language" value, and never put real programming code
-inside one. The "explanation" field inside every code_block and formula_block entry is mandatory and must not be empty.\
-"""
 STEM_DOMAIN_RULES_BLOCK = """\
 STEM (mathematics, physics, chemistry, biology, engineering, statistics):
 - Every equation, chemical reaction, or derivation step belongs in a formula_block, not a code_block or inline text.
@@ -43,7 +21,7 @@ STEM (mathematics, physics, chemistry, biology, engineering, statistics):
 - Physical and mathematical constants must carry their correct value and unit every time they appear.
 - Do not skip algebraic or logical steps in derivations — each step must follow from the previous one. Each intermediate step belongs in its own formula_block entry so the reasoning chain is visible.
 - Never state a reaction, mechanism, or formula that you cannot independently verify as real chemistry, physics, or mathematics. A confident, well-formatted but fabricated reaction or constant is a serious failure — if you are not certain a reaction or value is real, do not include it.
-- DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. A section that provides only a Python script computing a result where sequential formula_block steps were required has FAILED the must_cover item. Code_blocks are permitted in STEM sections ONLY when the section's primary teaching goal is computational implementation (e.g., "Numerical Integration Methods") AND the linked must_cover item does not demand a mathematical derivation."""
+- DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. The STEM output schema has no code_blocks field — never emit executable code for equation work."""
 
 PROGRAMMING_DOMAIN_RULES_BLOCK = """\
 Programming (code, algorithms, data structures, APIs, frameworks):
@@ -76,13 +54,10 @@ Mixed (spans more than one domain above):
 - Apply the full COMPLETE SECTION STANDARD for each section's classified domain when writing its content."""
 
 _DOMAIN_RULES_HEADER = "DOMAIN RULES — apply based on <domain> when provided; otherwise infer from the topic"
-SYSTEM_PROMPT_PREFIX = f"""\
-You are an expert educator writing structured study material on any academic or technical subject.
-Return ONLY valid JSON — no markdown fences, no prose outside the JSON.
-{JSON_OUTPUT_SCHEMA}
+_HONESTY_GATE_BLOCK = """\
 HONESTY GATE
 If the topic is proprietary, internal, or undocumented and you cannot write accurate content from public knowledge, return:
-{{"generation_status": "reference_required", "topic_received": "<topic>", "reason": "<one sentence>", "message": "Provide official documentation, a PDF, or key concepts to proceed."}}
+{"generation_status": "reference_required", "topic_received": "<topic>", "reason": "<one sentence>", "message": "Provide official documentation, a PDF, or key concepts to proceed."}
 """
 SYSTEM_PROMPT_SUFFIX = """\
 UNIVERSAL ACCURACY RULES (all domains)
@@ -145,9 +120,21 @@ def build_domain_rules_block(domain: str | None) -> str:
     )
 
 
+def _build_system_prompt_prefix(domain: str | None) -> str:
+    return (
+        "You are an expert educator writing structured study material on any academic or technical subject.\n"
+        "Return ONLY valid JSON — no markdown fences, no prose outside the JSON.\n"
+        f"{build_json_output_schema(domain)}\n"
+        f"{_HONESTY_GATE_BLOCK}"
+    )
+
+
+SYSTEM_PROMPT_PREFIX = _build_system_prompt_prefix(None)
+
+
 def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
     return (
-        SYSTEM_PROMPT_PREFIX
+        _build_system_prompt_prefix(domain)
         + build_domain_rules_block(domain)
         + "\n\n"
         + SYSTEM_PROMPT_SUFFIX
@@ -156,7 +143,10 @@ def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> st
 
 
 SYSTEM_PROMPT = (
-    SYSTEM_PROMPT_PREFIX + build_domain_rules_block("") + "\n\n" + SYSTEM_PROMPT_SUFFIX
+    _build_system_prompt_prefix(None)
+    + build_domain_rules_block("")
+    + "\n\n"
+    + SYSTEM_PROMPT_SUFFIX
 )
 
 

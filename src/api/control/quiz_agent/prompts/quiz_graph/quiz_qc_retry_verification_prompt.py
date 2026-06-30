@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from src.api.control.quiz_agent.prompts.quiz_qc_check_definitions import (
+from src.api.control.quiz_agent.prompts.quiz_graph.quiz_qc_check_definitions import (
     ANTI_INFLATION_RULES_BLOCK,
     JSON_OUTPUT_RULES_BLOCK,
     PER_QUESTION_CHECK_CATEGORIES_BLOCK,

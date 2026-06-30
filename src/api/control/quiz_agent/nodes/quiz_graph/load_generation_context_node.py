@@ -7,17 +7,17 @@ from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
-from src.api.core.exceptions import (
-    QuizHasNoPublishedStudyMaterialException,
-    QuizNotFoundException,
-)
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
+from src.api.core.exceptions import QuizNotFoundException
 from src.api.data.repositories import (  # noqa: E501
     QuizRepository,
     StudyMaterialRepository,
 )
 from src.api.utils.artifacts import new_artifact_run_id
 from src.api.utils.quiz_utils.graph.node_helpers import graph_session
+from src.api.utils.quiz_utils.study_material_link import (
+    get_mentor_quiz_study_material_source,
+)
 from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
 )
@@ -33,11 +33,10 @@ async def load_generation_context(
     )
 
     study_repo = StudyMaterialRepository(session)
-    version = await study_repo.get_published_version(state["node_id"])
-    if version is None or not (version.content or "").strip():
-        version = await study_repo.get_latest_workspace_draft(state["node_id"])
-    if version is None or not (version.content or "").strip():
-        raise QuizHasNoPublishedStudyMaterialException()
+    version = await get_mentor_quiz_study_material_source(
+        study_repo,
+        node_id=state["node_id"],
+    )
 
     update: QuizGraphState = {
         **state,

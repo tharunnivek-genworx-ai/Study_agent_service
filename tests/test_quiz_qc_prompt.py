@@ -27,6 +27,8 @@ class TestQuizQcPrompt:
         system = quiz_qc_prompt.build_system_prompt(domain="")
         assert "classify each question by what it actually tests" in system
         assert "STEP 2 — PRODUCE ONE question_result PER QUESTION" in system
+        assert "Quiz-only answerability" in system
+        assert "Embedded artifact format" in system
 
     def test_user_message_includes_domain(self):
         msg = quiz_qc_prompt.build_user_message(

@@ -8,10 +8,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.control.quiz_agent.graph.quiz_generation_graph import (
+from src.api.control.quiz_agent.graph.quiz_graph.quiz_generation_graph import (
     get_quiz_generation_graph,
 )
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 from src.api.core.exceptions import (
     QuizGenerationFailedException,
 )

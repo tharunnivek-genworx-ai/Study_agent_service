@@ -9,35 +9,15 @@ import re
 from src.api.control.study_agent.prompts.generation.generation_prompt import (
     format_reference_user_block,
 )
+from src.api.control.study_agent.prompts.generation.output_schemas import (
+    build_section_patch_output_schema,
+)
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     checklist_section_id,
     format_must_cover_checklist_line,
 )
 
-SECTION_OUTPUT_SCHEMA = """\
-Return ONLY valid JSON — no markdown fences, no prose outside the JSON:
-{
-  "sections": [
-    {
-      "id": "<same id as the failed section — required, do not change>",
-      "heading": "<title>",
-      "content": "<prose — no fenced code blocks, no markdown headings, no equations inside this field>",
-      "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences: what it demonstrates, which concept, one thing to notice>"}],
-      "formula_blocks": [{"notation": "<e.g. LaTeX or plain-text>", "formula": "<the equation, reaction, or derivation step>", "explanation": "<2-3 sentences: what it represents, every variable defined, one thing to notice>"}],
-      "subsections": [{
-        "heading": "<title>",
-        "content": "<prose only — no fenced code blocks, no markdown headings, no equations inside this field>",
-        "code_blocks": [{"language": "<lang>", "code": "<code>", "explanation": "<2-3 sentences>"}],
-        "formula_blocks": [{"notation": "<e.g. LaTeX>", "formula": "<equation or derivation step>", "explanation": "<2-3 sentences>"}]
-      }]
-    }
-  ]
-}
-Omit "code_blocks", "formula_blocks", and "subsections" entirely when empty. Omit subsection "code_blocks" and "formula_blocks" when empty.
-Preserve each section's "id" exactly. The "explanation" field inside every code_block and formula_block is mandatory.
-Equations and derivations belong in formula_blocks at section or subsection level — never inline in "content".\
-"""
 _SUBSECTION_EVIDENCE_PATTERN = re.compile(
     r"subsection\s+['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
@@ -49,10 +29,11 @@ CONCEPTUAL_ACCURACY_BLOCK = """- Conceptual: named facts (dates, people, events,
 _ACCURACY_RULES_HEADER = """\
 ACCURACY RULES
 - Every claim must be true for the specific language, framework, or field in the topic."""
-_BASE_SYSTEM_PREFIX = f"""\
+_BASE_SYSTEM_INTRO = """\
 You are an expert educator rewriting specific failed sections of a study document.
 Mandate: rewrite ONLY the sections listed in <sections_to_fix>. Do not add, remove, or rename sections.
-{SECTION_OUTPUT_SCHEMA}
+"""
+_FAILURE_REMEDIATION_BLOCK = """\
 FAILURE REMEDIATION
 - Address every listed failure at its root cause. Fixing phrasing while leaving the underlying error is NOT a fix.
 - Thin coverage: add new concepts, worked examples, or subsections — do not just expand existing sentences.
@@ -106,7 +87,10 @@ def build_accuracy_rules_block(domain: str | None) -> str:
 
 def _build_base_system(domain: str | None) -> str:
     return (
-        _BASE_SYSTEM_PREFIX
+        _BASE_SYSTEM_INTRO
+        + build_section_patch_output_schema(domain)
+        + "\n"
+        + _FAILURE_REMEDIATION_BLOCK
         + build_accuracy_rules_block(domain)
         + "\n\n"
         + _SUBSTANCE_RULES_BLOCK

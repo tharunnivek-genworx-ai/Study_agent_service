@@ -29,6 +29,7 @@ from src.api.core.exceptions.quiz_exceptions.hint_generation_exceptions import (
     HintsAlreadyCompleteException,
     HintsCannotGenerateOnPublishedQuizException,
     HintsNothingToDeleteException,
+    HintsNothingToRegenerateException,
     QuizHasNoQuestionsException,
 )
 from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
@@ -115,6 +116,7 @@ __all__ = [
     "HintsAlreadyCompleteException",
     "HintsCannotGenerateOnPublishedQuizException",
     "HintsNothingToDeleteException",
+    "HintsNothingToRegenerateException",
     "InsufficientPermissionsException",
     "InvalidMediaTypePayloadException",
     "InvalidSkipPayloadException",

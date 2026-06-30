@@ -7,7 +7,7 @@ from typing import Any
 
 from src.api.config import llm_settings
 from src.api.control.quiz_agent.prompts import build_quiz_prompt
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 from src.api.utils.LLM_utils.llm_failure_diagnostics import build_llm_failure_qc_result
 from src.api.utils.quiz_utils.generation.question_parsing import (
     normalize_parsed_items,

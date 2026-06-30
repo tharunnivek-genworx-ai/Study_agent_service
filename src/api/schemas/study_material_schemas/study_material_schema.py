@@ -574,6 +574,8 @@ class TraineeArchivedSmItemOut(BaseModel):
     version_label: str
     published_at: datetime | None
     superseded_at: datetime | None = None
+    removed_at: datetime | None = None
+    can_read_material: bool = True
     you_read_this: bool = False
     has_archived_quiz: bool = False
     archived_quiz_id: UUID | None = None

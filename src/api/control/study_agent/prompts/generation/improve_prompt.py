@@ -3,28 +3,31 @@
 
 from __future__ import annotations
 
-from src.api.control.study_agent.prompts.generation.generation_prompt import (
-    JSON_OUTPUT_SCHEMA,
+from src.api.control.study_agent.prompts.generation.output_schemas import (
+    build_json_output_schema,
 )
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 
-STEM_ACCURACY_BLOCK = "STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. Constants must carry correct values and units. Equations and reactions belong in formula_blocks, not code_blocks. When feedback requires a derivation or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain."
+STEM_ACCURACY_BLOCK = "STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. Constants must carry correct values and units. Equations and reactions belong in formula_blocks only — the STEM schema has no code_blocks. When feedback requires a derivation or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain.Do not add any coding examples here for computation."
 PROGRAMMING_ACCURACY_BLOCK = 'Programming: Code must be syntactically valid. No undefined symbols. Never define the same method or function name twice in the same scope without explicitly explaining the consequence. Every code_block must have a non-empty "explanation" field. Verify every API or function name is real for the stated language/version — do not invent plausible-sounding API calls.'
 CONCEPTUAL_ACCURACY_BLOCK = "Conceptual: Named facts (dates, people, events, laws, organisations) must be accurate per mainstream record. Arguments must be structured as claim → evidence → reasoning — do not add conclusions without stated support. New examples introduced by the edit must be specific and named: identify a real actor, describe the context, and state the verifiable outcome; vague sector-level references ('many organisations', 'in the tech industry') are not examples. When feedback asks for a case study, comparison, or causal explanation, name a real organisation or event and trace the mechanism — never use anonymous placeholders or 'X caused Y' without the causal chain. Do not introduce code_blocks or formula_blocks into a Conceptual section unless the feedback explicitly requires a technical or quantitative addition. Do not attribute statistics or performance metrics to named organisations unless those figures are publicly documented and widely known."
 _DOMAIN_ACCURACY_HEADER = (
     "DOMAIN-SPECIFIC ACCURACY (applies to all content you add or change)"
 )
-_BASE_SYSTEM_PREFIX = f"""\
+_BASE_SYSTEM_INTRO = """\
 You are a Study Material Editor.
 Apply mentor feedback precisely and return the complete improved document as JSON only — no markdown fences, no prose outside the JSON.
 Mandate: change only what the feedback explicitly targets. Preserve everything else at its original volume and accuracy.
-{JSON_OUTPUT_SCHEMA}
+"""
+_VAGUE_FEEDBACK_BLOCK = """\
 VAGUE FEEDBACK CHECK — do this first
 If the feedback contains only non-specific phrases such as "I don't like it", "make it better", "improve this", "rewrite it", or "this is bad" with no specific target, return exactly:
 {{
   "improve_status": "vague",
   "message": "Feedback too vague to apply. Specify what to change — for example: expand the explanation of X, replace the example with a realistic scenario, or simplify the language in section Y. No changes have been made."
 }}
+"""
+_MINIMUM_CHANGE_BLOCK = """\
 MINIMUM NECESSARY CHANGE — highest-priority rule, classify before writing
 Classify the mentor feedback into exactly ONE action below and apply ONLY that action's rule. When <topic_split>/<must_cover_checklist> are supplied, they already encode which sections this run adds, keeps, or removes for this run — write content that matches that plan exactly; do not independently decide to add, remove, or reorder sections beyond what the plan specifies.
 - ADD ("add a section on X", "append Y at the end", "also include Z"): write ONLY the new section(s) named in the plan/feedback. Copy every existing section verbatim from the current draft — same heading, same prose, same subsections, same code_blocks (every line and every explanation field), same formula_blocks. Insert the new section in the position implied by the feedback (e.g. "at the end" = last) without reordering anything else.
@@ -84,7 +87,13 @@ def build_domain_accuracy_block(domain: str | None) -> str:
 
 def _build_base_system(domain: str | None) -> str:
     return (
-        _BASE_SYSTEM_PREFIX + build_domain_accuracy_block(domain) + _BASE_SYSTEM_SUFFIX
+        _BASE_SYSTEM_INTRO
+        + build_json_output_schema(domain)
+        + "\n"
+        + _VAGUE_FEEDBACK_BLOCK
+        + _MINIMUM_CHANGE_BLOCK
+        + build_domain_accuracy_block(domain)
+        + _BASE_SYSTEM_SUFFIX
     )
 
 

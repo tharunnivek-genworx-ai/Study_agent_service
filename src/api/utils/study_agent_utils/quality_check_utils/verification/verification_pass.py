@@ -60,6 +60,7 @@ async def run_retry_verification_pass(
     must_cover_checklist: list[dict[str, Any]],
     topic_split: list[dict[str, Any]] | None = None,
     domain: str = "",
+    prior_teaching_alignment_failure: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Targeted Groq pass over patched or inserted sections only."""
     verification, meta = await run_llm_verification_pass(
@@ -77,6 +78,7 @@ async def run_retry_verification_pass(
             "must_cover_checklist": must_cover_checklist,
             "topic_split": topic_split,
             "domain": domain,
+            "prior_teaching_alignment_failure": prior_teaching_alignment_failure,
         },
         pass_label="QC targeted verification",
     )

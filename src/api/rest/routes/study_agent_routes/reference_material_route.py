@@ -64,7 +64,7 @@ async def upload_reference_material(
     title: str = Form(..., min_length=1, max_length=300),
     scope: ReferenceMaterialScope = Form(...),
     node_id: UUID | None = Form(default=None),
-    is_visible_to_trainees: bool = Form(default=True),
+    is_visible_to_trainees: bool = Form(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> ReferenceMaterialOut:

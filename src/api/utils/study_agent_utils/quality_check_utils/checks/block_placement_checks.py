@@ -35,9 +35,46 @@ _PROGRAMMING_LANGUAGES = frozenset(
 )
 
 _DERIVATION_PATTERN = re.compile(
-    r"\b(derive|derivation|prove|proof|calculate|step-by-step)\b",
+    r"\b(derive|derivation|derived|prove|proof|step-by-step)\b",
     re.IGNORECASE,
 )
+
+_CALCULATE_PATTERN = re.compile(r"\bcalculate\b", re.IGNORECASE)
+
+_FORMULA_WORK_DEPTH_GATE_PATTERN = re.compile(
+    r"\b(substitutes?|arrives?\s+at)\b",
+    re.IGNORECASE,
+)
+
+_APPLY_PATTERN = re.compile(r"\bapply\b", re.IGNORECASE)
+
+_EQUATION_INDICATOR_PATTERN = re.compile(
+    r"(\bequation\b|\bformula\b|\busing\s+the\b|=|\\frac)",
+    re.IGNORECASE,
+)
+
+
+def _checklist_requires_formula_work(
+    *,
+    requirement: str,
+    depth_gate: str,
+) -> bool:
+    """True when a STEM checklist item demands algebraic work in formula_blocks."""
+    combined = f"{requirement} {depth_gate}".strip()
+    if not combined:
+        return False
+    if _DERIVATION_PATTERN.search(combined):
+        return True
+    if _CALCULATE_PATTERN.search(combined):
+        return True
+    if _FORMULA_WORK_DEPTH_GATE_PATTERN.search(depth_gate):
+        return True
+    if _APPLY_PATTERN.search(requirement) and _EQUATION_INDICATOR_PATTERN.search(
+        requirement
+    ):
+        return True
+    return False
+
 
 _EQUATION_IN_CONTENT_PATTERNS = (
     re.compile(r"\\lim\b"),
@@ -247,8 +284,10 @@ def _stem_derivation_missing_formula_checks(
             continue
         requirement = str(item.get("requirement", ""))
         depth_gate = str(item.get("depth_gate", ""))
-        combined = f"{requirement} {depth_gate}".strip()
-        if not combined or not _DERIVATION_PATTERN.search(combined):
+        if not _checklist_requires_formula_work(
+            requirement=requirement,
+            depth_gate=depth_gate,
+        ):
             continue
 
         target_id = str(item.get("section_id") or item.get("id") or "").strip()
@@ -302,8 +341,10 @@ def _stem_code_substitutes_derivation_checks(
             continue
         requirement = str(item.get("requirement", ""))
         depth_gate = str(item.get("depth_gate", ""))
-        combined = f"{requirement} {depth_gate}".strip()
-        if not combined or not _DERIVATION_PATTERN.search(combined):
+        if not _checklist_requires_formula_work(
+            requirement=requirement,
+            depth_gate=depth_gate,
+        ):
             continue
 
         target_id = str(item.get("section_id") or item.get("id") or "").strip()
@@ -323,12 +364,12 @@ def _stem_code_substitutes_derivation_checks(
                 check_id="det_stem_code_substitutes_derivation",
                 section_id=target_id,
                 question=(
-                    "Does a STEM derivation section avoid code_blocks when the "
-                    "checklist demands algebraic steps?"
+                    "Does a STEM section with formula-work checklist requirements "
+                    "avoid code_blocks when algebraic steps are required?"
                 ),
                 evidence=(
                     f"Section {target_id!r} ({section_heading or 'untitled'}) "
-                    f"has code_blocks but checklist item requires derivation depth "
+                    f"has code_blocks but checklist item requires formula_block work "
                     f"({depth_gate or requirement!r})."
                 ),
                 corrective_hint=(

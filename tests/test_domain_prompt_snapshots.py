@@ -50,15 +50,20 @@ def _write_snapshot(name: str, text: str) -> None:
 
 
 def assert_prompt_bytes_equal(actual: str, snapshot_name: str) -> None:
+    actual_normalized = actual.replace("\r\n", "\n")
     if os.environ.get("UPDATE_DOMAIN_PROMPT_SNAPSHOTS") == "1":
-        _write_snapshot(snapshot_name, actual)
+        _write_snapshot(snapshot_name, actual_normalized)
         return
 
-    expected = _read_snapshot(snapshot_name)
-    actual_bytes = actual.encode("utf-8")
-    assert actual_bytes == expected, (
+    expected_raw = _read_snapshot(snapshot_name)
+    expected_normalized = expected_raw.decode("utf-8").replace("\r\n", "\n")
+
+    actual_bytes = actual_normalized.encode("utf-8")
+    expected_bytes = expected_normalized.encode("utf-8")
+
+    assert actual_bytes == expected_bytes, (
         f"Snapshot mismatch for {snapshot_name}: "
-        f"{len(actual_bytes)} bytes actual vs {len(expected)} bytes expected. "
+        f"{len(actual_bytes)} bytes actual vs {len(expected_bytes)} bytes expected. "
         "Run with UPDATE_DOMAIN_PROMPT_SNAPSHOTS=1 to refresh baselines."
     )
 
@@ -188,6 +193,20 @@ class TestGenerationPromptSnapshots:
         except TypeError:
             pytest.skip("domain parameter not yet wired")
         assert mixed_domain.encode("utf-8") == empty_domain.encode("utf-8")
+
+    @pytest.mark.parametrize("has_reference", [True, False])
+    def test_build_system_prompt_stem_uses_formula_only_schema(
+        self, has_reference: bool
+    ) -> None:
+        try:
+            stem_prompt = _build_generation_prompt(
+                has_reference=has_reference, domain="STEM"
+            )
+        except TypeError:
+            pytest.skip("domain parameter not yet wired")
+        assert '"formula_blocks":' in stem_prompt
+        assert '"code_blocks":' not in stem_prompt
+        assert STEM_DERIVATION_ANCHOR in stem_prompt
 
     @pytest.mark.parametrize("has_reference", [True, False])
     def test_build_system_prompt_stem_domain_filters_programming_rules(
@@ -357,6 +376,34 @@ class TestHintPromptSnapshots:
             _build_hint_system_prompt(is_regeneration=True, domain=""),
             "hint_system_prompt_regenerate.txt",
         )
+
+    def test_regenerate_user_message_documents_previous_hints(self) -> None:
+        payload = hint_prompt.build_hint_prompt(
+            questions_for_hinting=[
+                {
+                    "question_id": "q1",
+                    "question_text": "What is 2+2?",
+                    "option_a": "3",
+                    "option_b": "4",
+                    "option_c": "5",
+                    "option_d": "6",
+                    "correct_option": "B",
+                    "explanation": "Basic addition.",
+                    "previous_hints": {
+                        "hint_1": "Think about counting.",
+                        "hint_2": "Add one more to one.",
+                        "hint_3": "Two groups of two.",
+                    },
+                }
+            ],
+            topic_title="Arithmetic",
+            domain="STEM",
+            is_regeneration=True,
+            mentor_feedback="Make hints more subtle.",
+        )
+        assert "previous_hints" in payload["user_message"]
+        assert "<mentor_feedback>" in payload["user_message"]
+        assert "Think about counting." in payload["user_message"]
 
     def test_stem_domain_filters_programming_reasoning(self) -> None:
         try:

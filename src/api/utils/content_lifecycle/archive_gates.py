@@ -8,11 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.exceptions import (
     NodeNotActiveException,
+    QuizNotFoundException,
     SpaceNotPublishedException,
     StudyMaterialArchiveNotAvailableException,
     StudyMaterialVersionNotInStudentArchiveException,
     TraineeNotEnrolledInSpaceException,
 )
+from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
@@ -91,3 +93,21 @@ async def assert_archived_sm_version(
     ):
         raise StudyMaterialVersionNotInStudentArchiveException()
     return version
+
+
+async def assert_archived_quiz_access(
+    session: AsyncSession,
+    *,
+    node_id: UUID,
+    quiz_id: UUID,
+) -> Quiz:
+    """Load an archived quiz or raise when it is missing or not reviewable."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    result = await session.execute(select(Quiz).where(Quiz.quiz_id == quiz_id))
+    quiz: Quiz | None = result.scalars().first()
+    if quiz is None or quiz.node_id != node_id:
+        raise QuizNotFoundException()
+    if quiz.lifecycle_status != LIFECYCLE_ARCHIVED:
+        raise StudyMaterialArchiveNotAvailableException()
+    return quiz

@@ -1,4 +1,4 @@
-"""Trainee-facing topic resources (node_media) — not AI generation source documents."""
+"""Trainee-facing topic resources — node_media and visible reference materials."""
 
 from uuid import UUID
 

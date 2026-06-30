@@ -3,26 +3,29 @@
 
 from __future__ import annotations
 
-from src.api.control.study_agent.prompts.generation.generation_prompt import (
-    JSON_OUTPUT_SCHEMA,
+from src.api.control.study_agent.prompts.generation.output_schemas import (
+    build_json_output_schema,
 )
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 
-STEM_ACCURACY_BLOCK = "STEM: State equations in standard notation; define all variables and units; trace worked examples to correct numerical answers; state assumptions. Physical constants must carry correct values. Equations and reactions belong in formula_blocks, not code_blocks. When the regeneration goal or a must_cover item demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, numpy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain. Never state a reaction or formula you cannot verify as real."
+STEM_ACCURACY_BLOCK = "STEM: State equations in standard notation; define all variables and units; trace worked examples to correct numerical answers; state assumptions. Physical constants must carry correct values. Equations and reactions belong in formula_blocks only — the STEM schema has no code_blocks. When the regeneration goal or a must_cover item demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, numpy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain. Do not ever include coding examples for computation in STEM and derivation. Never state a reaction or formula you cannot verify as real."
 PROGRAMMING_ACCURACY_BLOCK = 'Programming: Code must be syntactically valid and run correctly on the demonstrated path. Every symbol must be defined or imported in the same block. Never define the same method or function name twice in the same scope without explaining the consequence. Every code_block must have a non-empty "explanation" field. Verify every API or function name is real for the stated language/version.'
 CONCEPTUAL_ACCURACY_BLOCK = "Conceptual: Named facts (dates, people, events, laws, organisations) must be accurate per mainstream record. Examples must be specific and named: identify a real actor, describe the context, and state the verifiable outcome — 'many organisations' or 'in the tech sector' without a named entity is not an example. Causal claims must reflect actual historical or empirical record, not merely plausible generalisations; when the regeneration goal demands causal analysis, trace precondition → trigger → mechanism → outcome explicitly. When the goal demands comparison: name both sides and provide a specific named case for each. Do not introduce code_blocks or formula_blocks into a Conceptual section unless the regeneration goal explicitly requires a technical or quantitative addition. Do not attribute statistics or performance metrics to named organisations unless those figures are publicly documented and widely known."
 _DOMAIN_ACCURACY_HEADER = "DOMAIN-SPECIFIC ACCURACY (applies to everything you write)"
-_BASE_SYSTEM_PREFIX = f"""\
+_BASE_SYSTEM_INTRO = """\
 You are a Study Material Writer.
 This is a REGENERATE task. Return ONLY a valid JSON object — no markdown fences, no prose outside the JSON.
 Mandate: apply the regeneration goal with minimum necessary change. Do NOT rewrite the whole document unless the mentor explicitly asks for a full rewrite.
-{JSON_OUTPUT_SCHEMA}
+"""
+_VAGUE_GOAL_BLOCK = """\
 VAGUE GOAL CHECK — do this first
 If the regeneration goal contains only non-specific phrases such as "redo this", "make it better", "rewrite it", or "this is bad", return exactly:
 {{
   "regenerate_status": "vague",
   "message": "Regeneration goal too vague to apply. Describe the outcome you want — for example: rewrite from a beginner perspective, make the material more hands-on, or add more depth to how Y works. No changes have been made."
 }}
+"""
+_SCOPE_BLOCK = """\
 SCOPE — classify the goal before writing (highest-priority rule)
 Classify the regeneration goal into exactly ONE action below and apply ONLY that action's rule. When <topic_split>/<must_cover_checklist> are supplied, they already encode which sections this run adds, keeps, or removes — write content that matches that plan exactly; do not independently decide to add, remove, or reorder sections beyond what the plan specifies.
 - ADD (e.g. "add a section on X", "append Y at the end", "also include Z"): write ONLY the new section(s). Copy every existing section verbatim from the current draft — same headings, prose, subsections, code_blocks, and formula_blocks. Do not rephrase, shorten, merge, reorder, or remove anything in existing sections.
@@ -93,7 +96,13 @@ def build_domain_accuracy_block(domain: str | None) -> str:
 
 def _build_base_system(domain: str | None) -> str:
     return (
-        _BASE_SYSTEM_PREFIX + build_domain_accuracy_block(domain) + _BASE_SYSTEM_SUFFIX
+        _BASE_SYSTEM_INTRO
+        + build_json_output_schema(domain)
+        + "\n"
+        + _VAGUE_GOAL_BLOCK
+        + _SCOPE_BLOCK
+        + build_domain_accuracy_block(domain)
+        + _BASE_SYSTEM_SUFFIX
     )
 
 

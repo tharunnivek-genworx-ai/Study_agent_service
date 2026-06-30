@@ -18,12 +18,12 @@ from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 
-from src.api.control.quiz_agent.graph.resume_router import (
+from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
     is_resume_state,
     last_completed_node_from_state,
     resolve_resume_next_node,
 )
-from src.api.control.quiz_agent.nodes import (
+from src.api.control.quiz_agent.nodes.quiz_graph import (
     MAX_QC_ATTEMPTS,
     deterministic_validate_node,
     load_existing_quiz_if_regenerate,
@@ -33,7 +33,7 @@ from src.api.control.quiz_agent.nodes import (
     quality_check_node,
     quiz_generator_node,
 )
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 
 _compiled_graph = None
 

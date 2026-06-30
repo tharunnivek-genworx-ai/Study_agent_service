@@ -8,6 +8,7 @@ import pytest
 from src.api.utils.quiz_utils.generation.question_parsing import (
     empty_to_none,
     normalize_parsed_items,
+    normalize_question_markdown,
 )
 
 
@@ -48,3 +49,24 @@ class TestNormalizeParsedItems:
     def test_rejects_missing_option_d(self):
         with pytest.raises(ValueError, match="option_d"):
             normalize_parsed_items([_item(option_d="")], {})
+
+
+class TestNormalizeQuestionMarkdown:
+    def test_rewrites_inline_fence_after_colon(self):
+        raw = "What happens when you call drive?: ```python\nclass Car:\n    pass\n```"
+        expected = (
+            "What happens when you call drive?\n\n```python\nclass Car:\n    pass\n```"
+        )
+        assert normalize_question_markdown(raw) == expected
+
+    def test_ensures_closing_fence_on_own_line(self):
+        raw = "See below:\n\n```python\nprint(1)```\n"
+        assert (
+            normalize_question_markdown(raw)
+            == "See below:\n\n```python\nprint(1)\n```\n"
+        )
+
+    def test_normalizes_question_text_in_parsed_items(self):
+        raw_text = "Output?: ```python\nx = 1\n```"
+        parsed, _ = normalize_parsed_items([_item(question_text=raw_text)], {})
+        assert parsed[0]["question_text"].startswith("Output?\n\n```python")

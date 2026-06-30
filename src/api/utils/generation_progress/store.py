@@ -38,15 +38,26 @@ STUDY_MATERIAL_NODE_TO_STEP: dict[str, int] = {
 QUIZ_NODE_TO_STEP: dict[str, int] = {
     "load_generation_context": 0,
     "load_existing_quiz_if_regenerate": 0,
+    "load_quiz_single_regen_context": 0,
+    "build_quiz_single_regen_prompt": 0,
     "quiz_generator": 2,
     "parse_quiz_output": 2,
     "deterministic_validate": 2,
+    "invoke_quiz_single_regen_llm": 2,
+    "parse_quiz_single_regen_output": 2,
+    "deterministic_validate_question_patches": 3,
     "quality_check": 3,
     "persist_quiz_draft": 3,
+    "persist_question_patches": 3,
 }
 
 QUIZ_CONTEXT_LOAD_NODES = frozenset(
-    {"load_generation_context", "load_existing_quiz_if_regenerate"}
+    {
+        "load_generation_context",
+        "load_existing_quiz_if_regenerate",
+        "load_quiz_single_regen_context",
+        "build_quiz_single_regen_prompt",
+    }
 )
 
 HINT_STEP_DEFS: list[GenerationProgressStepDef] = [

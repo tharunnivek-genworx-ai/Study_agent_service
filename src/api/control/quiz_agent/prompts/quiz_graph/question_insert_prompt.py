@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from src.api.control.quiz_agent.prompts.quiz_prompt import (
+from src.api.control.quiz_agent.prompts.quiz_graph.quiz_prompt import (
     DIFFICULTY_RULES_BLOCK,
     OUTPUT_FORMAT_BLOCK,
     QUESTION_QUALITY_BLOCK,
@@ -98,7 +98,7 @@ def build_user_message(
     domain: str | None = None,
     topic_split: list[dict] | None = None,
 ) -> str:
-    from src.api.control.quiz_agent.prompts.question_rework_prompt import (
+    from src.api.control.quiz_agent.prompts.quiz_graph.question_rework_prompt import (
         build_quiz_outline,
     )
 

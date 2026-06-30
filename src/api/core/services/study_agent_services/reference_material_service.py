@@ -4,7 +4,7 @@ Reference material and node media service.
 
 Reference materials (TDD §3.3.2):
   UPLOAD     → validate ownership → scope/node_id guard → GCS stub upload
-               → insert row (GCS upload first, then DB)
+               → soft-delete prior active materials (EC-17) → insert row
   LIST       → access guard → return active rows for space or node
   VISIBILITY → ownership guard → update is_visible_to_trainees
   DELETE     → ownership guard → soft-delete (set deleted_at)
@@ -136,6 +136,12 @@ class ReferenceMaterialService:
         await file.seek(0)
 
         repo = ReferenceMaterialRepository(self.session)
+        if scope == "node":
+            assert node_id is not None
+            await repo.soft_delete_active_for_node(node_id)
+        else:
+            await repo.soft_delete_active_for_space(space_id)
+
         material = await repo.create_reference_material_with_id(
             material_id=material_id,
             space_id=space_id,

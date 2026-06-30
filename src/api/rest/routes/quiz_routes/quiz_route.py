@@ -10,6 +10,7 @@ Quiz lifecycle (TDD §3.2.2 and §3.2.3):
     Publish quiz    → PATCH  /nodes/{node_id}/quizzes/{quiz_id}/publish
     Add question    → POST   /nodes/{node_id}/quizzes/{quiz_id}/questions
     Update question → PATCH  /nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}
+    Regenerate qs   → POST   /nodes/{node_id}/quizzes/{quiz_id}/questions/regenerate
     Reorder qs      → PATCH  /nodes/{node_id}/quizzes/{quiz_id}/questions/reorder
     Delete question → DELETE /nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}
 
@@ -42,6 +43,7 @@ from src.api.schemas.quiz_schemas import (
     QuizQuestionCreateRequest,
     QuizQuestionDeletedOut,
     QuizQuestionOut,
+    QuizQuestionRegenerateRequest,
     QuizQuestionReorderRequest,
     QuizQuestionUpdateRequest,
     QuizUnpublishPreviewOut,
@@ -210,6 +212,29 @@ async def create_quiz_question(
     """
     service = QuizService(db)
     return await service.create_question(
+        node_id, quiz_id, payload, current_user.sub, current_user.role
+    )
+
+
+@router.post(
+    "/nodes/{node_id}/quizzes/{quiz_id}/questions/regenerate",
+    status_code=status.HTTP_200_OK,
+    response_model=QuizOut,
+)
+async def regenerate_quiz_questions(
+    node_id: UUID,
+    quiz_id: UUID,
+    payload: QuizQuestionRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizOut:
+    """Mentor reworks one or more active questions using AI and mentor feedback.
+
+    Patched questions have hints cleared; response includes hints_stale_question_ids
+    so the UI can nudge hint regeneration.
+    """
+    service = QuizService(db)
+    return await service.regenerate_questions(
         node_id, quiz_id, payload, current_user.sub, current_user.role
     )
 

@@ -211,27 +211,31 @@ BARREL_RULES: list[tuple[str, str]] = [
     ("src.api.utils.common_utils.time", "src.api.utils.common_utils"),
     ("src.api.utils.common_utils.tokens", "src.api.utils.common_utils"),
     (
-        "src.api.control.quiz_agent.prompts.quiz_qc_check_definitions",
+        "src.api.control.quiz_agent.prompts.quiz_graph.quiz_qc_check_definitions",
         "src.api.control.quiz_agent.prompts",
     ),
     (
-        "src.api.control.quiz_agent.prompts.quiz_qc_prompt",
+        "src.api.control.quiz_agent.prompts.quiz_graph.quiz_qc_prompt",
         "src.api.control.quiz_agent.prompts",
     ),
     (
-        "src.api.control.quiz_agent.prompts.quiz_prompt",
+        "src.api.control.quiz_agent.prompts.quiz_graph.quiz_prompt",
         "src.api.control.quiz_agent.prompts",
     ),
     (
-        "src.api.control.quiz_agent.prompts.question_rework_prompt",
+        "src.api.control.quiz_agent.prompts.quiz_graph.question_rework_prompt",
         "src.api.control.quiz_agent.prompts",
     ),
     (
-        "src.api.control.quiz_agent.prompts.question_insert_prompt",
+        "src.api.control.quiz_agent.prompts.quiz_graph.question_insert_prompt",
         "src.api.control.quiz_agent.prompts",
     ),
     (
-        "src.api.control.quiz_agent.prompts.quiz_qc_retry_verification_prompt",
+        "src.api.control.quiz_agent.prompts.quiz_graph.quiz_qc_retry_verification_prompt",
+        "src.api.control.quiz_agent.prompts",
+    ),
+    (
+        "src.api.control.quiz_agent.prompts.quiz_single_regen_graph.quiz_single_regen_prompt",
         "src.api.control.quiz_agent.prompts",
     ),
 ]

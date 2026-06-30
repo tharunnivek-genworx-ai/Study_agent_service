@@ -77,6 +77,19 @@ class HintsNothingToDeleteException(HTTPException):
         )
 
 
+class HintsNothingToRegenerateException(HTTPException):
+    """Raised when whole-quiz hint regeneration finds no complete hints."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "No active questions have complete hints to regenerate. "
+                "Generate hints first."
+            ),
+        )
+
+
 class HintGenerationFailedException(HTTPException):
     """
     Raised when the Hint Agent LLM call fails after maximum retry attempts

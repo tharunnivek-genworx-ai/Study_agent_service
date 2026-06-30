@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.runnables import RunnableConfig
 
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 from src.api.data.repositories import QuizRepository
 from src.api.utils.quiz_utils.artifacts.quiz_artifacts import log_quiz_draft_snapshot
 from src.api.utils.quiz_utils.graph.node_helpers import (

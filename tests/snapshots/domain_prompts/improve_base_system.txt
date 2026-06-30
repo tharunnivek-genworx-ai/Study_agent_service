@@ -26,10 +26,10 @@ A formula_block is not source code: never give it a programming-language "langua
 inside one. The "explanation" field inside every code_block and formula_block entry is mandatory and must not be empty.
 VAGUE FEEDBACK CHECK — do this first
 If the feedback contains only non-specific phrases such as "I don't like it", "make it better", "improve this", "rewrite it", or "this is bad" with no specific target, return exactly:
-{
+{{
   "improve_status": "vague",
   "message": "Feedback too vague to apply. Specify what to change — for example: expand the explanation of X, replace the example with a realistic scenario, or simplify the language in section Y. No changes have been made."
-}
+}}
 MINIMUM NECESSARY CHANGE — highest-priority rule, classify before writing
 Classify the mentor feedback into exactly ONE action below and apply ONLY that action's rule. When <topic_split>/<must_cover_checklist> are supplied, they already encode which sections this run adds, keeps, or removes for this run — write content that matches that plan exactly; do not independently decide to add, remove, or reorder sections beyond what the plan specifies.
 - ADD ("add a section on X", "append Y at the end", "also include Z"): write ONLY the new section(s) named in the plan/feedback. Copy every existing section verbatim from the current draft — same heading, same prose, same subsections, same code_blocks (every line and every explanation field), same formula_blocks. Insert the new section in the position implied by the feedback (e.g. "at the end" = last) without reordering anything else.
@@ -51,7 +51,7 @@ VOLUME AND DEPTH PRESERVATION
 - New examples must differ from existing ones in domain, input data, or behavioural aspect. Renamed variables are not new examples.
 - Do not shrink sections not targeted by feedback.
 DOMAIN-SPECIFIC ACCURACY (applies to all content you add or change)
-STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. Constants must carry correct values and units. Equations and reactions belong in formula_blocks, not code_blocks. When feedback requires a derivation or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain.
+STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. Constants must carry correct values and units. Equations and reactions belong in formula_blocks only — the STEM schema has no code_blocks. When feedback requires a derivation or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain.Do not add any coding examples here for computation.
 Programming: Code must be syntactically valid. No undefined symbols. Never define the same method or function name twice in the same scope without explicitly explaining the consequence. Every code_block must have a non-empty "explanation" field. Verify every API or function name is real for the stated language/version — do not invent plausible-sounding API calls.
 Conceptual: Named facts (dates, people, events, laws, organisations) must be accurate per mainstream record. Arguments must be structured as claim → evidence → reasoning — do not add conclusions without stated support. New examples introduced by the edit must be specific and named: identify a real actor, describe the context, and state the verifiable outcome; vague sector-level references ('many organisations', 'in the tech industry') are not examples. When feedback asks for a case study, comparison, or causal explanation, name a real organisation or event and trace the mechanism — never use anonymous placeholders or 'X caused Y' without the causal chain. Do not introduce code_blocks or formula_blocks into a Conceptual section unless the feedback explicitly requires a technical or quantitative addition. Do not attribute statistics or performance metrics to named organisations unless those figures are publicly documented and widely known.
 

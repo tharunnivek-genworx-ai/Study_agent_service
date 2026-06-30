@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
-from src.api.control.quiz_agent.states.quiz_state import QuizGraphState
+from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 
 
 def parse_json_array(raw: str) -> list:
@@ -34,6 +35,17 @@ def empty_to_none(value: Any) -> Any:
     return value
 
 
+def normalize_question_markdown(text: str) -> str:
+    """Rewrite inline code fences to block fences for consistent markdown rendering."""
+    if not text:
+        return text
+
+    normalized = text
+    normalized = re.sub(r":[ \t]*```(\w*)(?=\n)", r"\n\n```\1", normalized)
+    normalized = re.sub(r"([^\n`])```(?=\n|$)", r"\1\n```", normalized)
+    return normalized
+
+
 def normalize_parsed_items(
     items: list[Any],
     state: QuizGraphState,
@@ -50,6 +62,9 @@ def normalize_parsed_items(
             "GENERATION NOTE"
         ):
             continue
+
+        if isinstance(question_text, str):
+            question_text = normalize_question_markdown(question_text)
 
         for field in (
             "question_text",
@@ -70,7 +85,7 @@ def normalize_parsed_items(
         parsed.append(
             {
                 "question_id": question_id,
-                "question_text": item.get("question_text"),
+                "question_text": question_text,
                 "option_a": item.get("option_a"),
                 "option_b": item.get("option_b"),
                 "option_c": empty_to_none(item.get("option_c")),

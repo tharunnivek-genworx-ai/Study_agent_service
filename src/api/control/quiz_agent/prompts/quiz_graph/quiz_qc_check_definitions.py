@@ -26,6 +26,13 @@ PER_QUESTION_CHECK_CATEGORIES_BLOCK = """For EACH question, produce one question
    right (not just restates it), all four options are plausible distractors.
    Fail: off-topic; vague or double-barreled stem; explanation empty or only
    restates the answer; absurd or obviously wrong distractors; hallucinated claim.
+   Quiz-only answerability: evaluate question_text as a trainee would see it — without
+   the study material. Fail quality_passed if the stem depends on unstated context
+   (artifacts, setups, cases, or identifiers that appear only in the material and are
+   not reproduced in question_text).
+   Embedded artifact format: when question_text includes a fenced block, fail
+   quality_passed if the opening fence is not on its own line after a blank line, or if
+   the closing fence is not on its own line.
    quality_evidence format: one sentence — reason for pass or the specific failure.
 When either dimension fails, populate corrective_hint with one actionable sentence
 describing the root-cause fix. Leave corrective_hint as "" when both dimensions pass."""

@@ -64,11 +64,11 @@ async def regenerate_hints(
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> QuizOut:
-    """Mentor regenerates hints for specific questions after draft edits.
+    """Mentor regenerates hints for specific questions or the whole quiz.
 
-    question_ids must be the complete set of questions to overwrite —
-    typically those edited since the last hint generation pass.
-    Returns the updated QuizOut with refreshed hints for the specified questions.
+    scope='selective' requires question_ids; scope='all' regenerates every active
+    question with complete hints and requires mentor_feedback.
+    Returns the updated QuizOut with refreshed hints.
     """
     service = HintService(db)
     return await service.regenerate_hints(
