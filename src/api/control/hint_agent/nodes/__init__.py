@@ -1,0 +1,1 @@
+"""Hint generation graph nodes."""

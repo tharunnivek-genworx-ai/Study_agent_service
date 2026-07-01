@@ -298,7 +298,7 @@ class TestUnifiedVerificationMerge:
         assert "structure" not in result["scores"]
         assert "readability" not in result["scores"]
 
-    def test_teaching_alignment_score_preserved_after_targeted_merge(self):
+    def test_teaching_alignment_evicted_when_sections_revised(self):
         prior = {
             "checks": [
                 {
@@ -329,6 +329,42 @@ class TestUnifiedVerificationMerge:
             new_verification,
             reverify_section_ids=["mc_2"],
         )
+        ta_checks = [
+            c for c in merged_checks if c.get("category") == "teaching_alignment"
+        ]
+        assert ta_checks == []
+
+    def test_teaching_alignment_score_from_fresh_targeted_check(self):
+        prior = {
+            "checks": [
+                {
+                    "id": "teaching_alignment_1",
+                    "category": "teaching_alignment",
+                    "section_id": "",
+                    "passed": False,
+                    "severity": "major",
+                }
+            ]
+        }
+        new_verification = {
+            "is_refusal": False,
+            "hallucination_risk": "none",
+            "issues": [],
+            "checks": [
+                {
+                    "id": "teaching_alignment_retry",
+                    "category": "teaching_alignment",
+                    "section_id": "",
+                    "passed": True,
+                    "severity": "major",
+                }
+            ],
+        }
+        merged_checks = merge_targeted_qc_checks(
+            prior,
+            new_verification,
+            reverify_section_ids=["mc_2"],
+        )
         result = build_final_qc_result(
             {**new_verification, "checks": merged_checks},
             [],
@@ -339,7 +375,49 @@ class TestUnifiedVerificationMerge:
         assert result["scores"]["teaching_alignment"] == 10
 
 
-class TestDedupDocumentLevelChecks:
+class TestExtractPriorTeachingAlignment:
+    def test_extracts_failed_document_level_check(self):
+        from src.api.control.study_agent.prompts.qc.qc_retry_verification_prompt import (
+            extract_prior_teaching_alignment_failure,
+        )
+
+        prior = {
+            "checks": [
+                {
+                    "id": "ta_pass",
+                    "category": "teaching_alignment",
+                    "passed": True,
+                },
+                {
+                    "id": "ta_fail",
+                    "category": "teaching_alignment",
+                    "section_id": "",
+                    "passed": False,
+                    "evidence": "Too thin.",
+                },
+            ]
+        }
+        result = extract_prior_teaching_alignment_failure(prior)
+        assert result is not None
+        assert result["id"] == "ta_fail"
+
+    def test_ignores_section_scoped_failure(self):
+        from src.api.control.study_agent.prompts.qc.qc_retry_verification_prompt import (
+            extract_prior_teaching_alignment_failure,
+        )
+
+        prior = {
+            "checks": [
+                {
+                    "id": "ta_section",
+                    "category": "teaching_alignment",
+                    "section_id": "ts_3",
+                    "passed": False,
+                }
+            ]
+        }
+        assert extract_prior_teaching_alignment_failure(prior) is None
+
     def test_keeps_last_document_level_teaching_alignment(self):
         checks = [
             {
@@ -446,8 +524,29 @@ class TestTargetedCheckMerge:
         assert merged[1]["section_id"] == "mc_2"
         assert merged[1]["passed"] is True
 
-    def test_teaching_alignment_no_section_id_carried_forward_on_revision(self):
-        """Document-level teaching_alignment survives targeted merge when sections are revised."""
+    def test_teaching_alignment_no_section_id_evicted_on_revision(self):
+        """Document-level teaching_alignment is evicted when any section is revised."""
+        prior = {
+            "checks": [
+                {
+                    "id": "teaching_alignment_1",
+                    "category": "teaching_alignment",
+                    "section_id": "",
+                    "passed": False,
+                    "severity": "major",
+                    "evidence": "Derivation lacks clarity.",
+                }
+            ]
+        }
+        merged = merge_targeted_qc_checks(
+            prior,
+            {"checks": []},
+            reverify_section_ids=["mc_5"],
+        )
+        assert merged == []
+
+    def test_teaching_alignment_no_section_id_kept_without_revision(self):
+        """Document-level teaching_alignment survives when no section is in reverify scope."""
         prior = {
             "checks": [
                 {
@@ -462,7 +561,7 @@ class TestTargetedCheckMerge:
         merged = merge_targeted_qc_checks(
             prior,
             {"checks": []},
-            reverify_section_ids=["mc_5"],
+            reverify_section_ids=[],
         )
         assert len(merged) == 1
         assert merged[0]["category"] == "teaching_alignment"

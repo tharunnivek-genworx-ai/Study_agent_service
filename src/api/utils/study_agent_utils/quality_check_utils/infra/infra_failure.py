@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, cast
 
-from src.api.config.llm_config import llm_settings
-from src.api.schemas.common.generation_diagnostics_schema import QcInfraErrorType
+from src.api.config import llm_settings
+from src.api.schemas.common import QcInfraErrorType
 from src.api.utils.LLM_utils.groq_retry import GroqCallResult
 from src.api.utils.LLM_utils.llm_failure_diagnostics import build_qc_infra_error_result
 from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (

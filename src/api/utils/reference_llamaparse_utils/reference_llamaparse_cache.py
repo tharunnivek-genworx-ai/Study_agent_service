@@ -10,21 +10,23 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.control.study_agent.utils.parsing.llama_parse_extractor import (
-    LlamaParseExtractionResult,
-    ParseImageRecord,
-    compute_pdf_content_hash,
-    extract_structured_reference,
-    fetch_structured_data_from_extract_job,
-)
 from src.api.data.models.postgres.e_learning_content.reference_llamaparse_images import (
     ReferenceLlamaParseImage,
 )
 from src.api.data.models.postgres.e_learning_content.reference_llamaparse_pdf import (
     ReferenceLlamaParsePdf,
 )
-from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (
+from src.api.data.repositories import (
     ReferenceLlamaParseRepository,
+)
+from src.api.schemas.study_material_schemas.llama_parse_schema import (
+    LlamaParseExtractionResult,
+    ParseImageRecord,
+)
+from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
+    compute_pdf_content_hash,
+    extract_structured_reference,
+    fetch_structured_data_from_extract_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,9 +108,20 @@ async def _try_load_cached_extraction(
     node_id: UUID,
     api_key: str,
 ) -> LlamaParseExtractionResult | None:
-    """Load a prior parse for identical PDF bytes from the database."""
+    """Load a prior parse for identical PDF bytes from the database.
+
+    This implements a two-tier caching strategy:
+    1. CONTEXTUAL CHECK: Looks up the cache specifically by reference_material_id
+       and node_id. If found and the content_hash matches, we reuse the row. Since the
+       context association already exists in the database, we skip database persistence.
+    2. CONTENT-ADDRESSABLE FALLBACK: If the current context is new, checks if this
+       identical PDF has been parsed anywhere else in the system (by content_hash). If so,
+       we reuse the cached JSON and image assets to avoid slow and expensive LlamaParse
+       API calls. We set skip_persist=False to save this new node-to-reference link.
+    """
     repo = ReferenceLlamaParseRepository(session)
 
+    # --- TIER 1: Check if this specific node + reference material combination has this file cached ---
     current = await repo.get_by_reference_and_node(reference_material_id, node_id)
     if current is not None and current.content_hash == content_hash:
         images = await repo.list_images_for_pdf(current.llamaparse_pdf_id)
@@ -136,9 +149,12 @@ async def _try_load_cached_extraction(
                 images,
                 content_hash=content_hash,
                 structured_data=structured_data,
+                # If json wasn't fetched from LlamaCloud, it is already in our DB for this node,
+                # so we skip persisting it again.
                 skip_persist=not json_fetched,
             )
 
+    # --- TIER 2: Fallback to checking if the same file bytes (content_hash) were parsed anywhere else ---
     cached = await repo.get_with_images_by_content_hash(content_hash)
     if cached is None:
         return None
@@ -172,6 +188,8 @@ async def _try_load_cached_extraction(
         images,
         content_hash=content_hash,
         structured_data=structured_data,
+        # Set skip_persist=False so the caller writes a new database link associating
+        # this new (reference_material_id, node_id) context with the existing parse row.
         skip_persist=False,
     )
 

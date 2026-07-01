@@ -1,0 +1,15 @@
+{
+  "topic": "Light Particle Wave Duality",
+  "topic_slug": "light_particle_wave_duality",
+  "timestamp": "20260627_144443",
+  "started_at": "2026-06-27T14:44:43.555392+00:00",
+  "finished_at": "2026-06-27T14:44:58.109340+00:00",
+  "generation_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\light_particle_wave_duality_20260627_144443\\generation",
+  "qc_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\light_particle_wave_duality_20260627_144443\\qc",
+  "status": "completed",
+  "failed_stage": null,
+  "concept_checklist_output_dir": "C:\\CapStone\\study_agent_service\\test_new_prompts\\run_output\\light_particle_wave_duality_20260627_144443\\concept_checklist",
+  "domain": "STEM",
+  "topic_split_count": 6,
+  "must_cover_count": 5
+}

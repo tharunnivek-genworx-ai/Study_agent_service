@@ -137,6 +137,10 @@ class StudyMaterialGenerateRequest(BaseModel):
             "or its parent space. When set, extracted PDF text is passed to the LLM."
         ),
     )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
+    )
 
 
 class StudyMaterialRegenerateRequest(BaseModel):
@@ -155,6 +159,10 @@ class StudyMaterialRegenerateRequest(BaseModel):
         description=(
             "What is wrong with the current draft and what must improve in the rewrite."
         ),
+    )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
     )
 
 
@@ -176,6 +184,10 @@ class StudyMaterialImproveRequest(BaseModel):
         min_length=10,
         max_length=4000,
         description="Mentor's improvement instructions sent to the LLM.",
+    )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description="Client-generated session id for polling generation progress.",
     )
 
 
@@ -290,9 +302,6 @@ class StudyMaterialActivateRequest(BaseModel):
     )
 
 
-# ── Response Schemas ─────────────────────────────────────────────────────────
-
-
 class StudyMaterialVersionOut(BaseModel):
     """
     Full representation of a study_material_versions row.
@@ -345,6 +354,13 @@ class StudyMaterialVersionOut(BaseModel):
     @property
     def display_label(self) -> str:
         return build_version_display_label(self.version_number, self.generation_type)
+
+
+class StudyMaterialGenerateResponse(StudyMaterialVersionOut):
+    """Generate endpoint response including durable run metadata for resume/progress."""
+
+    run_id: UUID
+    progress_session_id: UUID
 
 
 class StudyMaterialVersionSummary(BaseModel):
@@ -558,6 +574,8 @@ class TraineeArchivedSmItemOut(BaseModel):
     version_label: str
     published_at: datetime | None
     superseded_at: datetime | None = None
+    removed_at: datetime | None = None
+    can_read_material: bool = True
     you_read_this: bool = False
     has_archived_quiz: bool = False
     archived_quiz_id: UUID | None = None
@@ -628,3 +646,5 @@ class StudyMaterialFeedbackResponse(BaseModel):
     qc_failed_permanently: bool = False
     qc_result: GenerationDiagnosticsOut | None = None
     next_llm_retry_at: datetime | None = None
+    run_id: UUID | None = None
+    progress_session_id: UUID | None = None

@@ -6,7 +6,7 @@ progress domain because they interpret ``completion_status`` and read
 percentages — not study-material content.
 """
 
-from src.api.schemas.progress_schemas.trainee_progress_schema import (
+from src.api.schemas.progress_schemas import (
     TraineeNodeProgressBatchItemOut,
 )
 

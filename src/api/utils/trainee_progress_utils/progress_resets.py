@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.data.models.postgres.progress_models.trainee_node_progress import (
     TraineeNodeProgress,
 )
-from src.api.utils.common_utils.time import utc_now
+from src.api.utils.common_utils import utc_now
 from src.api.utils.mentor_progress_utils.space_recompute import (
     recompute_all_trainees_space_progress,
 )

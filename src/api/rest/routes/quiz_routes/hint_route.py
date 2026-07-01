@@ -16,15 +16,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.quiz_services.hint_service import HintService
-from src.api.data.clients.postgres.database import get_db
+from src.api.core.services import HintService
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.schemas.quiz_schemas.hint_schema import (
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.schemas.quiz_schemas import (
     HintGenerateRequest,
     HintRegenerateRequest,
+    QuizOut,
 )
-from src.api.schemas.quiz_schemas.quiz_schema import QuizOut
 
 router = APIRouter(tags=["Quiz Hints"])
 
@@ -64,11 +64,11 @@ async def regenerate_hints(
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> QuizOut:
-    """Mentor regenerates hints for specific questions after draft edits.
+    """Mentor regenerates hints for specific questions or the whole quiz.
 
-    question_ids must be the complete set of questions to overwrite —
-    typically those edited since the last hint generation pass.
-    Returns the updated QuizOut with refreshed hints for the specified questions.
+    scope='selective' requires question_ids; scope='all' regenerates every active
+    question with complete hints and requires mentor_feedback.
+    Returns the updated QuizOut with refreshed hints.
     """
     service = HintService(db)
     return await service.regenerate_hints(

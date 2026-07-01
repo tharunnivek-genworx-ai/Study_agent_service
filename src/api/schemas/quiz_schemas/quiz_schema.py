@@ -31,16 +31,15 @@ responses, labelled '(Removed)' by the frontend using is_active=False flag.
 """
 
 from datetime import datetime
-from typing import Any, Literal, Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.api.schemas.common.generation_diagnostics_schema import (
+from src.api.schemas.common import (
     GenerationDiagnosticsOut,
-    QualityCheckItemOut,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
+from src.api.schemas.study_material_schemas import RetentionMode
 
 # ── Enums / Literals ─────────────────────────────────────────────────────────
 
@@ -49,41 +48,6 @@ QuizAttemptStatus = Literal["in_progress", "submitted", "abandoned"]
 CorrectOption = Literal["A", "B", "C", "D"]
 QuestionSource = Literal["ai_generated", "mentor_manual"]
 QuestionNavStatus = Literal["notVisited", "visited", "answered", "skipped"]
-
-
-class QuizQualityCheckScoresOut(BaseModel):
-    """Individual dimension scores from the quiz QC evaluator."""
-
-    answer_correctness: int | None = None
-    question_quality: int | None = None
-    topic_relevance: int | None = None
-    option_quality: int | None = None
-    question_clarity: int | None = None
-    difficulty_alignment: int | None = None
-    explanation_quality: int | None = None
-    duplicate_overlap: int | None = None
-
-
-class QuizQualityCheckFlaggedQuestionOut(BaseModel):
-    """Flagged question entry in the quiz QC result."""
-
-    question_id: UUID
-    question_number: int
-    flags: list[str] = Field(default_factory=list)
-
-
-class QuizQualityCheckResultOut(BaseModel):
-    """Structured quiz QC evaluation result surfaced to the frontend."""
-
-    overall_status: Literal["pass", "warn", "fail"]
-    wrong_answer_risk: Literal["none", "low", "medium", "high"]
-    checks: list[QualityCheckItemOut] = Field(default_factory=list)
-    issues: list[str] = Field(default_factory=list)
-    corrective_instructions: str = ""
-    summary: str = ""
-    scores: QuizQualityCheckScoresOut | None = None
-    flagged_questions: list[QuizQualityCheckFlaggedQuestionOut] | None = None
-    retry_recommendation: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,10 +174,6 @@ class QuizQuestionUpdateRequest(BaseModel):
     If any option field is provided, the merged question must still have all
     four non-empty options after the update.
 
-    Note: updating correct_option on a published quiz triggers a
-    quiz_questions_edited node_event_notification (EC-12). The service
-    handles this; the schema does not need to carry a flag for it.
-
     hint_3 is the most explicit hint — it must NOT reveal the correct answer.
     explanation is post-submit only and must NOT reveal the answer during a live attempt.
     """
@@ -237,6 +197,27 @@ class QuizQuestionUpdateRequest(BaseModel):
             if value is not None and not str(value).strip():
                 raise ValueError(f"{field} must be non-empty when provided.")
         return self
+
+
+class QuizQuestionRegenerateRequest(BaseModel):
+    """
+    Body for POST /nodes/:id/quizzes/:quiz_id/questions/regenerate.
+
+    Reworks one or more active questions in-place using mentor feedback and
+    the published study material as source context.
+    """
+
+    question_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        description="Active question_ids to rework (must belong to this quiz).",
+    )
+    mentor_feedback: str = Field(
+        ...,
+        min_length=10,
+        max_length=4000,
+        description="Mentor instructions describing what to change.",
+    )
 
 
 class QuizQuestionReorderRequest(BaseModel):
@@ -309,12 +290,30 @@ class QuizOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     hints_status: str = "none"  # "none" | "partial" | "complete"
+    hints_stale_question_ids: list[UUID] = Field(
+        default_factory=list,
+        description=(
+            "Question IDs whose hints were cleared after AI rework; "
+            "mentor should regenerate hints for these questions."
+        ),
+    )
     questions: list[QuizQuestionOut] = Field(default_factory=list)
 
     # ── Quality-Check fields ──────────────────────────────────────
     qc_failed_permanently: bool = False
     qc_result: GenerationDiagnosticsOut | None = None
     next_llm_retry_at: datetime | None = None
+
+    run_id: UUID | None = Field(
+        default=None,
+        description="Durable generation run id for resume and progress polling.",
+    )
+    progress_session_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Deprecated alias for run_id. Poll GET /generation-progress/{run_id}."
+        ),
+    )
 
 
 class QuizSummaryOut(BaseModel):

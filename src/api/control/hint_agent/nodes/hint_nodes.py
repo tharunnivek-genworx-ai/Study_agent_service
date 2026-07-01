@@ -18,25 +18,23 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.hint_agent.prompts.hint_prompt import build_hint_prompt
 from src.api.control.hint_agent.states.hint_state import HintGraphState
-from src.api.core.exceptions.quiz_exceptions.hint_generation_exceptions import (
+from src.api.core.exceptions import (
     HintsCannotGenerateOnPublishedQuizException,
     QuizHasNoQuestionsException,
-)
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
 )
-from src.api.data.repositories.quiz_repositories.hint_repository import HintRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: E501
+from src.api.data.repositories import (  # noqa: E501
+    HintRepository,
     StudyMaterialRepository,
 )
-from src.api.schemas.common.generation_diagnostics_schema import (
+from src.api.schemas.common import (
     HintGenerationDiagnosticsOut,
     HintQuestionErrorOut,
 )
-from src.api.utils.artifacts.common import new_artifact_run_id
+from src.api.utils.artifacts import new_artifact_run_id
 from src.api.utils.hint_utils.artifacts.hint_artifacts import log_hint_agent
 from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
 from src.api.utils.LLM_utils.llm_failure_diagnostics import (
@@ -115,12 +113,21 @@ async def load_hint_context(
     if quiz.is_published:
         raise HintsCannotGenerateOnPublishedQuizException()
 
-    questions = await repo.get_active_questions_by_quiz(state["quiz_id"])
+    filter_ids = state.get("questions_filter_ids")
+    if filter_ids:
+        questions = await repo.get_active_questions_by_ids(state["quiz_id"], filter_ids)
+        filter_set = {str(fid) for fid in filter_ids}
+        questions = [q for q in questions if str(q.question_id) in filter_set]
+    else:
+        questions = await repo.get_active_questions_missing_hints(state["quiz_id"])
+
     if not questions:
         raise QuizHasNoQuestionsException()
 
-    questions_for_hinting = [
-        {
+    is_regeneration = bool(filter_ids)
+
+    def _question_for_hinting(q: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "question_id": str(q.question_id),
             "question_text": q.question_text,
             "option_a": q.option_a,
@@ -130,17 +137,22 @@ async def load_hint_context(
             "correct_option": q.correct_option,
             "explanation": q.explanation,
         }
-        for q in questions
-    ]
+        if is_regeneration:
+            payload["previous_hints"] = {
+                "hint_1": q.hint_1 or "",
+                "hint_2": q.hint_2 or "",
+                "hint_3": q.hint_3 or "",
+            }
+        return payload
 
-    # Apply filter if specific question IDs were requested (for selective regeneration)
-    filter_ids = state.get("questions_filter_ids")
-    if filter_ids:
-        filter_set = {str(fid) for fid in filter_ids}
+    questions_for_hinting = [_question_for_hinting(q) for q in questions]
+
+    hints_written = dict(state.get("hints_written") or {})
+    if hints_written:
         questions_for_hinting = [
-            q for q in questions_for_hinting if q["question_id"] in filter_set
+            q for q in questions_for_hinting if q["question_id"] not in hints_written
         ]
-        if not questions_for_hinting:
+        if not questions_for_hinting and not state.get("failed_question_ids"):
             raise QuizHasNoQuestionsException()
 
     domain: str | None = None
@@ -161,6 +173,7 @@ async def load_hint_context(
         "domain": domain,
         "artifact_run_id": state.get("artifact_run_id") or new_artifact_run_id(),
         "questions_for_hinting": questions_for_hinting,
+        "hints_written": hints_written or None,
     }
 
 
@@ -187,7 +200,7 @@ async def invoke_hint_llm(state: HintGraphState) -> HintGraphState:
             HumanMessage(content=prompt_input["user_message"]),
         ],
         model=llm_settings.llm_model,
-        temperature=0.4,
+        temperature=llm_settings.hint_generation_temperature,
         timeout=120,
         graph_node="hint_generator",
     )
@@ -314,7 +327,7 @@ async def _regenerate_hints_for_question(
             HumanMessage(content=prompt_input["user_message"]),
         ],
         model=llm_settings.llm_model,
-        temperature=0.4,
+        temperature=llm_settings.hint_generation_temperature,
         timeout=120,
         graph_node="hint_generator",
     )
@@ -344,9 +357,21 @@ async def _regenerate_hints_for_question(
     return None
 
 
-async def validate_hint_quality(state: HintGraphState) -> HintGraphState:
+async def validate_hint_quality(
+    state: HintGraphState, config: RunnableConfig
+) -> HintGraphState:
+    session = _session(config)
+    repo = HintRepository(session)
     questions = state.get("questions_for_hinting") or []
     parsed = state.get("parsed_hints") or []
+    hints_written = dict(state.get("hints_written") or {})
+
+    failed_ids = state.get("failed_question_ids")
+    if failed_ids:
+        failed_set = {str(fid) for fid in failed_ids}
+        questions = [q for q in questions if q["question_id"] in failed_set]
+    else:
+        questions = [q for q in questions if q["question_id"] not in hints_written]
 
     by_question_id: dict[str, dict] = {}
     for hint in parsed:
@@ -363,6 +388,9 @@ async def validate_hint_quality(state: HintGraphState) -> HintGraphState:
 
     for q in questions:
         qid = q["question_id"]
+        if qid in hints_written:
+            continue
+
         hint = by_question_id.get(qid)
         attempts = 0
         max_retries = llm_settings.hint_quality_max_retries
@@ -373,14 +401,21 @@ async def validate_hint_quality(state: HintGraphState) -> HintGraphState:
                     hint.get("hint_1"), hint.get("hint_2"), hint.get("hint_3")
                 )
                 if issue is None:
-                    validated.append(
-                        {
-                            "question_id": qid,
-                            "hint_1": hint["hint_1"],
-                            "hint_2": hint["hint_2"],
-                            "hint_3": hint["hint_3"],
-                        }
+                    hint_payload = {
+                        "question_id": qid,
+                        "hint_1": hint["hint_1"],
+                        "hint_2": hint["hint_2"],
+                        "hint_3": hint["hint_3"],
+                    }
+                    validated.append(hint_payload)
+                    await repo.update_question_hints(
+                        UUID(qid),
+                        hint["hint_1"],
+                        hint["hint_2"],
+                        hint["hint_3"],
+                        commit=False,
                     )
+                    hints_written[qid] = hint_payload
                     break
 
             if attempts >= max_retries:
@@ -397,14 +432,21 @@ async def validate_hint_quality(state: HintGraphState) -> HintGraphState:
             hint = await _regenerate_hints_for_question(q, state)
 
     diagnostics: dict[str, Any] | None = None
+    failed_question_ids: list[str] | None = None
     if question_errors:
         diagnostics = HintGenerationDiagnosticsOut.model_validate(
             {"questionErrors": question_errors}
         ).model_dump(by_alias=True, exclude_none=True)
+        failed_question_ids = [
+            str(err.get("questionId") or err.get("question_id"))
+            for err in question_errors
+        ]
 
     validation_return = {
         **state,
         "validated_hints": validated,
+        "hints_written": hints_written,
+        "failed_question_ids": failed_question_ids,
         "hint_generation_diagnostics": diagnostics,
     }
     _log_hint_artifact(
@@ -424,11 +466,15 @@ async def persist_hints_to_questions(
 ) -> HintGraphState:
     session = _session(config)
     repo = HintRepository(session)
+    hints_written = state.get("hints_written") or {}
     validated = state.get("validated_hints") or []
 
     for hint in validated:
+        qid = hint["question_id"]
+        if qid in hints_written:
+            continue
         await repo.update_question_hints(
-            UUID(hint["question_id"]),
+            UUID(qid),
             hint["hint_1"],
             hint["hint_2"],
             hint["hint_3"],
@@ -437,15 +483,16 @@ async def persist_hints_to_questions(
 
     diagnostics = state.get("hint_generation_diagnostics")
     next_llm_retry_at = state.get("next_llm_retry_at")
+    hint_writes_pending = bool(validated or hints_written)
     if diagnostics:
         await repo.merge_quiz_qc_result(
             state["quiz_id"],
             {"hintGeneration": diagnostics},
             next_llm_retry_at=next_llm_retry_at,
         )
-    elif validated:
+    elif hint_writes_pending:
         await repo.touch_quiz_updated_at(state["quiz_id"])
-    else:
+    if hint_writes_pending:
         await session.commit()
 
     _log_hint_artifact(

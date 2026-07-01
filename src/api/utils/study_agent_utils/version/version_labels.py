@@ -1,8 +1,6 @@
 """Human-readable labels for study material version history."""
 
-from typing import Literal
-
-GenerationType = Literal["generate", "regenerate", "improve", "manual_edit"]
+from src.api.schemas.common import GenerationType
 
 GENERATION_TYPE_LABELS: dict[str, str] = {
     "generate": "Generated",

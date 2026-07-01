@@ -9,13 +9,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.progress_repositories.trainee_node_progress_repository import (
     TraineeNodeProgressRepository,
-)
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
     TraineeQuizRepository,
 )
 from src.api.utils.trainee_progress_utils.completion import compute_completion_status

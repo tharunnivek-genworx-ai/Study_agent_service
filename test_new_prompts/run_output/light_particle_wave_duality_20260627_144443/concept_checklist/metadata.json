@@ -1,0 +1,23 @@
+{
+  "stage": "concept_checklist",
+  "topic": "Light Particle Wave Duality",
+  "started_at": "2026-06-27T14:44:43.556421+00:00",
+  "finished_at": "2026-06-27T14:44:46.110416+00:00",
+  "duration_seconds": 2.553995,
+  "llm_ok": true,
+  "llm_error_type": null,
+  "llm_model_used": "llama-3.1-8b-instant",
+  "token_usage": 5262,
+  "parse_retries": 0,
+  "provider_meta": {
+    "api_key_alias": "key_1",
+    "attempt_index": 1,
+    "graph_node": "concept_checklist"
+  },
+  "suggestion": null,
+  "effective_instruction": "Write a comprehensive study guide on the Light Particle Wave Duality, covering its basics, common pitfalls, and real-world scenarios.Include a worked example for each major concept, and a checklist of the key topics to cover. It should be very verbose and detailed with many subsections and subtopics.Generated content should be on the level of a university physics textbook, with detailed subsections and subtopics. Every subsection must have very big paragraphs and detailed explanations.",
+  "ok": true,
+  "domain": "STEM",
+  "topic_split_count": 6,
+  "must_cover_count": 5
+}

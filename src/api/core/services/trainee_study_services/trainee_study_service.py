@@ -12,32 +12,24 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.study_material_exceptions.reference_material_exceptions import (
+from src.api.core.exceptions import (
     NodeMediaNotFoundException,
-)
-from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     StudyMaterialNoPublishedVersionException,
     StudyMaterialPdfGenerationFailedException,
 )
-from src.api.core.services.progress_services.trainee_progress_service import (
+from src.api.core.services import (
     TraineeProgressService,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.study_agent_repositories.reference_material_repository import (
     ReferenceMaterialRepository,
-)
-from src.api.data.repositories.trainee_study_repositories.trainee_study_repository import (
     TraineeStudyRepository,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import (
+from src.api.schemas.study_material_schemas import (
     TraineeArchivedSmItemOut,
     TraineeArchivedSmListOut,
     TraineeArchivedStudyMaterialOut,
     TraineeStudyMaterialOut,
-)
-from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import (
     TraineeTopicResourceListOut,
 )
 from src.api.utils.content_lifecycle import (
@@ -62,6 +54,7 @@ from src.api.utils.study_agent_utils.version.version_labels import (
 )
 from src.api.utils.trainee_study_utils.trainee_topic_resource_utils import (
     _storage_filename,
+    build_trainee_topic_resource_from_reference,
     build_trainee_topic_resource_out,
 )
 
@@ -174,6 +167,8 @@ class TraineeStudyService:
                     ),
                     published_at=version.published_at,
                     superseded_at=version.superseded_at,
+                    removed_at=version.superseded_at,
+                    can_read_material=True,
                     you_read_this=you_read_this,
                     has_archived_quiz=quiz is not None,
                     archived_quiz_id=quiz.quiz_id if quiz else None,
@@ -200,6 +195,8 @@ class TraineeStudyService:
                         ),
                         published_at=published_sm.published_at,
                         superseded_at=None,
+                        removed_at=quiz.superseded_at,
+                        can_read_material=True,
                         you_read_this=you_read_this,
                         has_archived_quiz=True,
                         archived_quiz_id=quiz.quiz_id,
@@ -270,7 +267,7 @@ class TraineeStudyService:
         user_id: UUID,
         role: str,
     ) -> TraineeTopicResourceListOut:
-        """List mentor-attached topic resources (node_media) for trainees."""
+        """List mentor-attached topic resources for trainees."""
         _assert_trainee(role)
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=False
@@ -278,10 +275,23 @@ class TraineeStudyService:
         await _assert_space_access(self.session, node.space_id, user_id, role)
 
         repo = ReferenceMaterialRepository(self.session)
-        items = await repo.get_media_by_node(node_id)
-        resources = [
-            build_trainee_topic_resource_out(item, node_id=node_id) for item in items
+        visible_refs = await repo.get_visible_by_node(node_id)
+        ref_resources = [
+            build_trainee_topic_resource_from_reference(
+                item, node_id=node_id, order_index=index
+            )
+            for index, item in enumerate(visible_refs)
         ]
+        ref_offset = len(ref_resources)
+        node_media = await repo.get_media_by_node(node_id)
+        media_resources = [
+            build_trainee_topic_resource_out(
+                item,
+                node_id=node_id,
+            ).model_copy(update={"order_index": ref_offset + item.order_index})
+            for item in node_media
+        ]
+        resources = ref_resources + media_resources
         return TraineeTopicResourceListOut(
             node_id=node_id,
             items=resources,
@@ -323,6 +333,46 @@ class TraineeStudyService:
             "application/pdf"
             if media.media_type == "pdf"
             else "application/octet-stream"
+        )
+        disposition = "attachment" if as_attachment else "inline"
+        content_disposition = f'{disposition}; filename="{filename}"'
+        return file_path.read_bytes(), filename, mime_type, content_disposition
+
+    async def get_reference_material_file(
+        self,
+        node_id: UUID,
+        material_id: UUID,
+        user_id: UUID,
+        role: str,
+        *,
+        as_attachment: bool,
+    ) -> tuple[bytes, str, str, str]:
+        """Return file bytes for a trainee-visible reference material."""
+        _assert_trainee(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=False
+        )
+        await _assert_space_access(self.session, node.space_id, user_id, role)
+
+        repo = ReferenceMaterialRepository(self.session)
+        material = await repo.get_by_id(material_id)
+        if (
+            material is None
+            or material.deleted_at is not None
+            or material.node_id != node_id
+            or not material.is_visible_to_trainees
+        ):
+            raise NodeMediaNotFoundException()
+
+        file_path = Path(material.file_url.replace("\\", "/"))
+        if not file_path.is_file():
+            raise NodeMediaNotFoundException()
+
+        filename = material.file_name
+        mime_type = (
+            material.mime_type
+            or mimetypes.guess_type(filename)[0]
+            or ("application/octet-stream")
         )
         disposition = "attachment" if as_attachment else "inline"
         content_disposition = f'{disposition}; filename="{filename}"'

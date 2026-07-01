@@ -9,4 +9,6 @@ repos:
     rev: v1.17.1
     hooks:
       - id: mypy
+        pass_filenames: false
+        args: ["src", "tests", "scripts"]
         additional_dependencies: [pydantic]

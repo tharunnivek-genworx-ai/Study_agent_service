@@ -159,13 +159,16 @@ ABSOLUTE RULES
 SYSTEM_PROMPT_HINT_REGENERATE_APPENDIX = """
 RULE — REGENERATION MODE
 You are regenerating hints for one or more questions that already had hints.
+Each question in <questions> may include a "previous_hints" object with hint_1,
+hint_2, and hint_3 from the prior generation. Read all three levels before writing
+replacements — they show what the trainee has already seen and what to improve.
 Replace the previous hints entirely — do not reuse or lightly edit the old wording
-unless the mentor feedback explicitly asks to preserve something.
+unless <mentor_feedback> explicitly asks to preserve one or more hint levels.
 When <mentor_feedback> is provided and non-empty, treat it as the primary directive
 for how the new hints should differ (tone, specificity, focus, difficulty of nudge).
 Still obey every hint-level, domain-aware reasoning, and no-reveal rule above.
 When <mentor_feedback> is empty, produce fresh hints that remain compliant but are
-not identical copies of typical prior wording — vary phrasing while staying accurate.
+not identical copies of the previous_hints wording — vary phrasing while staying accurate.
 """
 USER_MESSAGE_TEMPLATE_HINT = """
 USER MESSAGE  —  assemble this at call time and pass as role: user
@@ -192,6 +195,8 @@ USER MESSAGE  —  assemble this at call time and pass as role: user
 <questions>
 {questions_json}
 </questions>
+Each question object may include "previous_hints" with hint_1, hint_2, hint_3 from the
+prior generation. Use those as context when applying mentor feedback below.
 <mentor_feedback>
 {mentor_feedback_text}
 </mentor_feedback>

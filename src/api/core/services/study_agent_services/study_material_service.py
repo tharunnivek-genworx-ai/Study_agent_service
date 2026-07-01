@@ -13,12 +13,15 @@ the node — publishing or superseding study material does not auto-publish,
 unpublish, or retire quizzes.
 """
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.control.study_agent.graph.resume_router import hydrate_checkpoint_state
 from src.api.control.study_agent.graph.runner import (
+    run_study_material_from_checkpoint,
     run_study_material_generation,
     run_study_material_improve,
     run_study_material_regeneration,
@@ -28,6 +31,7 @@ from src.api.control.study_agent.utils.instructions.instruction_snapshot import 
     extract_effective_instruction_snapshot,
 )
 from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
+    LLMGenerationFailedException,
     StudyMaterialCannotArchiveNonDraftException,
     StudyMaterialCannotArchivePublishedException,
     StudyMaterialCannotUnarchiveTraineeHistoryException,
@@ -44,6 +48,7 @@ from src.api.core.exceptions.study_material_exceptions.study_material_exceptions
     StudyMaterialVersionNotArchivedException,
     StudyMaterialVersionNotPublishedException,
 )
+from src.api.core.services.generation_run_service import GenerationRunService
 from src.api.core.services.study_agent_services.study_material_publish_ops import (
     execute_publish_version_cascade,
     execute_unpublish_version_cascade,
@@ -63,7 +68,16 @@ from src.api.data.repositories.study_agent_repositories.study_material_repositor
 from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
     TraineeQuizRepository,
 )
-from src.api.schemas.common.generation_diagnostics_schema import QualityCheckItemOut
+from src.api.schemas.common.generation_diagnostics_schema import (
+    GenerationDiagnosticsOut,
+    QualityCheckItemOut,
+)
+from src.api.schemas.generation_run_schema import (
+    GenerationRunCreate,
+    GenerationRunMode,
+    GenerationRunPipeline,
+    GenerationRunResumeResult,
+)
 from src.api.schemas.qc_schemas.qc_check_schema import parse_qc_check_item
 from src.api.schemas.study_material_schemas.study_material_schema import (
     PublishedResourceTopicSummary,
@@ -78,6 +92,7 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialClearDraftsOut,
     StudyMaterialFeedbackResponse,
     StudyMaterialGenerateRequest,
+    StudyMaterialGenerateResponse,
     StudyMaterialImproveRequest,
     StudyMaterialManualEditRequest,
     StudyMaterialMentorUiStateOut,
@@ -128,12 +143,29 @@ from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import
 from src.api.utils.study_agent_utils.quality_check_utils.results.scoring import (
     public_scores,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.results.warning_presentation import (
+    enrich_qc_result_for_client,
+)
 from src.api.utils.study_agent_utils.version.version_actions import (
     compute_version_allowed_actions,
 )
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
+
+
+def _progress_session_id(
+    progress_session_id: UUID | None,
+    *,
+    run_id: UUID | None = None,
+) -> str | None:
+    if run_id is not None:
+        return str(run_id)
+    return str(progress_session_id) if progress_session_id is not None else None
+
+
+def _request_param_uuid(value: UUID | None) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _clear_drafts_block_reason_no_discardable_versions(
@@ -270,7 +302,28 @@ def _enrich_qc_result_dict(
     scores = enriched.get("scores")
     if isinstance(scores, dict):
         enriched["scores"] = public_scores(scores)
-    return enriched
+    concept_plan = _build_concept_plan_from_graph(graph_result)
+    return enrich_qc_result_for_client(enriched, concept_plan) or enriched
+
+
+def _study_material_version_out(
+    version: StudyMaterialVersion,
+) -> StudyMaterialVersionOut:
+    """Build API output with mentor-facing QC warning copy computed server-side."""
+    out = StudyMaterialVersionOut.model_validate(version)
+    if not isinstance(version.qc_result, dict):
+        return out
+    enriched = enrich_qc_result_for_client(
+        version.qc_result,
+        version.concept_plan if isinstance(version.concept_plan, dict) else None,
+    )
+    if not enriched:
+        return out
+    try:
+        qc_out = GenerationDiagnosticsOut.model_validate(enriched)
+    except Exception:
+        return out
+    return out.model_copy(update={"qc_result": qc_out})
 
 
 def _strip_internal_scores_from_qc_dict(qc_dict: dict[str, Any]) -> dict[str, Any]:
@@ -369,6 +422,205 @@ class StudyMaterialService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def _start_study_material_run(
+        self,
+        *,
+        node_id: UUID,
+        space_id: UUID,
+        mentor_id: UUID,
+        generation_mode: GenerationRunMode,
+        request_params: dict[str, Any],
+    ) -> UUID:
+        resource_type, resource_id = GenerationRunService.resource_for_study_material(
+            node_id
+        )
+        run_service = GenerationRunService(self.session)
+        run = await run_service.start_run(
+            GenerationRunCreate(
+                pipeline=GenerationRunPipeline.STUDY_MATERIAL,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                node_id=node_id,
+                space_id=space_id,
+                mentor_id=mentor_id,
+                generation_mode=generation_mode,
+                request_params=request_params,
+            )
+        )
+        return run.run_id
+
+    async def _complete_generation_run(self, run_id: UUID) -> None:
+        await GenerationRunService(self.session).complete_run(run_id)
+
+    async def _fail_generation_run(
+        self,
+        run_id: UUID,
+        *,
+        graph_result: dict[str, Any] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        error_message = (
+            str(exc) if exc is not None else "Study material generation failed."
+        )
+        error_type = type(exc).__name__ if exc is not None else "generation_failed"
+        next_retry = None
+        if graph_result is not None:
+            raw_retry = graph_result.get("next_llm_retry_at")
+            if isinstance(raw_retry, datetime):
+                next_retry = raw_retry
+            error_message = str(graph_result.get("error") or error_message)
+            if graph_result.get("terminal_llm_failure"):
+                error_type = str(graph_result.get("llm_error_type") or error_type)
+        await GenerationRunService(self.session).fail_run(
+            run_id,
+            error_message=error_message,
+            error_type=error_type,
+            next_llm_retry_at=next_retry,
+        )
+
+    async def resume_study_material_generation(
+        self,
+        resume_result: GenerationRunResumeResult,
+        *,
+        user_id: UUID,
+        role: str,
+    ) -> StudyMaterialGenerateResponse | StudyMaterialFeedbackResponse | None:
+        """Continue a failed study material run from its last checkpoint."""
+        _assert_mentor(role)
+        node_id = resume_result.checkpoint_state.get("node_id")
+        if node_id is None:
+            node_id = resume_result.request_params.get("node_id")
+        if isinstance(node_id, str):
+            node_id = UUID(node_id)
+        if node_id is None:
+            raise LLMGenerationFailedException(
+                detail="Resume checkpoint is missing node_id."
+            )
+
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        space_id = node.space_id
+        node_title = node.title
+        run_id = resume_result.run_id
+        progress_id = str(run_id)
+        generation_mode = resume_result.generation_mode
+
+        initial_state = hydrate_checkpoint_state(
+            resume_result.checkpoint_state,
+            last_completed_node=resume_result.last_completed_node,
+            request_params=resume_result.request_params,
+        )
+        initial_state["generation_mode"] = generation_mode
+
+        try:
+            graph_result = await run_study_material_from_checkpoint(
+                session=self.session,
+                initial_state=initial_state,
+                user_id=user_id,
+                progress_session_id=progress_id,
+                run_id=run_id,
+            )
+            graph_result["node_title"] = node_title
+            return await self._finalize_generation_run(
+                run_id=run_id,
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_mode=generation_mode,
+                user_id=user_id,
+                request_params=resume_result.request_params,
+            )
+        except Exception as exc:
+            await self._fail_generation_run(run_id, exc=exc)
+            raise
+
+    async def _finalize_generation_run(
+        self,
+        *,
+        run_id: UUID,
+        node_id: UUID,
+        space_id: UUID,
+        graph_result: dict[str, Any],
+        generation_mode: str,
+        user_id: UUID,
+        request_params: dict[str, Any],
+    ) -> StudyMaterialGenerateResponse | StudyMaterialFeedbackResponse:
+        if (
+            generation_mode == "regenerate"
+            and graph_result.get("regenerate_status") == "vague"
+        ):
+            await self._complete_generation_run(run_id)
+            return StudyMaterialFeedbackResponse(
+                has_new_version=False,
+                status="regeneration_goal_too_vague",
+                status_message=graph_result.get("llm_output_content"),
+                new_version=None,
+                run_id=run_id,
+                progress_session_id=run_id,
+            )
+
+        if (
+            generation_mode == "improve"
+            and graph_result.get("improve_status") == "vague"
+        ):
+            await self._complete_generation_run(run_id)
+            return StudyMaterialFeedbackResponse(
+                has_new_version=False,
+                status="feedback_too_vague",
+                status_message=graph_result.get("llm_output_content"),
+                new_version=None,
+                run_id=run_id,
+                progress_session_id=run_id,
+            )
+
+        reference_material_id = graph_result.get("reference_material_id")
+        if isinstance(reference_material_id, str):
+            reference_material_id = UUID(reference_material_id)
+        if reference_material_id is None and request_params.get(
+            "reference_material_id"
+        ):
+            reference_material_id = UUID(str(request_params["reference_material_id"]))
+
+        based_on_version_id = request_params.get("based_on_version_id")
+        based_on_uuid = (
+            UUID(str(based_on_version_id)) if based_on_version_id is not None else None
+        )
+
+        mentor_feedback = request_params.get(
+            "mentor_regeneration_goal"
+        ) or request_params.get("mentor_feedback")
+
+        version_out = await self._persist_new_version(
+            node_id=node_id,
+            space_id=space_id,
+            graph_result=graph_result,
+            generation_type=generation_mode,
+            user_id=user_id,
+            mentor_feedback_used=mentor_feedback,
+            reference_material_id=reference_material_id,
+            based_on_version_id=based_on_uuid,
+        )
+        await self._complete_generation_run(run_id)
+
+        if generation_mode == "generate":
+            return StudyMaterialGenerateResponse(
+                **version_out.model_dump(),
+                run_id=run_id,
+                progress_session_id=run_id,
+            )
+
+        return StudyMaterialFeedbackResponse(
+            has_new_version=True,
+            new_version_id=version_out.version_id,
+            status="ok",
+            new_version=version_out,
+            qc_failed_permanently=version_out.qc_failed_permanently,
+            qc_result=version_out.qc_result,
+            run_id=run_id,
+            progress_session_id=run_id,
+        )
+
     async def _persist_new_version(
         self,
         *,
@@ -434,7 +686,7 @@ class StudyMaterialService:
             graph_result=graph_result,
             mentor_feedback_used=mentor_feedback_used,
         )
-        return StudyMaterialVersionOut.model_validate(version)
+        return _study_material_version_out(version)
 
     # ── generate ───────────────────────────────────────────────────────
 
@@ -444,34 +696,57 @@ class StudyMaterialService:
         request: StudyMaterialGenerateRequest,
         user_id: UUID,
         role: str,
-    ) -> StudyMaterialVersionOut:
+    ) -> StudyMaterialGenerateResponse:
         """First-time generation via LangGraph (includes LlamaParse when PDF attached)."""
         _assert_mentor(role)
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
-        # Capture before any commit — ORM attributes expire after commit in async sessions.
         space_id = node.space_id
         node_title = node.title
 
-        graph_result = await run_study_material_generation(
-            session=self.session,
-            node_id=node_id,
-            reference_material_id=request.reference_material_id,
-            user_id=user_id,
-        )
-        graph_result["node_title"] = node_title
-
-        version_out = await self._persist_new_version(
+        run_id = await self._start_study_material_run(
             node_id=node_id,
             space_id=space_id,
-            graph_result=graph_result,
-            generation_type="generate",
-            user_id=user_id,
-            reference_material_id=request.reference_material_id,
-            based_on_version_id=None,
+            mentor_id=user_id,
+            generation_mode=GenerationRunMode.GENERATE,
+            request_params={
+                "reference_material_id": _request_param_uuid(
+                    request.reference_material_id
+                ),
+            },
         )
-        return version_out
+        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
+
+        try:
+            graph_result = await run_study_material_generation(
+                session=self.session,
+                node_id=node_id,
+                reference_material_id=request.reference_material_id,
+                user_id=user_id,
+                progress_session_id=progress_id,
+                run_id=run_id,
+            )
+            graph_result["node_title"] = node_title
+
+            result = await self._finalize_generation_run(
+                run_id=run_id,
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_mode="generate",
+                user_id=user_id,
+                request_params={
+                    "reference_material_id": _request_param_uuid(
+                        request.reference_material_id
+                    ),
+                },
+            )
+            assert isinstance(result, StudyMaterialGenerateResponse)
+            return result
+        except Exception as exc:
+            await self._fail_generation_run(run_id, exc=exc)
+            raise
 
     # ── regenerate ─────────────────────────────────────────────────────
 
@@ -510,45 +785,52 @@ class StudyMaterialService:
 
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
 
-        graph_result = await run_study_material_regeneration(
-            session=self.session,
-            node_id=node_id,
-            current_draft_content=current_draft_content,
-            mentor_regeneration_goal=request.mentor_regeneration_goal,
-            reference_material_id=reference_material_id,
-            user_id=user_id,
-            hydration=hydration,
-            failed_qc_feedback=failed_qc_feedback,
-        )
-        graph_result["node_title"] = node_title
-
-        if graph_result.get("regenerate_status") == "vague":
-            return StudyMaterialFeedbackResponse(
-                has_new_version=False,
-                status="regeneration_goal_too_vague",
-                status_message=graph_result.get("llm_output_content"),
-                new_version=None,
-            )
-
-        new_version = await self._persist_new_version(
+        run_id = await self._start_study_material_run(
             node_id=node_id,
             space_id=space_id,
-            graph_result=graph_result,
-            generation_type="regenerate",
-            user_id=user_id,
-            mentor_feedback_used=request.mentor_regeneration_goal,
-            reference_material_id=reference_material_id,
-            based_on_version_id=based_on_version_id,
+            mentor_id=user_id,
+            generation_mode=GenerationRunMode.REGENERATE,
+            request_params={
+                "mentor_regeneration_goal": request.mentor_regeneration_goal,
+                "reference_material_id": _request_param_uuid(reference_material_id),
+                "based_on_version_id": _request_param_uuid(based_on_version_id),
+            },
         )
+        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
 
-        return StudyMaterialFeedbackResponse(
-            has_new_version=True,
-            new_version_id=new_version.version_id,
-            status="ok",
-            new_version=new_version,
-            qc_failed_permanently=new_version.qc_failed_permanently,
-            qc_result=new_version.qc_result,
-        )
+        try:
+            graph_result = await run_study_material_regeneration(
+                session=self.session,
+                node_id=node_id,
+                current_draft_content=current_draft_content,
+                mentor_regeneration_goal=request.mentor_regeneration_goal,
+                reference_material_id=reference_material_id,
+                user_id=user_id,
+                hydration=hydration,
+                failed_qc_feedback=failed_qc_feedback,
+                progress_session_id=progress_id,
+                run_id=run_id,
+            )
+            graph_result["node_title"] = node_title
+
+            result = await self._finalize_generation_run(
+                run_id=run_id,
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_mode="regenerate",
+                user_id=user_id,
+                request_params={
+                    "mentor_regeneration_goal": request.mentor_regeneration_goal,
+                    "reference_material_id": _request_param_uuid(reference_material_id),
+                    "based_on_version_id": _request_param_uuid(based_on_version_id),
+                },
+            )
+            assert isinstance(result, StudyMaterialFeedbackResponse)
+            return result
+        except Exception as exc:
+            await self._fail_generation_run(run_id, exc=exc)
+            raise
 
     # ── improve ────────────────────────────────────────────────────────
 
@@ -587,45 +869,52 @@ class StudyMaterialService:
 
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
 
-        graph_result = await run_study_material_improve(
-            session=self.session,
-            node_id=node_id,
-            current_draft_content=current_draft_content,
-            mentor_feedback=request.mentor_feedback,
-            reference_material_id=reference_material_id,
-            user_id=user_id,
-            hydration=hydration,
-            failed_qc_feedback=failed_qc_feedback,
-        )
-        graph_result["node_title"] = node_title
-
-        if graph_result.get("improve_status") == "vague":
-            return StudyMaterialFeedbackResponse(
-                has_new_version=False,
-                status="feedback_too_vague",
-                status_message=graph_result.get("llm_output_content"),
-                new_version=None,
-            )
-
-        new_version = await self._persist_new_version(
+        run_id = await self._start_study_material_run(
             node_id=node_id,
             space_id=space_id,
-            graph_result=graph_result,
-            generation_type="improve",
-            user_id=user_id,
-            mentor_feedback_used=request.mentor_feedback,
-            reference_material_id=reference_material_id,
-            based_on_version_id=based_on_version_id,
+            mentor_id=user_id,
+            generation_mode=GenerationRunMode.IMPROVE,
+            request_params={
+                "mentor_feedback": request.mentor_feedback,
+                "reference_material_id": _request_param_uuid(reference_material_id),
+                "based_on_version_id": _request_param_uuid(based_on_version_id),
+            },
         )
+        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
 
-        return StudyMaterialFeedbackResponse(
-            has_new_version=True,
-            new_version_id=new_version.version_id,
-            status="ok",
-            new_version=new_version,
-            qc_failed_permanently=new_version.qc_failed_permanently,
-            qc_result=new_version.qc_result,
-        )
+        try:
+            graph_result = await run_study_material_improve(
+                session=self.session,
+                node_id=node_id,
+                current_draft_content=current_draft_content,
+                mentor_feedback=request.mentor_feedback,
+                reference_material_id=reference_material_id,
+                user_id=user_id,
+                hydration=hydration,
+                failed_qc_feedback=failed_qc_feedback,
+                progress_session_id=progress_id,
+                run_id=run_id,
+            )
+            graph_result["node_title"] = node_title
+
+            result = await self._finalize_generation_run(
+                run_id=run_id,
+                node_id=node_id,
+                space_id=space_id,
+                graph_result=graph_result,
+                generation_mode="improve",
+                user_id=user_id,
+                request_params={
+                    "mentor_feedback": request.mentor_feedback,
+                    "reference_material_id": _request_param_uuid(reference_material_id),
+                    "based_on_version_id": _request_param_uuid(based_on_version_id),
+                },
+            )
+            assert isinstance(result, StudyMaterialFeedbackResponse)
+            return result
+        except Exception as exc:
+            await self._fail_generation_run(run_id, exc=exc)
+            raise
 
     # ── manual edit ────────────────────────────────────────────────────
 
@@ -686,7 +975,7 @@ class StudyMaterialService:
             graph_result={},
             mentor_feedback_used=None,
         )
-        return StudyMaterialVersionOut.model_validate(version)
+        return _study_material_version_out(version)
 
     # ── publish preview / confirm ──────────────────────────────────────
 
@@ -787,7 +1076,7 @@ class StudyMaterialService:
         fresh = await repo.get_version_by_id(request.version_id)
         if fresh is None:
             raise StudyMaterialNotFoundException()
-        return StudyMaterialVersionOut.model_validate(fresh)
+        return _study_material_version_out(fresh)
 
     async def preview_unpublish_study_material(
         self,
@@ -864,7 +1153,7 @@ class StudyMaterialService:
         fresh = await repo.get_version_by_id(request.version_id)
         if fresh is None:
             raise StudyMaterialNotFoundException()
-        return StudyMaterialVersionOut.model_validate(fresh)
+        return _study_material_version_out(fresh)
 
     # ── activate ───────────────────────────────────────────────────────
 
@@ -900,7 +1189,7 @@ class StudyMaterialService:
                 raise StudyMaterialVersionMismatchException()
 
         target = await repo.activate_version(target)
-        return StudyMaterialVersionOut.model_validate(target)
+        return _study_material_version_out(target)
 
     # ── archive / unarchive ──────────────────────────────────────────
 
@@ -938,7 +1227,7 @@ class StudyMaterialService:
         archived = await repo.get_version_by_id(version_id)
         if archived is None:
             raise StudyMaterialVersionMismatchException()
-        return StudyMaterialVersionOut.model_validate(archived)
+        return _study_material_version_out(archived)
 
     async def unarchive_study_material_version(
         self,
@@ -985,7 +1274,7 @@ class StudyMaterialService:
         restored = await repo.get_version_by_id(version_id)
         if restored is None:
             raise StudyMaterialVersionMismatchException()
-        return StudyMaterialVersionOut.model_validate(restored)
+        return _study_material_version_out(restored)
 
     # ── list versions ──────────────────────────────────────────────────
 
@@ -1044,7 +1333,7 @@ class StudyMaterialService:
         if version is None or version.node_id != node_id:
             raise StudyMaterialNotFoundException()
 
-        return StudyMaterialVersionOut.model_validate(version)
+        return _study_material_version_out(version)
 
     # ── active version ─────────────────────────────────────────────────
 
@@ -1061,7 +1350,7 @@ class StudyMaterialService:
         active = await repo.get_active_version(node_id)
         if active is None:
             return None
-        return StudyMaterialVersionOut.model_validate(active)
+        return _study_material_version_out(active)
 
     async def get_mentor_ui_state(
         self,

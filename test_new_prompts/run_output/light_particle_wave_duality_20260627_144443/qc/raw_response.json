@@ -1,0 +1,99 @@
+{
+  "checks":[
+      {
+         "id":"must_cover_1",
+         "category":"must_cover",
+         "question":"Does the document satisfy 'Wave-Particle Duality' for 'Light' to the depth_gate standard?",
+         "passed":true,
+         "severity":"critical",
+         "evidence":"The concept of wave-particle duality in light suggests that light can exhibit both wave-like and particle-like properties, depending on the context and the conditions of the experiment. This concept is supported by a wide range of experiments and observations, including the double-slit experiment, the photoelectric effect, and the Compton scattering experiment.",
+         "corrective_hint":"",
+         "section_id":"ts_2",
+         "checklist_id":"mc_1"
+      },
+      {
+         "id":"must_cover_2",
+         "category":"must_cover",
+         "question":"Does the document satisfy 'Wave Function' for 'Particle in a one-dimensional box' to the depth_gate standard?",
+         "passed":true,
+         "severity":"critical",
+         "evidence":"The wave function can be derived from the time-independent Schrödinger equation, which is a fundamental equation in quantum mechanics. The time-independent Schrödinger equation is a partial differential equation that describes the behavior of a particle in a potential field. By solving this equation, we can derive the wave function for a particle in a one-dimensional box.",
+         "corrective_hint":"",
+         "section_id":"ts_3",
+         "checklist_id":"mc_2"
+      },
+      {
+         "id":"must_cover_3",
+         "category":"must_cover",
+         "question":"Does the document satisfy 'Photoelectric Effect' for 'Particle-like behavior of light' to the depth_gate standard?",
+         "passed":true,
+         "severity":"critical",
+         "evidence":"The photoelectric effect is a phenomenon where light is used to eject electrons from a metal surface. The energy of the electrons is dependent on the frequency of the light, rather than its intensity, which suggests that light is behaving like a particle.",
+         "corrective_hint":"",
+         "section_id":"ts_4",
+         "checklist_id":"mc_3"
+      },
+      {
+         "id":"must_cover_4",
+         "category":"must_cover",
+         "question":"Does the document satisfy 'Quantization' for 'Energy of photons' to the depth_gate standard?",
+         "passed":true,
+         "severity":"critical",
+         "evidence":"The concept of quantization suggests that energy comes in discrete packets, or quanta, rather than being continuous. This concept is significant because it provides a way to understand the behavior of particles at the quantum level, and it has led to the development of new theories and models that describe the behavior of particles.",
+         "corrective_hint":"",
+         "section_id":"ts_5",
+         "checklist_id":"mc_4"
+      },
+      {
+         "id":"content_accuracy_1",
+         "category":"content_accuracy",
+         "question":"Is the claim 'The energy of a photon is dependent on its frequency, rather than its intensity' accurate for 'Photoelectric Effect'?",
+         "passed":true,
+         "severity":"critical",
+         "evidence":"The energy of the electrons is dependent on the frequency of the light, rather than its intensity, which suggests that light is behaving like a particle.",
+         "corrective_hint":"",
+         "section_id":"ts_4"
+      },
+      {
+         "id":"pedagogical_acuity_1",
+         "category":"pedagogical_acuity",
+         "question":"Is section 'ts_2' pedagogically strong enough for real study use, not just factually acceptable?",
+         "passed":true,
+         "severity":"major",
+         "evidence":"The section defines the concept of wave-particle duality in a way that distinguishes it from adjacent concepts, explains how light exhibits both wave-like and particle-like properties, and provides a clear explanation of the experiments that demonstrate this.",
+         "corrective_hint":"",
+         "section_id":"ts_2"
+      },
+      {
+         "id":"teaching_alignment_1",
+         "category":"teaching_alignment",
+         "question":"Does the document address everything the teaching instruction specifies?",
+         "passed":true,
+         "severity":"major",
+         "evidence":"The document covers all the required topics, including the basics of light particle wave duality, common pitfalls, and real-world scenarios, and includes a worked example for each major concept.",
+         "corrective_hint":"",
+         "section_id":""
+      },
+      {
+         "id":"document_coherence_1",
+         "category":"document_coherence",
+         "question":"Is the document internally consistent, non-redundant, and complete?",
+         "passed":true,
+         "severity":"critical",
+         "evidence":"The document is well-organized, with each section building on the previous one, and provides a clear and consistent explanation of the concepts.",
+         "corrective_hint":"",
+         "section_id":""
+      }
+   ],
+   "hallucination_risk":"none",
+   "is_refusal":false,
+   "issues":[],
+   "corrective_instructions":"",
+   "summary":"The study document provides a comprehensive overview of the concept of light particle wave duality, covering its basics, common pitfalls, and real-world scenarios. The document is well-organized, with each section building on the previous one, and provides a clear and consistent explanation of the concepts.",
+   "retry_recommendation":{
+      "mode":"none",
+      "failed_section_ids":[],
+      "missing_checklist_ids":[],
+      "rationale":"The document meets all the requirements and is pedagogically strong."
+   }
+}

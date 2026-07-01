@@ -2,11 +2,6 @@
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.api.observability.tracing import init_langsmith_tracing
-
-# Ensure LangSmith tracing variables are initialized when config is imported
-init_langsmith_tracing()
-
 
 class Settings(BaseSettings):
     """Database, auth, and service settings loaded from environment variables."""
@@ -18,6 +13,7 @@ class Settings(BaseSettings):
     database_password: str
     database_name: str
     database_username: str
+    database_echo: bool = False
     secret_key: str
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30

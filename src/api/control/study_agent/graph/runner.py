@@ -13,12 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.control.study_agent.graph.graph import get_study_material_graph
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (  # noqa: E501
+from src.api.core.exceptions import (  # noqa: E501
     LLMGenerationFailedException,
     StudyMaterialReferenceParseMissingException,
 )
-from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (  # noqa: E501
+from src.api.data.repositories import (  # noqa: E501
     ReferenceLlamaParseRepository,
+)
+from src.api.utils.generation_progress import (
+    GenerationPipeline,
+    invoke_graph_with_progress,
 )
 from src.api.utils.reference_llamaparse_utils.reference_llamaparse_persistence import (
     build_parsed_reference_data,
@@ -63,11 +67,22 @@ async def _run_graph(
     session: AsyncSession,
     initial_state: StudyMaterialGraphState,
     user_id: UUID,
+    *,
+    progress_session_id: str | None = None,
+    run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     graph = get_study_material_graph()
-    result: StudyMaterialGraphState = await graph.ainvoke(
-        initial_state,
-        config={"configurable": {"session": session, "user_id": user_id}},
+    config = {"configurable": {"session": session, "user_id": user_id}}
+    result = cast(
+        StudyMaterialGraphState,
+        await invoke_graph_with_progress(
+            graph,
+            cast(dict[str, Any], initial_state),
+            config,
+            pipeline=GenerationPipeline.STUDY_MATERIAL,
+            progress_session_id=progress_session_id,
+            run_id=run_id,
+        ),
     )
 
     _cleanup_temp_reference(result)
@@ -116,6 +131,9 @@ async def run_study_material_generation(
     node_id: UUID,
     reference_material_id: UUID | None = None,
     user_id: UUID | None = None,
+    *,
+    progress_session_id: str | None = None,
+    run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """First-time generate: resolver → optional llamaparse → study_agent."""
     if user_id is None:
@@ -127,7 +145,31 @@ async def run_study_material_generation(
         "generation_mode": "generate",
         "skip_llamaparse": False,
     }
-    return await _run_graph(session, initial_state, user_id)
+    return await _run_graph(
+        session,
+        initial_state,
+        user_id,
+        progress_session_id=progress_session_id,
+        run_id=run_id,
+    )
+
+
+async def run_study_material_from_checkpoint(
+    session: AsyncSession,
+    initial_state: StudyMaterialGraphState,
+    user_id: UUID,
+    *,
+    progress_session_id: str | None = None,
+    run_id: UUID | None = None,
+) -> StudyMaterialGraphState:
+    """Resume a failed run from a hydrated checkpoint state."""
+    return await _run_graph(
+        session,
+        initial_state,
+        user_id,
+        progress_session_id=progress_session_id,
+        run_id=run_id,
+    )
 
 
 async def run_study_material_regeneration(
@@ -140,6 +182,8 @@ async def run_study_material_regeneration(
     *,
     hydration: dict[str, Any] | None = None,
     failed_qc_feedback: str | None = None,
+    progress_session_id: str | None = None,
+    run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """Regenerate from active draft + mentor feedback. Skips LlamaParse when persisted."""
     extracted_text = ""
@@ -165,7 +209,13 @@ async def run_study_material_regeneration(
     }
     if hydration:
         cast(dict[str, Any], initial_state).update(hydration)
-    return await _run_graph(session, initial_state, user_id)
+    return await _run_graph(
+        session,
+        initial_state,
+        user_id,
+        progress_session_id=progress_session_id,
+        run_id=run_id,
+    )
 
 
 async def run_study_material_improve(
@@ -178,6 +228,8 @@ async def run_study_material_improve(
     *,
     hydration: dict[str, Any] | None = None,
     failed_qc_feedback: str | None = None,
+    progress_session_id: str | None = None,
+    run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """Improve active draft surgically. Skips LlamaParse when persisted reference exists."""
     extracted_text = ""
@@ -203,4 +255,10 @@ async def run_study_material_improve(
     }
     if hydration:
         cast(dict[str, Any], initial_state).update(hydration)
-    return await _run_graph(session, initial_state, user_id)
+    return await _run_graph(
+        session,
+        initial_state,
+        user_id,
+        progress_session_id=progress_session_id,
+        run_id=run_id,
+    )

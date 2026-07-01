@@ -32,6 +32,7 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialClearDraftsOut,
     StudyMaterialFeedbackResponse,
     StudyMaterialGenerateRequest,
+    StudyMaterialGenerateResponse,
     StudyMaterialImproveRequest,
     StudyMaterialManualEditRequest,
     StudyMaterialMentorUiStateOut,
@@ -50,14 +51,14 @@ router = APIRouter(tags=["Study Material"])
 @router.post(
     "/nodes/{node_id}/study-material/generate",
     status_code=status.HTTP_201_CREATED,
-    response_model=StudyMaterialVersionOut,
+    response_model=StudyMaterialGenerateResponse,
 )
 async def generate_study_material(
     node_id: UUID,
     payload: StudyMaterialGenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialVersionOut:
+) -> StudyMaterialGenerateResponse:
     """Mentor triggers first-time study material generation."""
     service = StudyMaterialService(db)
     return await service.generate_study_material(

@@ -1,0 +1,7 @@
+<topic>React useState Hook</topic>
+
+<teaching_instruction>
+Write for a junior developer who knows JavaScript basics but has never used React hooks. Focus on mental models, common pitfalls, and one complete runnable example per major idea.
+</teaching_instruction>
+
+Generate the JSON plan now. For every must_cover item, pick its evidence family (A/B/C) from what the item is actually about, copy that family's depth_gate skeleton, and fill only the brackets. Run the Family-A word-ban scan on every Family B and Family C item before output. Ensure each section has a pedagogy_intent distinct from its neighbours, and every checklist item has a concrete misconception and a non-trivial reflection_q. Ensure each section has linked checklist items with specific requirements and fully filled-in depth_gates — not a thin or generic plan.

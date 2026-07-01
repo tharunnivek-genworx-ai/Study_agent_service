@@ -11,9 +11,9 @@ from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.data.repositories.space_node_repository.node_repository import (
+from src.api.data.repositories import (
     NodeRepository,
 )
 from src.api.utils.reference_llamaparse_utils.reference_llamaparse_cache import (

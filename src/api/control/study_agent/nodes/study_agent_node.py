@@ -10,7 +10,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.generation import (
     generation_prompt,
     improve_prompt,
@@ -212,18 +212,51 @@ async def _call_study_generator(
     *,
     system_prompt: str,
     user_message: str,
+    revision: bool = False,
 ) -> Any:
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_message),
     ]
+    if revision:
+        temperature = llm_settings.study_revision_temperature
+        top_p = llm_settings.study_revision_top_p
+        do_sample = llm_settings.study_revision_do_sample
+    else:
+        temperature = llm_settings.study_generation_temperature
+        top_p = llm_settings.study_generation_top_p
+        do_sample = llm_settings.study_generation_do_sample
     return await call_groq_with_rotation(
         messages=messages,
         model=llm_settings.llm_model,
-        temperature=0.2,
+        temperature=temperature,
+        top_p=top_p,
+        do_sample=do_sample,
         timeout=120,
         graph_node="study_generator",
         response_format={"type": "json_object"},
+    )
+
+
+def _uses_revision_sampling(
+    state: StudyMaterialGraphState,
+    retry_mode: str,
+) -> bool:
+    if retry_mode in helpers.SECTION_RETRY_MODES:
+        return True
+    mode = state.get("generation_mode") or "generate"
+    return mode in ("regenerate", "improve")
+
+
+async def _call_study_revision_llm(
+    *,
+    system_prompt: str,
+    user_message: str,
+) -> Any:
+    return await _call_study_generator(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        revision=True,
     )
 
 
@@ -246,7 +279,7 @@ async def study_agent_node(
         return await helpers.run_section_retry(
             state,
             retry_mode,
-            call_llm=_call_study_generator,
+            call_llm=_call_study_revision_llm,
             build_patch_messages=_build_section_patch_messages,
             build_insert_messages=_build_section_insert_messages,
         )
@@ -257,6 +290,7 @@ async def study_agent_node(
     result = await _call_study_generator(
         system_prompt=system_prompt,
         user_message=user_message,
+        revision=_uses_revision_sampling(state, retry_mode),
     )
     if not result.ok:
         logger.error(

@@ -84,22 +84,30 @@ QC_STEM_VERIFICATION_BLOCK = """\
    - Is every named reaction, mechanism, or compound a real one? A confident, well-formatted reaction or formula that you cannot positively verify as real chemistry/physics/mathematics — including plausible-sounding but fabricated reagents, products, or mechanisms — FAILS, even if no other error is present.
    FAIL if any equation or reaction is wrong, misapplied, fabricated, or if a worked example reaches an incorrect result.
 """
+
 QC_PROGRAMMING_VERIFICATION_BLOCK = """\
    PROGRAMMING VERIFICATION — for every code block:
    - Apply the 3-step procedure: state what the correct API call, output, or behaviour is from your own knowledge first.
    - Mentally execute the code on the demonstrated input. What does it actually produce?
    - Does the output match what the "explanation" field claims?
+   - When an execution trace is present in the explanation field or section prose, verify each described intermediate state (variable values, stack contents, data structure shape at each step) is correct at that point in execution — trace it independently; do not accept the document's description without verification.
    - If the same method or function name is defined twice in the same scope: the second definition silently replaces the first. If the example depends on both existing independently, the example is broken.
    - Are all symbols defined or imported within the same block?
    - For code and APIs: verify every named function, method, symbol, or library call is real for the stated language or library version, not a plausible-sounding invention. If the API differs by version, require the version-appropriate form and reject unsupported calls.
-   FAIL if code is logically incorrect, demonstrates a broken behaviour without noting it, uses undefined symbols, or calls an invented API.
+   FAIL if code is logically incorrect, demonstrates a broken behaviour without noting it, uses undefined symbols, calls an invented API, or contains an execution trace in the explanation or prose that does not match the actual runtime behaviour of the code.\
 """
+
 QC_CONCEPTUAL_VERIFICATION_BLOCK = """\
-   CONCEPTUAL VERIFICATION — for every named date, person, event, law, or causal claim:
-   - Apply the 3-step procedure: state the correct fact from your own knowledge first.
-   - Is it accurate per mainstream record?
-   FAIL if a named fact is incorrect or cannot be verified.
+   CONCEPTUAL VERIFICATION — for every named fact, causal claim, comparative claim, and example:
+   - Apply the 3-step procedure above: state the correct fact from your own knowledge first, then compare to the document's claim. Do not use "X is indeed Y" — state the correct fact independently.
+   - Named facts (dates, people, events, laws, organisations): are they accurate per mainstream record? Apply the 3-step procedure before passing any named fact.
+   - Causal claims ("X led to Y", "Z caused W"): verify the causal direction and the described mechanism are supported by historical or empirical record, not just plausible. A logically coherent but historically inaccurate causal claim FAILS.
+   - Examples: are they genuinely specific? A reference to "many organisations", "in the tech industry", or "government agencies" without naming a real actor, describing the context, and stating an outcome is a vague generalisation — not an example. If the depth_gate required a named example, its absence FAILS the check regardless of how accurate the surrounding prose is.
+   - Comparative claims: does the document accurately characterise both sides? Verify that the attributes, strengths, and weaknesses assigned to each option are correct, not just plausible.
+   - Statistics and metrics attributed to named organisations: verify the figure is publicly documented and widely known. A specific number or percentage attributed to a real company without a citable source is an unverifiable fabrication — flag as at least "medium" hallucination risk and fail the check.
+   FAIL if any named fact is wrong, if a causal chain is unsupported or directionally reversed, if a required named example is absent or replaced by a vague generalisation, or if attributed statistics cannot be independently verified.\
 """
+
 QC_CONTENT_ACCURACY_CLOSING = """\
    severity: "critical". Emit only checks you can evaluate with certainty. Omit anything you are genuinely uncertain about.
 """

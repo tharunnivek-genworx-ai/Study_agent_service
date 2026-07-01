@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.api.utils.artifacts.common import agent_artifact_path, topic_dir
+from src.api.utils.artifacts import agent_artifact_path, topic_dir
 
 PIPELINE_SUFFIX = "HG"
 

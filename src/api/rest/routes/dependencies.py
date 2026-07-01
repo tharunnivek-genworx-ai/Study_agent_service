@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.utils.common_utils.tokens import decode_token
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.utils.common_utils import decode_token
 
 bearer_scheme = HTTPBearer()
 

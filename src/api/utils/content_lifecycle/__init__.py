@@ -45,6 +45,7 @@ __all__ = [
     "LIFECYCLE_DISCARDED",
     "LIFECYCLE_DRAFT",
     "LIFECYCLE_HIDDEN",
+    "abandon_in_progress_attempts_for_quizzes",
     "count_blocking_quizzes_for_clear_drafts",
     "exclude_discarded",
     "is_discarded",
@@ -67,5 +68,4 @@ __all__ = [
     "transition_sm_to_archived",
     "transition_sm_to_discarded",
     "transition_sm_to_hidden",
-    "abandon_in_progress_attempts_for_quizzes",
 ]

@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.core.services.progress_services.trainee_space_progress_service import (
     TraineeSpaceProgressService,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
 )
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 from src.api.control.quiz_agent.prompts import question_rework_prompt
-from src.api.control.quiz_agent.prompts.quiz_prompt import (
+from src.api.control.quiz_agent.prompts.quiz_graph.quiz_prompt import (
     OUTPUT_FORMAT_BLOCK,
     build_domain_classification_block,
 )

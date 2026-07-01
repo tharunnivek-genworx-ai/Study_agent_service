@@ -14,7 +14,7 @@ from src.api.data.models.postgres.e_learning_content.study_material_versions imp
     StudyMaterialVersion,
 )
 from src.api.data.models.postgres.e_spaces_trees.topic_nodes import TopicNode
-from src.api.data.repositories.space_node_repository.node_repository import (
+from src.api.data.repositories import (
     NodeRepository,
 )
 from src.api.data.repositories.trainee_study_repositories.trainee_study_repository import (

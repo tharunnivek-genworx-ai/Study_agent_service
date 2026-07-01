@@ -14,32 +14,40 @@ Mentor flow (Option B — quiz lifecycle decoupled from SM version identity):
 """
 
 import logging
+from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
+from src.api.core.exceptions import (
+    GenerationRunConflictException,
     QuizAlreadyPublishedException,
     QuizCannotDiscardRetiredException,
+    QuizHasNoPublishedStudyMaterialException,
     QuizHintsIncompleteException,
+    QuizNotFoundException,
     QuizNotPublishedForUnpublishException,
     QuizQuestionNotFoundException,
 )
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
-    QuizNotFoundException,
-)
+from src.api.core.services import GenerationRunService
 from src.api.data.models.postgres.e_learning_content.study_material_versions import (
     StudyMaterialVersion,
 )
-from src.api.data.repositories.progress_repositories.mentor_progress_repository import (
+from src.api.data.repositories import (
     MentorProgressRepository,
-)
-from src.api.data.repositories.quiz_repositories.quiz_repository import QuizRepository
-from src.api.data.repositories.study_agent_repositories.study_material_repository import (
+    QuizRepository,
     StudyMaterialRepository,
 )
-from src.api.schemas.quiz_schemas.quiz_schema import (
+from src.api.schemas import (
+    GenerationRunCreate,
+    GenerationRunMode,
+    GenerationRunPipeline,
+    GenerationRunResumeResult,
+    GenerationRunStatus,
+)
+from src.api.schemas.quiz_schemas import (
     CorrectOption,
     QuizDeleteOut,
     QuizGenerateRequest,
@@ -50,12 +58,13 @@ from src.api.schemas.quiz_schemas.quiz_schema import (
     QuizQuestionCreateRequest,
     QuizQuestionDeletedOut,
     QuizQuestionOut,
+    QuizQuestionRegenerateRequest,
     QuizQuestionReorderRequest,
     QuizQuestionUpdateRequest,
     QuizUnpublishPreviewOut,
     QuizUnpublishRequest,
 )
-from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
+from src.api.schemas.study_material_schemas import RetentionMode
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ACTIVE,
     LIFECYCLE_ARCHIVED,
@@ -68,9 +77,6 @@ from src.api.utils.content_lifecycle.transitions import (
 from src.api.utils.content_lifecycle.visibility import is_discarded
 from src.api.utils.mentor_progress_utils.space_recompute import (
     recompute_all_trainees_space_progress,
-)
-from src.api.utils.notification_utils.node_event_notifications import (
-    emit_node_completion_reset_safe,
 )
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.mentor_quiz_history import (
@@ -107,6 +113,12 @@ from src.api.utils.trainee_progress_utils.progress_resets import (
 logger = logging.getLogger(__name__)
 
 
+def _quiz_run_mode(mode: str) -> GenerationRunMode:
+    if mode == "regenerate":
+        return GenerationRunMode.REGENERATE
+    return GenerationRunMode.GENERATE
+
+
 def _validate_question_options(
     *,
     option_a: str | None,
@@ -139,6 +151,308 @@ class QuizService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def _start_quiz_run(
+        self,
+        *,
+        node_id: UUID,
+        space_id: UUID,
+        mentor_id: UUID,
+        generation_mode: GenerationRunMode,
+        request_params: dict[str, Any],
+        quiz_id: UUID | None = None,
+    ) -> UUID:
+        resource_type, resource_id = GenerationRunService.resource_for_quiz_generation(
+            node_id,
+            quiz_id=quiz_id,
+        )
+        run_service = GenerationRunService(self.session)
+        run = await run_service.start_run(
+            GenerationRunCreate(
+                pipeline=GenerationRunPipeline.QUIZ,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                node_id=node_id,
+                space_id=space_id,
+                mentor_id=mentor_id,
+                generation_mode=generation_mode,
+                request_params=request_params,
+            )
+        )
+        return run.run_id
+
+    async def _complete_generation_run(self, run_id: UUID) -> None:
+        await GenerationRunService(self.session).complete_run(run_id)
+
+    async def _fail_generation_run(
+        self,
+        run_id: UUID,
+        *,
+        graph_result: dict[str, Any] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        error_message = str(exc) if exc is not None else "Quiz generation failed."
+        error_type = type(exc).__name__ if exc is not None else "generation_failed"
+        next_retry = None
+        if graph_result is not None:
+            raw_retry = graph_result.get("next_llm_retry_at")
+            if isinstance(raw_retry, datetime):
+                next_retry = raw_retry
+            error_message = str(graph_result.get("error") or error_message)
+            if graph_result.get("terminal_llm_failure"):
+                error_type = str(graph_result.get("llm_error_type") or error_type)
+        await GenerationRunService(self.session).fail_run(
+            run_id,
+            error_message=error_message,
+            error_type=error_type,
+            next_llm_retry_at=next_retry,
+        )
+
+    async def _build_quiz_out(
+        self,
+        quiz_id: UUID,
+        *,
+        run_id: UUID | None = None,
+        hints_stale_question_ids: list[UUID] | None = None,
+    ) -> QuizOut:
+        repo = QuizRepository(self.session)
+        quiz = await repo.get_quiz_by_id(quiz_id)
+        if quiz is None:
+            from src.api.core.exceptions import (  # noqa: PLC0415
+                QuizGenerationFailedException,
+            )
+
+            raise QuizGenerationFailedException()
+        questions = await repo.get_questions_by_quiz(quiz_id)
+        active_questions = await repo.get_active_questions_by_quiz(quiz_id)
+        quiz_out = QuizOut.model_validate(quiz)
+        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+        quiz_out.hints_status = compute_hints_status(active_questions)
+        if hints_stale_question_ids is not None:
+            quiz_out.hints_stale_question_ids = hints_stale_question_ids
+        if run_id is not None:
+            quiz_out.run_id = run_id
+            quiz_out.progress_session_id = run_id
+        return quiz_out
+
+    async def _assert_no_concurrent_quiz_work(self, quiz_id: UUID) -> None:
+        """Reject when a quiz or hint generation run is already in progress."""
+        run_service = GenerationRunService(self.session)
+        for pipeline in (GenerationRunPipeline.QUIZ, GenerationRunPipeline.HINT):
+            _, resource_id = (
+                GenerationRunService.resource_for_hint(quiz_id)
+                if pipeline == GenerationRunPipeline.HINT
+                else GenerationRunService.resource_for_quiz(quiz_id)
+            )
+            active = await run_service.repo.get_active_run(
+                resource_id=resource_id,
+                pipeline=pipeline.value,
+            )
+            if (
+                active is not None
+                and active.status == GenerationRunStatus.RUNNING.value
+            ):
+                raise GenerationRunConflictException(str(active.run_id))
+
+    async def _run_quiz_single_regen_graph(
+        self,
+        *,
+        initial_state: dict[str, Any],
+        run_id: UUID,
+    ) -> dict[str, Any]:
+        from src.api.control.quiz_agent.graph.quiz_single_regen_graph.runner import (
+            run_quiz_single_regen,
+        )
+        from src.api.core.exceptions import (  # noqa: PLC0415
+            QuizGenerationFailedException,
+        )
+
+        try:
+            final_state = await run_quiz_single_regen(
+                self.session,
+                initial_state,
+                run_id=run_id,
+            )
+            if final_state.get("terminal_llm_failure"):
+                await self._fail_generation_run(run_id, graph_result=final_state)
+                raise QuizGenerationFailedException(
+                    "Question rework failed due to a temporary LLM error. "
+                    "You can resume this run when retry is available."
+                )
+            if final_state.get("error"):
+                await self._fail_generation_run(run_id, graph_result=final_state)
+                raise QuizGenerationFailedException(str(final_state["error"]))
+            await self._complete_generation_run(run_id)
+            return final_state
+        except QuizGenerationFailedException:
+            raise
+        except Exception as exc:
+            graph_result = exc.__dict__.get("graph_result")
+            if isinstance(graph_result, dict):
+                await self._fail_generation_run(
+                    run_id, graph_result=graph_result, exc=exc
+                )
+            else:
+                await self._fail_generation_run(run_id, exc=exc)
+            raise
+
+    async def resume_quiz_generation(
+        self,
+        resume_result: GenerationRunResumeResult,
+        *,
+        user_id: UUID,
+        role: str,
+    ) -> QuizOut:
+        """Continue a failed quiz run from its last checkpoint."""
+        from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
+            hydrate_checkpoint_state,
+        )
+        from src.api.control.quiz_agent.graph.quiz_graph.runner import (
+            run_quiz_from_checkpoint,
+        )
+        from src.api.core.exceptions import (  # noqa: PLC0415
+            QuizGenerationFailedException,
+        )
+
+        _assert_mentor(role)
+        node_id = resume_result.checkpoint_state.get("node_id")
+        if node_id is None:
+            node_id = resume_result.request_params.get("node_id")
+        if isinstance(node_id, str):
+            node_id = UUID(node_id)
+        if node_id is None:
+            raise QuizGenerationFailedException("Resume checkpoint is missing node_id.")
+
+        await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+
+        run_id = resume_result.run_id
+        initial_state = hydrate_checkpoint_state(
+            resume_result.checkpoint_state,
+            last_completed_node=resume_result.last_completed_node,
+            request_params=resume_result.request_params,
+        )
+        initial_state["mentor_id"] = user_id
+
+        try:
+            final_state = await run_quiz_from_checkpoint(
+                self.session,
+                initial_state,
+                run_id=run_id,
+            )
+            created_quiz_id = final_state.get("created_quiz_id")
+            if created_quiz_id is None:
+                if final_state.get("error"):
+                    raise QuizGenerationFailedException(str(final_state["error"]))
+                raise QuizGenerationFailedException(
+                    "Quiz generation failed. Please try again."
+                )
+            await self._complete_generation_run(run_id)
+            if isinstance(created_quiz_id, str):
+                created_quiz_id = UUID(created_quiz_id)
+            return await self._build_quiz_out(created_quiz_id, run_id=run_id)
+        except Exception as exc:
+            graph_result = exc.__dict__.get("graph_result")
+            if isinstance(graph_result, dict):
+                await self._fail_generation_run(
+                    run_id, graph_result=graph_result, exc=exc
+                )
+            else:
+                await self._fail_generation_run(run_id, exc=exc)
+            raise
+
+    async def resume_question_rework(
+        self,
+        resume_result: GenerationRunResumeResult,
+        *,
+        user_id: UUID,
+        role: str,
+    ) -> QuizOut:
+        """Continue a failed single-question rework run from its last checkpoint."""
+        from src.api.control.quiz_agent.graph.quiz_single_regen_graph.resume_router import (
+            hydrate_checkpoint_state,
+        )
+        from src.api.control.quiz_agent.graph.quiz_single_regen_graph.runner import (
+            run_quiz_single_regen_from_checkpoint,
+        )
+        from src.api.core.exceptions import (  # noqa: PLC0415
+            QuizGenerationFailedException,
+        )
+
+        _assert_mentor(role)
+        node_id = resume_result.checkpoint_state.get("node_id")
+        quiz_id = resume_result.checkpoint_state.get("quiz_id")
+        if node_id is None:
+            node_id = resume_result.request_params.get("node_id")
+        if quiz_id is None:
+            quiz_id = resume_result.request_params.get("quiz_id")
+        if isinstance(node_id, str):
+            node_id = UUID(node_id)
+        if isinstance(quiz_id, str):
+            quiz_id = UUID(quiz_id)
+        if node_id is None or quiz_id is None:
+            raise QuizGenerationFailedException(
+                "Resume checkpoint is missing node_id or quiz_id."
+            )
+
+        await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+
+        run_id = resume_result.run_id
+        initial_state = hydrate_checkpoint_state(
+            resume_result.checkpoint_state,
+            last_completed_node=resume_result.last_completed_node,
+            request_params=resume_result.request_params,
+        )
+        initial_state["mentor_id"] = user_id
+
+        try:
+            final_state = await run_quiz_single_regen_from_checkpoint(
+                self.session,
+                initial_state,
+                run_id=run_id,
+            )
+            if final_state.get("terminal_llm_failure"):
+                await self._fail_generation_run(run_id, graph_result=final_state)
+                raise QuizGenerationFailedException(
+                    "Question rework failed due to a temporary LLM error. "
+                    "You can resume this run when retry is available."
+                )
+            if final_state.get("error"):
+                await self._fail_generation_run(run_id, graph_result=final_state)
+                raise QuizGenerationFailedException(str(final_state["error"]))
+            await self._complete_generation_run(run_id)
+            hints_stale = self._coerce_stale_question_ids(
+                final_state.get("hints_stale_question_ids") or []
+            )
+            return await self._build_quiz_out(
+                quiz_id,
+                run_id=run_id,
+                hints_stale_question_ids=hints_stale,
+            )
+        except QuizGenerationFailedException:
+            raise
+        except Exception as exc:
+            graph_result = exc.__dict__.get("graph_result")
+            if isinstance(graph_result, dict):
+                await self._fail_generation_run(
+                    run_id, graph_result=graph_result, exc=exc
+                )
+            else:
+                await self._fail_generation_run(run_id, exc=exc)
+            raise
+
+    @staticmethod
+    def _coerce_stale_question_ids(raw_ids: list[Any]) -> list[UUID]:
+        stale: list[UUID] = []
+        for value in raw_ids:
+            if isinstance(value, UUID):
+                stale.append(value)
+            elif isinstance(value, str):
+                stale.append(UUID(value))
+        return stale
+
     async def _require_quiz_study_material_source(
         self, node_id: UUID
     ) -> StudyMaterialVersion:
@@ -165,7 +479,7 @@ class QuizService:
         a new quiz draft, using quiz_id (required) as the source quiz.
         """
         _assert_mentor(role)
-        await _get_node_and_assert_space_access(
+        node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
 
@@ -211,15 +525,29 @@ class QuizService:
                 else:
                     effective_mode = "regenerate"
                     effective_quiz_id = existing_draft.quiz_id
-
-        from src.api.control.quiz_agent.graph.quiz_generation_graph import (
-            get_quiz_generation_graph,  # noqa: PLC0415
+        from src.api.control.quiz_agent.graph.quiz_graph.runner import (
+            run_quiz_generation,
         )
-        from src.api.core.exceptions.quiz_exceptions.quiz_generation_exceptions import (
-            QuizGenerationFailedException,  # noqa: PLC0415
+        from src.api.core.exceptions import (
+            QuizGenerationFailedException,
         )
 
-        graph = get_quiz_generation_graph()
+        run_id = await self._start_quiz_run(
+            node_id=node_id,
+            space_id=node.space_id,
+            mentor_id=user_id,
+            generation_mode=_quiz_run_mode(effective_mode),
+            quiz_id=effective_quiz_id,
+            request_params={
+                "question_count": request.question_count,
+                "difficulty": request.difficulty,
+                "mode": effective_mode,
+                "quiz_id": str(effective_quiz_id) if effective_quiz_id else None,
+                "mentor_feedback": request.mentor_feedback,
+                "title": request.title,
+            },
+        )
+
         initial_state = {
             "mentor_id": user_id,
             "node_id": node_id,
@@ -238,35 +566,120 @@ class QuizService:
             "failed_qc_feedback": failed_qc_feedback,
         }
 
-        final_state = await graph.ainvoke(
-            initial_state,
-            config={"configurable": {"session": self.session}},
-        )
-
-        if final_state is None:
-            raise QuizGenerationFailedException()
-
-        created_quiz_id = final_state.get("created_quiz_id")
-        if created_quiz_id is None:
-            if final_state.get("error"):
-                raise QuizGenerationFailedException(str(final_state["error"]))
-            raise QuizGenerationFailedException(
-                "Quiz generation failed. Please try again."
+        try:
+            final_state = await run_quiz_generation(
+                self.session,
+                initial_state,
+                run_id=run_id,
             )
 
-        if final_state.get("error") and not final_state.get("terminal_llm_failure"):
-            raise QuizGenerationFailedException(str(final_state["error"]))
+            if final_state is None:
+                raise QuizGenerationFailedException()
 
-        quiz = await repo.get_quiz_by_id(created_quiz_id)
-        if quiz is None:
-            raise QuizGenerationFailedException()
+            created_quiz_id = final_state.get("created_quiz_id")
+            if created_quiz_id is None:
+                if final_state.get("error"):
+                    await self._fail_generation_run(
+                        run_id,
+                        graph_result=final_state,
+                        exc=QuizGenerationFailedException(str(final_state["error"])),
+                    )
+                    raise QuizGenerationFailedException(str(final_state["error"]))
+                await self._fail_generation_run(
+                    run_id,
+                    graph_result=final_state,
+                    exc=QuizGenerationFailedException(
+                        "Quiz generation failed. Please try again."
+                    ),
+                )
+                raise QuizGenerationFailedException(
+                    "Quiz generation failed. Please try again."
+                )
 
-        questions = await repo.get_questions_by_quiz(created_quiz_id)
-        active_questions = await repo.get_active_questions_by_quiz(created_quiz_id)
-        quiz_out = QuizOut.model_validate(quiz)
-        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
-        quiz_out.hints_status = compute_hints_status(active_questions)
-        return quiz_out
+            if final_state.get("error") and not final_state.get("terminal_llm_failure"):
+                await self._fail_generation_run(
+                    run_id,
+                    graph_result=final_state,
+                    exc=QuizGenerationFailedException(str(final_state["error"])),
+                )
+                raise QuizGenerationFailedException(str(final_state["error"]))
+
+            await self._complete_generation_run(run_id)
+            if isinstance(created_quiz_id, str):
+                created_quiz_id = UUID(created_quiz_id)
+            return await self._build_quiz_out(created_quiz_id, run_id=run_id)
+        except QuizGenerationFailedException:
+            raise
+        except Exception as exc:
+            await self._fail_generation_run(run_id, exc=exc)
+            raise
+
+    async def regenerate_questions(
+        self,
+        node_id: UUID,
+        quiz_id: UUID,
+        request: QuizQuestionRegenerateRequest,
+        user_id: UUID,
+        role: str,
+    ) -> QuizOut:
+        """Rework one or more active quiz questions in-place via mentor feedback."""
+        _assert_mentor(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+
+        repo = QuizRepository(self.session)
+        quiz = await repo.get_quiz_by_id(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
+        if quiz.is_published:
+            raise QuizAlreadyPublishedException()
+        await self._require_quiz_study_material_source(node_id)
+
+        payload_ids = set(request.question_ids)
+        matched = await repo.get_active_questions_by_ids(quiz_id, request.question_ids)
+        matched_ids = {question.question_id for question in matched}
+        if matched_ids != payload_ids:
+            raise QuizQuestionNotFoundException()
+
+        await self._assert_no_concurrent_quiz_work(quiz_id)
+
+        mentor_feedback = request.mentor_feedback.strip()
+        run_id = await self._start_quiz_run(
+            node_id=node_id,
+            space_id=node.space_id,
+            mentor_id=user_id,
+            generation_mode=GenerationRunMode.IMPROVE,
+            quiz_id=quiz_id,
+            request_params={
+                "node_id": str(node_id),
+                "quiz_id": str(quiz_id),
+                "mentor_id": str(user_id),
+                "question_ids": [str(qid) for qid in request.question_ids],
+                "mentor_feedback": mentor_feedback,
+            },
+        )
+
+        initial_state = {
+            "mentor_id": user_id,
+            "node_id": node_id,
+            "quiz_id": quiz_id,
+            "question_ids": request.question_ids,
+            "mentor_feedback": mentor_feedback,
+        }
+
+        final_state = await self._run_quiz_single_regen_graph(
+            initial_state=initial_state,
+            run_id=run_id,
+        )
+        hints_stale = self._coerce_stale_question_ids(
+            final_state.get("hints_stale_question_ids") or []
+        )
+        return await self._build_quiz_out(
+            quiz_id,
+            run_id=run_id,
+            hints_stale_question_ids=hints_stale,
+        )
 
     async def get_mentor_quiz_ui_state(
         self,
@@ -289,11 +702,12 @@ class QuizService:
         repo = QuizRepository(self.session)
         sm_repo = StudyMaterialRepository(self.session)
         published = await sm_repo.get_published_version(node_id)
-        source_sm = published
-        if source_sm is None or not (source_sm.content or "").strip():
-            active = await sm_repo.get_active_version(node_id)
-            if active is not None and (active.content or "").strip():
-                source_sm = active
+        try:
+            source_sm = await get_mentor_quiz_study_material_source(
+                sm_repo, node_id=node_id
+            )
+        except QuizHasNoPublishedStudyMaterialException:
+            source_sm = None
 
         quizzes = await repo.get_quizzes_by_node(node_id)
         resolved_id = resolve_mentor_quiz_id(quizzes, preferred_quiz_id)
@@ -504,14 +918,6 @@ class QuizService:
                 node_id,
                 exc_info=True,
             )
-        else:
-            await emit_node_completion_reset_safe(
-                self.session,
-                space_id=space_id,
-                node_id=node_id,
-                triggered_by=user_id,
-                related_quiz_id=quiz_id,
-            )
 
         return quiz_out
 
@@ -707,7 +1113,7 @@ class QuizService:
         user_id: UUID,
         role: str,
     ) -> QuizQuestionOut:
-        """Partial update for a question. EC-12 notification is a placeholder."""
+        """Partial update for a question."""
         _assert_mentor(role)
         await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
@@ -757,15 +1163,6 @@ class QuizService:
                 option_d=merged_d,
                 correct_option=merged_correct,
             )
-
-        # EC-12: if correct_option changed on a published quiz, emit notification (stub)
-        if (
-            quiz.is_published
-            and request.correct_option is not None
-            and request.correct_option != question.correct_option
-        ):
-            # TODO: emit quiz_questions_edited node_event_notification
-            pass
 
         question = await repo.update_question(question, request)
         return QuizQuestionOut.model_validate(question)

@@ -10,6 +10,7 @@ Quiz lifecycle (TDD §3.2.2 and §3.2.3):
     Publish quiz    → PATCH  /nodes/{node_id}/quizzes/{quiz_id}/publish
     Add question    → POST   /nodes/{node_id}/quizzes/{quiz_id}/questions
     Update question → PATCH  /nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}
+    Regenerate qs   → POST   /nodes/{node_id}/quizzes/{quiz_id}/questions/regenerate
     Reorder qs      → PATCH  /nodes/{node_id}/quizzes/{quiz_id}/questions/reorder
     Delete question → DELETE /nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}
 
@@ -29,11 +30,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.services.quiz_services.quiz_service import QuizService
-from src.api.data.clients.postgres.database import get_db
+from src.api.core.services import QuizService
+from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
-from src.api.schemas.identity_schemas.auth_schema import TokenPayload
-from src.api.schemas.quiz_schemas.quiz_schema import (
+from src.api.schemas.identity_schemas import TokenPayload
+from src.api.schemas.quiz_schemas import (
     QuizDeleteOut,
     QuizGenerateRequest,
     QuizMentorUiStateOut,
@@ -42,6 +43,7 @@ from src.api.schemas.quiz_schemas.quiz_schema import (
     QuizQuestionCreateRequest,
     QuizQuestionDeletedOut,
     QuizQuestionOut,
+    QuizQuestionRegenerateRequest,
     QuizQuestionReorderRequest,
     QuizQuestionUpdateRequest,
     QuizUnpublishPreviewOut,
@@ -214,23 +216,26 @@ async def create_quiz_question(
     )
 
 
-@router.patch(
-    "/nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}",
-    response_model=QuizQuestionOut,
+@router.post(
+    "/nodes/{node_id}/quizzes/{quiz_id}/questions/regenerate",
+    status_code=status.HTTP_200_OK,
+    response_model=QuizOut,
 )
-async def update_quiz_question(
+async def regenerate_quiz_questions(
     node_id: UUID,
     quiz_id: UUID,
-    question_id: UUID,
-    payload: QuizQuestionUpdateRequest,
+    payload: QuizQuestionRegenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> QuizQuestionOut:
-    """Mentor partially updates a question. Triggers EC-12 notification if
-    correct_option changes on a published quiz."""
+) -> QuizOut:
+    """Mentor reworks one or more active questions using AI and mentor feedback.
+
+    Patched questions have hints cleared; response includes hints_stale_question_ids
+    so the UI can nudge hint regeneration.
+    """
     service = QuizService(db)
-    return await service.update_question(
-        node_id, quiz_id, question_id, payload, current_user.sub, current_user.role
+    return await service.regenerate_questions(
+        node_id, quiz_id, payload, current_user.sub, current_user.role
     )
 
 
@@ -248,10 +253,30 @@ async def reorder_quiz_questions(
     """Bulk-update order_index for all active questions in a quiz.
 
     question_ids must be the complete active set — partial reorders are rejected.
+    Registered before /questions/{question_id} so "reorder" is not parsed as a UUID.
     """
     service = QuizService(db)
     return await service.reorder_questions(
         node_id, quiz_id, payload, current_user.sub, current_user.role
+    )
+
+
+@router.patch(
+    "/nodes/{node_id}/quizzes/{quiz_id}/questions/{question_id}",
+    response_model=QuizQuestionOut,
+)
+async def update_quiz_question(
+    node_id: UUID,
+    quiz_id: UUID,
+    question_id: UUID,
+    payload: QuizQuestionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizQuestionOut:
+    """Mentor partially updates a question."""
+    service = QuizService(db)
+    return await service.update_question(
+        node_id, quiz_id, question_id, payload, current_user.sub, current_user.role
     )
 
 

@@ -7,7 +7,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-    from src.api.schemas.quiz_schemas.quiz_schema import QuizOut
+    from src.api.schemas.quiz_schemas import QuizOut
 
 
 class _PublishedVersionLike:

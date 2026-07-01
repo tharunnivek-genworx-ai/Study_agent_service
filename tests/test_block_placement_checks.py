@@ -263,6 +263,49 @@ class TestBlockPlacementChecks:
         checks = block_placement_checks(doc, domain="STEM", checklist=checklist)
         assert "det_stem_code_substitutes_derivation" not in _check_ids(checks)
 
+    def test_stem_code_substitutes_apply_equation_depth_gate(self):
+        """Apply + equation in requirement triggers anti-code check even without derive/calculate."""
+        doc = {
+            "sections": [
+                {
+                    "id": "ts_4",
+                    "heading": "Superposition",
+                    "content": "Superposition explained.",
+                    "code_blocks": [
+                        {
+                            "language": "python",
+                            "code": "import numpy as np\nprint(np.array([1, 0]))",
+                            "explanation": "Demonstrates a state vector.",
+                        }
+                    ],
+                    "formula_blocks": [
+                        {
+                            "notation": "plain-text",
+                            "formula": "psi = a|0> + b|1>",
+                            "explanation": "Superposition equation.",
+                        }
+                    ],
+                }
+            ]
+        }
+        checklist = [
+            {
+                "id": "mc_4",
+                "section_id": "ts_4",
+                "requirement": (
+                    "Apply the concept using the equation psi = a|0> + b|1>, "
+                    "and explain what the coefficients represent."
+                ),
+                "depth_gate": (
+                    "States the applicable equation; substitutes the specific values "
+                    "for the coefficients; arrives at the correct superposition state; "
+                    "explains what the coefficients represent in context."
+                ),
+            }
+        ]
+        checks = block_placement_checks(doc, domain="STEM", checklist=checklist)
+        assert "det_stem_code_substitutes_derivation" in _check_ids(checks)
+
     def test_stem_code_substitutes_derivation_scans_subsection_blocks(self):
         doc = {
             "sections": [

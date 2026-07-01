@@ -148,6 +148,38 @@ class TestStudyGenerationJson:
         assert "lim x→a f(x) = L" in md
         assert "```math" not in md.lower()
 
+    def test_render_strips_nested_code_fences_from_llm_output(self):
+        doc = {
+            "sections": [
+                {
+                    "id": "ts_2",
+                    "heading": "Process Synchronization",
+                    "content": "Peterson's algorithm.",
+                    "formula_blocks": [
+                        {
+                            "notation": "Pseudo-code",
+                            "formula": "```\nflag[0] = true;\nturn = 1;\n```",
+                            "explanation": "Peterson step.",
+                        }
+                    ],
+                    "code_blocks": [
+                        {
+                            "language": "Python",
+                            "code": "```\nimport threading\nx = 1\n```",
+                            "explanation": "Thread example.",
+                        }
+                    ],
+                }
+            ]
+        }
+        md = render_sections_to_markdown(doc)
+        assert md.count("```") == 4  # one open + one close per block
+        assert "flag[0] = true;" in md
+        assert "import threading" in md
+        assert "```\n```" not in md
+        assert "Peterson step." in md
+        assert "Thread example." in md
+
     def test_content_for_persistence_renders_json(self):
         persisted = content_for_persistence(json.dumps(_SAMPLE))
         assert "## Introduction" in persisted

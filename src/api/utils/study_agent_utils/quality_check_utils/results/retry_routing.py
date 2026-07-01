@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from src.api.schemas.qc_schemas.qc_retry_routing_schema import (
+from src.api.schemas.qc_schemas import (
     RetryMode,
     RetryRoutingResult,
 )

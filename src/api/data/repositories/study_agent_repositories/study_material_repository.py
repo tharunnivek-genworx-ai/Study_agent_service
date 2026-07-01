@@ -25,11 +25,13 @@ from src.api.data.models.postgres.e_learning_content.study_material_versions imp
     StudyMaterialVersion,
 )
 from src.api.schemas.study_material_schemas.study_material_schema import RetentionMode
-from src.api.utils.content_lifecycle import (
+from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ACTIVE,
     LIFECYCLE_DISCARDED,
     LIFECYCLE_DRAFT,
     LIFECYCLE_HIDDEN,
+)
+from src.api.utils.content_lifecycle.transitions import (
     transition_sm_to_active,
     transition_sm_to_archived,
     transition_sm_to_hidden,
@@ -64,6 +66,25 @@ class StudyMaterialRepository:
                     exclude_discarded(StudyMaterialVersion.lifecycle_status),
                 )
             )
+        )
+        return cast(StudyMaterialVersion | None, result.scalars().first())
+
+    async def get_latest_workspace_draft(
+        self, node_id: UUID
+    ) -> StudyMaterialVersion | None:
+        """Return the newest non-archived WIP draft with content for a node, or None."""
+        result = await self.db.execute(
+            select(StudyMaterialVersion)
+            .where(
+                and_(
+                    StudyMaterialVersion.node_id == node_id,
+                    StudyMaterialVersion.is_archived.is_(False),
+                    StudyMaterialVersion.is_published.is_(False),
+                    exclude_discarded(StudyMaterialVersion.lifecycle_status),
+                )
+            )
+            .order_by(StudyMaterialVersion.version_number.desc())
+            .limit(1)
         )
         return cast(StudyMaterialVersion | None, result.scalars().first())
 

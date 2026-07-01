@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.api.control.quiz_agent.prompts.quiz_qc_check_definitions import (
+from src.api.control.quiz_agent.prompts import (
     PER_QUESTION_CATEGORIES,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.parsing.json_parse import (

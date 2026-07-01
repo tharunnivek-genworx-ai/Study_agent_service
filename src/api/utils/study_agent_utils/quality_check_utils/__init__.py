@@ -1,14 +1,12 @@
 """Quality-check utilities for study material generation."""
 
-from src.api.schemas.qc_schemas.qc_check_schema import (
+from src.api.schemas.qc_schemas import (
     CODE_CATEGORIES,
     PROSE_CATEGORIES,
     VERIFICATION_CATEGORIES,
-    is_valid_qc_verification_response,
-)
-from src.api.schemas.qc_schemas.qc_retry_routing_schema import (
     RetryMode,
     RetryRoutingResult,
+    is_valid_qc_verification_response,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic import (
     CodeArtifact,

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from src.api.control.quiz_agent.prompts.quiz_qc_check_definitions import (
+from src.api.control.quiz_agent.prompts import (
     PER_QUESTION_CATEGORIES,
     QUIZ_WIDE_CATEGORIES,
 )
-from src.api.schemas.qc_schemas.quiz_retry_routing_schema import (
+from src.api.schemas.qc_schemas import (
     QuizRetryMode,
     QuizRetryRoutingResult,
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.api.schemas.qc_schemas.qc_check_schema import (
+from src.api.schemas.qc_schemas import (
     CODE_CATEGORIES,
     PROSE_CATEGORIES,
 )

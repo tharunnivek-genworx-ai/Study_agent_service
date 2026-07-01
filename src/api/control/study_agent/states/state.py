@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal, TypedDict
 from uuid import UUID
 
-GenerationMode = Literal["generate", "regenerate", "improve"]
+from src.api.schemas.common import GenerationMode
 
 
 class StudyMaterialGraphState(TypedDict, total=False):

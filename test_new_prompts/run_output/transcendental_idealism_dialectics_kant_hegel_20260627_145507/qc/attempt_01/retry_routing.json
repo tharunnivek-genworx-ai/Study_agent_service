@@ -1,0 +1,9 @@
+{
+  "mode": "section_insert",
+  "failed_section_ids": [],
+  "missing_checklist_ids": [
+    "mc_4"
+  ],
+  "section_failures": [],
+  "rationale": "deterministic routing: section_insert"
+}

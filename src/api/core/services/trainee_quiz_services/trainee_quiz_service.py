@@ -14,7 +14,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
+from src.api.core.exceptions import (
     AttemptAbandonedException,
     AttemptAlreadyInProgressException,
     AttemptAlreadySubmittedException,
@@ -26,7 +26,7 @@ from src.api.core.exceptions.quiz_exceptions.trainee_quiz_exceptions import (
     QuizNotFoundException,
     QuizNotPublishedException,
 )
-from src.api.core.services.progress_services.trainee_progress_service import (
+from src.api.core.services import (
     TraineeProgressService,
 )
 from src.api.data.models.postgres.e_learning_content.quiz_attempts import QuizAttempt
@@ -35,13 +35,11 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 )
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.data.repositories.trainee_quiz_repositories.trainee_quiz_repository import (
+from src.api.data.repositories import (
     TraineeQuizRepository,
-)
-from src.api.data.repositories.trainee_study_repositories.trainee_study_repository import (
     TraineeStudyRepository,
 )
-from src.api.schemas.quiz_schemas.quiz_schema import (
+from src.api.schemas.quiz_schemas import (
     ArchivedQuizReviewOut,
     PublishedQuizDiscoveryOut,
     QuizAttemptOut,
@@ -63,9 +61,14 @@ from src.api.utils.content_lifecycle import (
 )
 from src.api.utils.content_lifecycle.archive_gates import (
     assert_archive_list_gate,
+    assert_archived_quiz_access,
     assert_trainee_archive_context,
 )
-from src.api.utils.content_lifecycle.constants import LIFECYCLE_ACTIVE, LIFECYCLE_HIDDEN
+from src.api.utils.content_lifecycle.constants import (
+    LIFECYCLE_ACTIVE,
+    LIFECYCLE_ARCHIVED,
+    LIFECYCLE_HIDDEN,
+)
 from src.api.utils.quiz_utils.study_material_link import (
     validate_study_material_is_currently_published_for_node,
 )
@@ -225,7 +228,7 @@ class TraineeQuizService:
             raise QuizNotFoundException()
         if quiz.is_published and quiz.lifecycle_status == LIFECYCLE_ACTIVE:
             return quiz
-        if quiz.lifecycle_status == LIFECYCLE_HIDDEN:
+        if quiz.lifecycle_status in (LIFECYCLE_HIDDEN, LIFECYCLE_ARCHIVED):
             attempts = await self.repo.list_attempts_by_quiz_and_trainee(
                 quiz.quiz_id, attempt.trainee_id
             )
@@ -246,7 +249,7 @@ class TraineeQuizService:
             raise QuizNotFoundException()
         if quiz.is_published and quiz.lifecycle_status == LIFECYCLE_ACTIVE:
             return quiz
-        if quiz.lifecycle_status == LIFECYCLE_HIDDEN:
+        if quiz.lifecycle_status in (LIFECYCLE_HIDDEN, LIFECYCLE_ARCHIVED):
             attempts = await self.repo.list_attempts_by_quiz_and_trainee(
                 quiz_id, trainee_id
             )
@@ -710,14 +713,11 @@ class TraineeQuizService:
         await assert_trainee_archive_context(
             self.session, node_id=node_id, user_id=user_id, role=role
         )
-        if not await assert_archive_list_gate(self.session, node_id=node_id):
-            raise QuizNotFoundException()
+        quiz = await assert_archived_quiz_access(
+            self.session, node_id=node_id, quiz_id=quiz_id
+        )
 
-        quiz = await self.repo.get_archived_quiz_by_id(node_id, quiz_id)
-        if quiz is None:
-            raise QuizNotFoundException()
-
-        from src.api.data.repositories.study_agent_repositories.study_material_repository import (  # noqa: PLC0415
+        from src.api.data.repositories import (  # noqa: PLC0415
             StudyMaterialRepository,
         )
 

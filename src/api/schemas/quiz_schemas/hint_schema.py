@@ -11,9 +11,10 @@ Hint lifecycle (separate from quiz question generation):
 The quiz row must already exist before hint generation can run.
 """
 
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class HintGenerateRequest(BaseModel):
@@ -32,17 +33,41 @@ class HintRegenerateRequest(BaseModel):
     """
     Body for POST /nodes/:id/quizzes/:quiz_id/hints/regenerate.
 
-    Regenerates hints for a specific subset of active questions (e.g. after
-    the mentor edits question text or options during draft review).
-    question_ids must all belong to the quiz and be is_active=True.
+    Regenerates hints for active questions (selective subset or whole quiz).
+
+    scope='selective' (default): question_ids is required; mentor_feedback is optional.
+    scope='all': server resolves every active question with complete hints;
+    mentor_feedback is required (min 10 characters).
     """
 
-    question_ids: list[UUID] = Field(
-        ...,
-        min_length=1,
-        description="Active question_ids to regenerate hints for.",
+    scope: Literal["all", "selective"] = Field(
+        default="selective",
+        description=(
+            "'selective' for explicit question_ids; 'all' for every active "
+            "question that already has hints."
+        ),
+    )
+    question_ids: list[UUID] | None = Field(
+        default=None,
+        description="Required when scope='selective'. Active question_ids to regenerate.",
     )
     mentor_feedback: str | None = Field(
         default=None,
-        description="Optional mentor instructions to steer regenerated hints.",
+        max_length=4000,
+        description=(
+            "Mentor instructions to steer regenerated hints. Required when scope='all'."
+        ),
     )
+
+    @model_validator(mode="after")
+    def validate_scope_fields(self) -> Self:
+        if self.scope == "selective":
+            if not self.question_ids:
+                raise ValueError("question_ids is required when scope='selective'.")
+        elif self.scope == "all":
+            feedback = (self.mentor_feedback or "").strip()
+            if len(feedback) < 10:
+                raise ValueError(
+                    "mentor_feedback is required (min 10 characters) when scope='all'."
+                )
+        return self

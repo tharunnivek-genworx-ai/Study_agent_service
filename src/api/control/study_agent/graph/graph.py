@@ -7,6 +7,11 @@ from typing import Any, Literal
 
 from langgraph.graph import StateGraph
 
+from src.api.control.study_agent.graph.resume_router import (
+    is_resume_state,
+    last_completed_node_from_state,
+    resolve_resume_next_node,
+)
 from src.api.control.study_agent.nodes import (
     concept_checklist_node,
     llamaparse_node,
@@ -17,6 +22,31 @@ from src.api.control.study_agent.nodes import (
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 
 _compiled_graph = None
+
+
+async def entry_router_node(
+    state: StudyMaterialGraphState,
+) -> dict[str, Any]:
+    """No-op entry node; routing is decided by conditional edges."""
+    del state
+    return {}
+
+
+def _route_from_entry(
+    state: StudyMaterialGraphState,
+) -> Literal[
+    "resolver",
+    "llamaparse",
+    "concept_checklist",
+    "study_agent",
+    "quality_check",
+]:
+    if not is_resume_state(state):
+        return "resolver"
+    return resolve_resume_next_node(
+        state,
+        last_completed_node=last_completed_node_from_state(state),
+    )  # type: ignore[return-value]
 
 
 def _route_after_resolver(
@@ -85,13 +115,15 @@ def build_study_material_graph() -> Any:
     """Build and compile the study material generation graph."""
     graph = StateGraph(StudyMaterialGraphState)
 
+    graph.add_node("entry_router", entry_router_node)
     graph.add_node("resolver", resolve_instruction_node)
     graph.add_node("llamaparse", llamaparse_node)
     graph.add_node("concept_checklist", concept_checklist_node)
     graph.add_node("study_agent", study_agent_node)
     graph.add_node("quality_check", quality_check_node)
 
-    graph.set_entry_point("resolver")
+    graph.set_entry_point("entry_router")
+    graph.add_conditional_edges("entry_router", _route_from_entry)
     graph.add_conditional_edges("resolver", _route_after_resolver)
     graph.add_conditional_edges("llamaparse", _route_after_llamaparse)
     graph.add_conditional_edges("concept_checklist", _route_after_concept_checklist)
@@ -106,3 +138,9 @@ def get_study_material_graph() -> Any:
     if _compiled_graph is None:
         _compiled_graph = build_study_material_graph()
     return _compiled_graph
+
+
+def reset_study_material_graph() -> None:
+    """Clear the compiled graph cache (for tests)."""
+    global _compiled_graph
+    _compiled_graph = None

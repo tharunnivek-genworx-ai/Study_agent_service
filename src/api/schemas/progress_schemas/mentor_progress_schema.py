@@ -42,3 +42,43 @@ class MentorSpaceProgressSummaryOut(BaseModel):
     space_name: str
     total_nodes: int
     total_enrolled_trainees: int
+
+
+class NodeDeleteContentCascadeRequest(BaseModel):
+    """Body for POST /spaces/:id/nodes/delete-content-cascade."""
+
+    node_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        description="Topic node ids soft-deleted via PATCH /nodes/:id/archive.",
+    )
+
+
+class NodeDeletePreviewRequest(BaseModel):
+    """Body for POST /spaces/:id/nodes/delete-preview."""
+
+    node_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        description="Topic node ids that will be soft-deleted (node + descendants).",
+    )
+
+
+class NodeDeletePreviewOut(BaseModel):
+    """Live content counts shown before mentor confirms topic deletion."""
+
+    live_study_material_count: int = Field(
+        ...,
+        ge=0,
+        description="Published study material versions visible to trainees.",
+    )
+    live_quiz_count: int = Field(
+        ...,
+        ge=0,
+        description="Published quizzes visible to trainees.",
+    )
+    topic_count: int = Field(
+        ...,
+        ge=1,
+        description="Number of topic nodes that will be deleted.",
+    )

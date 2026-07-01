@@ -35,7 +35,7 @@ from src.api.data.models.postgres.progress_models.trainee_node_progress import (
 from src.api.data.models.postgres.progress_models.trainee_space_progress import (
     TraineeSpaceProgress,
 )
-from src.api.utils.common_utils.time import utc_now as get_current_utc_time
+from src.api.utils.common_utils import utc_now as get_current_utc_time
 from src.api.utils.trainee_progress_utils.completion import compute_completion_status
 
 
@@ -176,7 +176,7 @@ class MentorProgressRepository:
                 updated_at=now,
             )
             self.db.add(row)
-            await self.db.commit()
+            await self.db.flush()
             await self.db.refresh(row)
             return row
 
@@ -196,7 +196,7 @@ class MentorProgressRepository:
             has_published_quiz=has_published_quiz,
         )
 
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(existing)
         return existing
 
@@ -306,7 +306,7 @@ class MentorProgressRepository:
 
     async def list_nodes_for_space(self, space_id: UUID) -> list[TopicNode]:
         """Fetch all topic_nodes for the space (active and inactive) so the
-        mentor dashboard can render archived nodes with an '(Archived)' label.
+        mentor dashboard can render deleted nodes with a '(Deleted)' label.
 
         is_active is included in TraineeNodeProgressSummaryOut so the frontend
         can distinguish live nodes from archived ones (EC-3).

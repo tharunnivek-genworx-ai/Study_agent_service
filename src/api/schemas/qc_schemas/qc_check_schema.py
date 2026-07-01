@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
-from src.api.schemas.common.generation_diagnostics_schema import QualityCheckItemOut
+from src.api.schemas.common import QualityCheckItemOut
 
 QcSeverity = Literal["critical", "major", "minor"]
 QcOverallStatus = Literal["pass", "warn", "fail"]
@@ -62,6 +62,8 @@ class QcCheckItem(BaseModel):
             severity=self.severity,
             evidence=self.evidence,
             corrective_hint=self.corrective_hint,
+            section_id=self.section_id,
+            checklist_id=self.checklist_id,
         )
 
 
@@ -96,6 +98,10 @@ class QcScores(BaseModel):
     @classmethod
     def from_dict(cls, scores: dict[str, Any]) -> QcScores:
         return cls.model_validate(scores)
+
+
+# Public API alias — same shape as internal ``QcScores``.
+QualityCheckScoresOut = QcScores
 
 
 class QcRetryRecommendation(BaseModel):

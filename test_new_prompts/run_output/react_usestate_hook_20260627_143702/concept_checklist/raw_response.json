@@ -1,0 +1,55 @@
+{
+  "domain": "Programming",
+   "topic_split": [
+      {
+         "id": "ts_1",
+         "heading": "useState Hook Basics",
+         "purpose": "Understand the mental model behind useState and how it differs from traditional JavaScript state management.",
+         "pedagogy_intent": "conceptual_story"
+      },
+      {
+         "id": "ts_2",
+         "heading": "Common Pitfalls and Best Practices",
+         "purpose": "Learn how to avoid common mistakes when using useState and understand best practices for its usage.",
+         "pedagogy_intent": "misconception_fix"
+      },
+      {
+         "id": "ts_3",
+         "heading": "Implementing useState in a Real-World Scenario",
+         "purpose": "See a complete runnable example of how to use useState in a real-world application.",
+         "pedagogy_intent": "guided_trace"
+      }
+   ],
+   "must_cover_checklist": [
+      {
+         "id": "mc_1",
+         "concept": "useState Hook Basics",
+         "requirement": "Explain how useState differs from traditional JavaScript state management, including the mental model behind it.",
+         "priority": "required",
+         "section_id": "ts_1",
+         "depth_gate": "The mental model behind useState is explained in prose; the key differences from traditional JavaScript state management are named and presented; the causal reasoning connecting useState to its benefits is explained.",
+         "misconception": "Learners often think useState always causes an immediate re-render, even when the new value equals the old one.",
+         "reflection_q": "If you were to use useState in a simple counter component, how would you handle the case where the user clicks the button multiple times in quick succession?"
+      },
+      {
+         "id": "mc_2",
+         "concept": "Common Pitfalls and Best Practices",
+         "requirement": "Implement a working example of a React component that uses useState to store a count, and explain how to avoid common mistakes when using useState.",
+         "priority": "required",
+         "section_id": "ts_2",
+         "depth_gate": "At least one self-contained, runnable JavaScript code block implementing the useState example; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario.",
+         "misconception": "Learners often think you can use useState with any type of data, including objects and arrays.",
+         "reflection_q": "If you were to use useState with an object, how would you handle the case where the object has multiple properties that need to be updated?"
+      },
+      {
+         "id": "mc_3",
+         "concept": "Implementing useState in a Real-World Scenario",
+         "requirement": "Explain how to use useState in a real-world scenario, such as a form with multiple input fields.",
+         "priority": "required",
+         "section_id": "ts_3",
+         "depth_gate": "The specific real-world scenario (e.g. a form with multiple input fields) is named and presented; the causal reasoning connecting useState to its benefits in this scenario is explained.",
+         "misconception": "Learners often think you can use useState with any type of data, including complex objects and arrays.",
+         "reflection_q": "If you were to use useState with a form that has multiple input fields, how would you handle the case where the user submits the form with invalid data?"
+      }
+   ]
+}

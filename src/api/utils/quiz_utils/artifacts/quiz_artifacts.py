@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.api.utils.artifacts.common import ist_timestamp, log_agent_output, write_json
+from src.api.utils.artifacts import ist_timestamp, log_agent_output, write_json
 from src.api.utils.quiz_utils.artifacts.quiz_artifact_paths import (
     PIPELINE_SUFFIX,
     QUIZ_AGENT_ARTIFACT_SLUGS,

@@ -3,8 +3,8 @@ import uuid
 from sqlalchemy import Column, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 
-from src.api.data.clients.postgres.database import Base
-from src.api.utils.common_utils.time import utc_now
+from src.api.data.clients.postgres import Base
+from src.api.utils.common_utils import utc_now
 
 
 class QuizAttempt(Base):

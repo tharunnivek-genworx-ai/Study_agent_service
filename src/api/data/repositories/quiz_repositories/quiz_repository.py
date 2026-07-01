@@ -31,18 +31,18 @@ from src.api.data.models.postgres.e_learning_content.quiz_question_responses imp
 )
 from src.api.data.models.postgres.e_learning_content.quiz_questions import QuizQuestion
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
-from src.api.schemas.quiz_schemas.quiz_schema import QuizQuestionUpdateRequest
-from src.api.utils.content_lifecycle import (
-    transition_quiz_to_active,
-    transition_quiz_to_archived,
-    transition_quiz_to_hidden,
-)
+from src.api.schemas.quiz_schemas import QuizQuestionUpdateRequest
 from src.api.utils.content_lifecycle.attempt_freeze import (
     abandon_in_progress_attempts_for_quizzes,
 )
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_DISCARDED,
     LIFECYCLE_DRAFT,
+)
+from src.api.utils.content_lifecycle.transitions import (
+    transition_quiz_to_active,
+    transition_quiz_to_archived,
+    transition_quiz_to_hidden,
 )
 from src.api.utils.content_lifecycle.visibility import exclude_discarded
 
@@ -158,7 +158,7 @@ class QuizRepository:
                     source=source,
                 )
             )
-        await self.db.commit()
+        await self.db.flush()
         return quiz_id
 
     async def replace_quiz_draft_with_questions(
@@ -176,6 +176,17 @@ class QuizRepository:
         next_llm_retry_at: datetime | None = None,
     ) -> UUID:
         """Replace an existing draft quiz's questions in-place (M10 one-draft rule)."""
+        from src.api.schemas import GenerationRunPipeline
+        from src.api.utils.generation_progress.advisory_lock import (
+            require_generation_lock,
+        )
+
+        await require_generation_lock(
+            self.db,
+            pipeline=GenerationRunPipeline.QUIZ.value,
+            resource_id=quiz_id,
+        )
+
         existing = await self.get_quiz_by_id(quiz_id)
         if existing is None:
             raise ValueError(f"Quiz {quiz_id} not found for in-place regeneration")
@@ -229,11 +240,11 @@ class QuizRepository:
                     source=source,
                 )
             )
-        await self.db.commit()
+        await self.db.flush()
         return quiz_id
 
     async def unpublish_other_quizzes(
-        self, node_id: UUID, except_quiz_id: UUID, *, commit: bool = True
+        self, node_id: UUID, except_quiz_id: UUID, *, commit: bool = False
     ) -> None:
         """Archive all other published quizzes for this node (quiz swap path)."""
         result = await self.db.execute(
@@ -253,24 +264,28 @@ class QuizRepository:
             await abandon_in_progress_attempts_for_quizzes(self.db, archived_ids)
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def publish_quiz(self, quiz: Quiz, published_by: UUID) -> Quiz:  # noqa: ARG002
         """Publish quiz and archive any other published quiz on the node."""
-        await self.unpublish_other_quizzes(quiz.node_id, quiz.quiz_id)
+        await self.unpublish_other_quizzes(quiz.node_id, quiz.quiz_id, commit=False)
         transition_quiz_to_active(quiz)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(quiz)
         return quiz
 
-    async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = True) -> Quiz:
+    async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = False) -> Quiz:
         """Hide quiz from trainees while retaining publish metadata."""
         transition_quiz_to_hidden(quiz)
         if commit:
             await self.db.commit()
             await self.db.refresh(quiz)
+        else:
+            await self.db.flush()
         return quiz
 
-    async def discard_quiz(self, quiz_id: UUID, *, commit: bool = True) -> int:
+    async def discard_quiz(self, quiz_id: UUID, *, commit: bool = False) -> int:
         """Soft-discard a quiz from the mentor workspace; row and questions retained."""
         now = datetime.now(UTC)
         result = await self.db.execute(
@@ -284,10 +299,12 @@ class QuizRepository:
         )
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
         return int(getattr(result, "rowcount", 0) or 0)
 
     async def discard_drafts_for_sm_versions(
-        self, sm_version_ids: list[UUID], *, commit: bool = True
+        self, sm_version_ids: list[UUID], *, commit: bool = False
     ) -> int:
         """Soft-discard draft quizzes linked to the given study material versions."""
         if not sm_version_ids:
@@ -311,6 +328,8 @@ class QuizRepository:
         )
         if commit:
             await self.db.commit()
+        else:
+            await self.db.flush()
         return int(getattr(result, "rowcount", 0) or 0)
 
     async def increment_total_questions(self, quiz_id: UUID) -> None:
@@ -324,7 +343,7 @@ class QuizRepository:
                 updated_at=now,
             )
         )
-        await self.db.commit()
+        await self.db.flush()
 
     async def decrement_total_questions(self, quiz_id: UUID) -> None:
         """Decrement counter via SQL UPDATE (safe after other commits expire ORM state)."""
@@ -339,7 +358,7 @@ class QuizRepository:
                 updated_at=now,
             )
         )
-        await self.db.commit()
+        await self.db.flush()
 
     # ── Question Lookups ──────────────────────────────────────────────
 
@@ -369,6 +388,20 @@ class QuizRepository:
                 )
             )
             .order_by(QuizQuestion.order_index.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_active_questions_by_ids(
+        self, quiz_id: UUID, question_ids: list[UUID]
+    ) -> list[QuizQuestion]:
+        result = await self.db.execute(
+            select(QuizQuestion).where(
+                and_(
+                    QuizQuestion.quiz_id == quiz_id,
+                    QuizQuestion.is_active.is_(True),
+                    QuizQuestion.question_id.in_(question_ids),
+                )
+            )
         )
         return list(result.scalars().all())
 
@@ -442,7 +475,7 @@ class QuizRepository:
             source=source,
         )
         self.db.add(question)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(question)
         return question
 
@@ -453,13 +486,66 @@ class QuizRepository:
         for field in request.model_fields_set:
             value = getattr(request, field)
             setattr(question, field, value)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(question)
         return question
 
+    async def patch_questions_from_ai(
+        self,
+        quiz_id: UUID,
+        patches: list[dict],
+        *,
+        commit: bool = True,
+    ) -> list[str]:
+        """Apply AI question patches in-place; clear hints on patched rows.
+
+        Caller must already hold the quiz generation advisory lock (started by
+        ``GenerationRunService.start_run``) when invoked from the regen graph.
+        """
+        patched_ids: list[str] = []
+        now = datetime.now(UTC)
+
+        for patch in patches:
+            raw_id = patch.get("question_id")
+            if isinstance(raw_id, str):
+                question_id = UUID(raw_id)
+            elif isinstance(raw_id, UUID):
+                question_id = raw_id
+            else:
+                continue
+
+            question = await self.get_question_by_id(question_id)
+            if (
+                question is None
+                or question.quiz_id != quiz_id
+                or not question.is_active
+            ):
+                continue
+
+            question.question_text = patch["question_text"]
+            question.option_a = patch["option_a"]
+            question.option_b = patch["option_b"]
+            question.option_c = patch.get("option_c")
+            question.option_d = patch.get("option_d")
+            question.correct_option = patch["correct_option"]
+            question.explanation = patch.get("explanation")
+            question.hint_1 = None
+            question.hint_2 = None
+            question.hint_3 = None
+            patched_ids.append(str(question_id))
+
+        quiz = await self.get_quiz_by_id(quiz_id)
+        if quiz is not None:
+            quiz.updated_at = now
+
+        await self.db.flush()
+        if commit:
+            await self.db.commit()
+        return patched_ids
+
     async def soft_delete_question(self, question: QuizQuestion) -> None:
         question.is_active = False
-        await self.db.commit()
+        await self.db.flush()
 
     async def bulk_update_question_order(self, order_map: dict[UUID, int]) -> None:
         """Update order_index for multiple questions in one transaction."""
@@ -469,7 +555,7 @@ class QuizRepository:
                 .where(QuizQuestion.question_id == question_id)
                 .values(order_index=order_index)
             )
-        await self.db.commit()
+        await self.db.flush()
 
     # ── Attempt Lookups ───────────────────────────────────────────────
 
@@ -504,7 +590,7 @@ class QuizRepository:
             submitted_at=None,
         )
         self.db.add(attempt)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(attempt)
         return attempt
 
@@ -523,7 +609,7 @@ class QuizRepository:
         attempt.total_with_hints = total_with_hints
         attempt.total_skipped = total_skipped
         attempt.submitted_at = now
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(attempt)
         return attempt
 
@@ -585,7 +671,7 @@ class QuizRepository:
             existing.was_skipped = was_skipped
             existing.was_locked = was_locked
             existing.responded_at = now
-            await self.db.commit()
+            await self.db.flush()
             await self.db.refresh(existing)
             return existing
 
@@ -602,6 +688,6 @@ class QuizRepository:
             responded_at=now,
         )
         self.db.add(response)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(response)
         return response

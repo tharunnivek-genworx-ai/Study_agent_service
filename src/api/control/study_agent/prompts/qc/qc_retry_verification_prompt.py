@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from src.api.utils.prompt_utils.domain_merge import domains_to_include
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
@@ -31,7 +32,7 @@ QC_RETRY_PROGRAMMING_RULES_BLOCK = """\
 - Programming: trace code execution; verify no undefined symbols; verify every API call is real for the stated language/version; check for duplicate method/function names in the same scope. A Programming item's runnable code block is itself the correct evidence — it is never penalised for "not being a derivation."
 """
 QC_RETRY_CONCEPTUAL_RULES_BLOCK = """\
-- Conceptual: verify named facts; a code_block or formula_block appearing in a Conceptual section is itself a failure, regardless of whether its content is correct.
+- Conceptual: apply the 3-step procedure — state the correct fact from your own knowledge first, then compare to the revised content; do not use "X is indeed Y" as evidence. Verify named facts (dates, people, events, laws, organisations) are accurate per mainstream record. Verify causal claims are directionally accurate and mechanistically sound, not just plausible. When the prior failure cited a missing named example: confirm the revised section names a specific actor, describes the context, and states a verifiable outcome — a sector-level generalisation ("many companies", "government agencies") is still a failure even after revision. When the prior failure cited an unverifiable statistic: confirm it is now either removed, replaced with a qualitative description, or traceable to a publicly documented source. A code_block or formula_block appearing in a Conceptual section is itself a failure regardless of content correctness.\
 """
 QC_MUST_COVER_BLOCK = """\
 CHECK CATEGORIES (emit only for revised sections)
@@ -74,9 +75,9 @@ QC_STACK_FIDELITY_BLOCK = """\
    section_id REQUIRED. severity: "major".
 """
 QC_TEACHING_ALIGNMENT_BLOCK = """\
-⑥ teaching_alignment — emit exactly one check ONLY when teaching_alignment appears in <previously_failed>
+⑥ teaching_alignment — emit exactly one check when <prior_teaching_alignment_failure> is present OR teaching_alignment appears in <previously_failed>
    question: "Does the revised content now address the teaching instruction requirement that previously failed?"
-   FAIL if the revision did not resolve the gap identified in the prior teaching_alignment failure.
+   Re-read the teaching instruction and the full document outline plus all revised sections. Fail if gaps cited in the prior failure remain, or if patched sections still do not meet the instruction's clarity/depth requirements.
    severity: "major". evidence REQUIRED on both pass and fail.
 """
 SYSTEM_PROMPT_SUFFIX = """\
@@ -179,6 +180,34 @@ def build_previously_failed_block(section_failures: list[dict]) -> str:
     return f"\n<previously_failed>\n{payload}\n</previously_failed>"
 
 
+def build_prior_teaching_alignment_block(
+    prior_teaching_alignment: dict[str, Any] | None,
+) -> str:
+    if not prior_teaching_alignment:
+        return ""
+    payload = json.dumps(prior_teaching_alignment, indent=2, ensure_ascii=False)
+    return f"\n<prior_teaching_alignment_failure>\n{payload}\n</prior_teaching_alignment_failure>"
+
+
+def extract_prior_teaching_alignment_failure(
+    qc_result: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the most recent failed document-level teaching_alignment check."""
+    if not isinstance(qc_result, dict):
+        return None
+    for check in qc_result.get("checks") or []:
+        if not isinstance(check, dict):
+            continue
+        if str(check.get("category", "")) != "teaching_alignment":
+            continue
+        if check.get("passed", True):
+            continue
+        if str(check.get("section_id", "") or "").strip():
+            continue
+        return check
+    return None
+
+
 def build_user_message(
     teaching_instruction: str,
     document_outline: str,
@@ -188,6 +217,7 @@ def build_user_message(
     topic_split: list[dict] | None = None,
     domain: str = "",
     *,
+    prior_teaching_alignment_failure: dict[str, Any] | None = None,
     max_section_chars: int = 40000,
 ) -> str:
     parts = [
@@ -207,6 +237,11 @@ def build_user_message(
         )
         parts.append(f"\n<topic_split>\n{split_lines}\n</topic_split>")
     parts.append(build_previously_failed_block(section_failures))
+    prior_ta_block = build_prior_teaching_alignment_block(
+        prior_teaching_alignment_failure
+    )
+    if prior_ta_block:
+        parts.append(prior_ta_block)
     revised_json = json.dumps(
         {"sections": revised_sections}, indent=2, ensure_ascii=False
     )

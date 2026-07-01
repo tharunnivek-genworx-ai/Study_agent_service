@@ -347,7 +347,7 @@ def _run_fresh_extraction_sync(pdf_path: str, topic_title: str) -> dict:
             "Either set it or use --cached-json to skip extraction."
         )
     try:
-        from src.api.control.study_agent.utils.parsing.llama_parse_extractor import (
+        from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
             extract_structured_reference,
         )
     except ImportError as exc:

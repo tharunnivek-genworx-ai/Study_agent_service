@@ -1,0 +1,21 @@
+{
+  "stage": "generation",
+  "topic": "React useState Hook",
+  "effective_instruction": "Write for a junior developer who knows JavaScript basics but has never used React hooks. Focus on mental models, common pitfalls, and one complete runnable example per major idea.",
+  "domain": "Programming",
+  "started_at": "2026-06-27T14:37:04.898197+00:00",
+  "finished_at": "2026-06-27T14:37:08.695038+00:00",
+  "duration_seconds": 3.796841,
+  "llm_ok": true,
+  "llm_error_type": null,
+  "llm_model_used": "llama-3.3-70b-versatile",
+  "token_usage": 4482,
+  "provider_meta": {
+    "api_key_alias": "key_2",
+    "attempt_index": 1,
+    "graph_node": "study_generator"
+  },
+  "suggestion": null,
+  "parse_ok": true,
+  "ok": true
+}

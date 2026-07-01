@@ -6,10 +6,10 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from src.api.utils.artifacts.common import (
+from src.api.utils.artifacts import (
     new_artifact_run_id,
 )
-from src.api.utils.artifacts.common import (
+from src.api.utils.artifacts import (
     write_json as _write_json,
 )
 from src.api.utils.study_agent_utils.artifacts.artifact_paths import (

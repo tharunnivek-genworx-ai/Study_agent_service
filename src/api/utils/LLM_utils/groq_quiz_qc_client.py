@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage
 
-from src.api.config.llm_config import llm_settings
+from src.api.config import llm_settings
 from src.api.utils.LLM_utils.groq_qc_client import (
     _QC_COMPLETION_FLOOR,
     _QC_TPM_INPUT_BUFFER,
@@ -48,7 +48,9 @@ async def call_groq_quiz_qc_verification(
     return await call_groq_with_rotation(
         messages=messages,
         model=model,
-        temperature=0,
+        temperature=llm_settings.qc_temperature,
+        top_p=llm_settings.qc_top_p,
+        do_sample=llm_settings.qc_do_sample,
         timeout=180,
         max_tokens=max_tokens,
         response_format={"type": "json_object"},

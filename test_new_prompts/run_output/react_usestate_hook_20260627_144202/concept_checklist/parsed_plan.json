@@ -1,0 +1,62 @@
+{
+  "domain": "Programming",
+  "topic_split": [
+    {
+      "id": "ts_1",
+      "heading": "useState Hook Basics",
+      "purpose": "Understand the useState hook's purpose, usage, and common patterns."
+    },
+    {
+      "id": "ts_2",
+      "heading": "Common Pitfalls and Best Practices",
+      "purpose": "Learn how to avoid common mistakes and follow best practices when using the useState hook."
+    },
+    {
+      "id": "ts_3",
+      "heading": "Real-World Scenarios and Use Cases",
+      "purpose": "Explore real-world scenarios and use cases for the useState hook, including examples and code snippets."
+    }
+  ],
+  "must_cover_checklist": [
+    {
+      "id": "mc_1",
+      "concept": "useState Hook Basics",
+      "requirement": "Implement a simple counter using the useState hook, including a worked example that demonstrates the hook's usage and common patterns.",
+      "priority": "required",
+      "section_id": "ts_1",
+      "depth_gate": "At least one self-contained, runnable code block implementing the counter; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario."
+    },
+    {
+      "id": "mc_2",
+      "concept": "Updating State with useState",
+      "requirement": "Explain how to update state using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+      "priority": "required",
+      "section_id": "ts_1",
+      "depth_gate": "The correct method for updating state using the useState hook is explained; a worked example demonstrates the correct usage and common pitfalls; the implications of incorrect usage are discussed."
+    },
+    {
+      "id": "mc_3",
+      "concept": "Handling Errors with useState",
+      "requirement": "Implement a try-catch block to handle errors when updating state using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+      "priority": "required",
+      "section_id": "ts_2",
+      "depth_gate": "At least one self-contained, runnable code block implementing the try-catch block; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario."
+    },
+    {
+      "id": "mc_4",
+      "concept": "Optimizing Performance with useState",
+      "requirement": "Explain how to optimize performance when using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+      "priority": "recommended",
+      "section_id": "ts_2",
+      "depth_gate": "The correct method for optimizing performance when using the useState hook is explained; a worked example demonstrates the correct usage and common pitfalls; the implications of incorrect usage are discussed."
+    },
+    {
+      "id": "mc_5",
+      "concept": "Real-World Scenarios: Form Validation",
+      "requirement": "Implement a form validation system using the useState hook, including a worked example that demonstrates the correct usage and common pitfalls.",
+      "priority": "required",
+      "section_id": "ts_3",
+      "depth_gate": "At least one self-contained, runnable code block implementing the form validation system; explanation explicitly states what the code outputs and why; behaviour is shown for a normal-case scenario and for an edge-case scenario."
+    }
+  ]
+}

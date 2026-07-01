@@ -1,0 +1,9 @@
+{
+  "retry_mode": "section_insert",
+  "qc_reverify_section_ids": [],
+  "qc_missing_checklist_ids": [
+    "mc_4"
+  ],
+  "qc_section_failures": [],
+  "qc_feedback": "Failed Checks:\n  - [critical] structure/det_structure_coverage: Does every required topic_split / checklist section exist in the document? — Missing section ids: ts_5 → Add one section per topic_split entry (or required checklist item) with matching id.\n  - [critical] must_cover/mc_4: Does the document satisfy 'Real-World Applications and Critiques' to the depth_gate standard? — The document does not provide a comprehensive analysis of the relevance and impact of Transcendental Idealism & Dialectics on modern philosophy, science, and society. → Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.\n  - [major] teaching_alignment/teaching_alignment_1: Does the document address everything the teaching instruction specifies? — The document does not provide a comprehensive analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics. → Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.\n\nIssues Found:\n  - The document does not provide a comprehensive analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics.\n\nCorrective Instructions: Add a detailed analysis of the real-world applications and critiques of Transcendental Idealism & Dialectics."
+}

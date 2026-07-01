@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from src.api.data.models.postgres.e_learning_content.node_media import NodeMedia
-from src.api.schemas.study_material_schemas.node_media_schema import NodeMediaOut
+from src.api.schemas.study_material_schemas import NodeMediaOut
 from src.api.utils.reference_media_utils.media_url_utils import storage_path_to_url
 
 

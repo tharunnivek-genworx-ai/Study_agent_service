@@ -64,14 +64,14 @@ class TraineeQuizRepository:
     async def get_hidden_quiz_with_trainee_attempts(
         self, node_id: UUID, trainee_id: UUID
     ) -> Quiz | None:
-        """Return the newest hidden quiz this trainee has attempt history on."""
+        """Return the newest hidden/archived quiz this trainee has attempt history on."""
         result = await self.db.execute(
             select(Quiz)
             .join(QuizAttempt, QuizAttempt.quiz_id == Quiz.quiz_id)
             .where(
                 and_(
                     Quiz.node_id == node_id,
-                    Quiz.lifecycle_status == LIFECYCLE_HIDDEN,
+                    Quiz.lifecycle_status.in_((LIFECYCLE_HIDDEN, LIFECYCLE_ARCHIVED)),
                     QuizAttempt.trainee_id == trainee_id,
                 )
             )

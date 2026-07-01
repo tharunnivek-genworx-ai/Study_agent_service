@@ -6,12 +6,11 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-from src.api.config import dbconfig
+from src.api.config import settings
 
 
 def build_database_url(drivername: str = "postgresql+asyncpg") -> URL:
     """Build a Postgres URL for TCP hosts or Cloud SQL Unix sockets."""
-    settings = dbconfig.settings
     if settings.database_hostname.startswith("/cloudsql/"):
         return URL.create(
             drivername=drivername,
@@ -35,7 +34,7 @@ SQLALCHEMY_DATABASE_URL = build_database_url()
 
 engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
-    echo=True,
+    echo=settings.database_echo,
 )
 
 Base = declarative_base()
@@ -44,15 +43,23 @@ SessionLocal = async_sessionmaker(
     bind=engine,
     autocommit=False,
     autoflush=False,
+    expire_on_commit=False,
     class_=AsyncSession,
 )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
-    """Yield a database session and roll back on unhandled errors."""
+    """Yield a request-scoped session; commit on success, rollback on error."""
+    from src.api.utils.generation_progress.advisory_lock import (
+        release_all_generation_locks,
+    )
+
     async with SessionLocal() as session:
         try:
             yield session
+            await session.commit()
         except Exception:
             await session.rollback()
             raise
+        finally:
+            await release_all_generation_locks(session)
