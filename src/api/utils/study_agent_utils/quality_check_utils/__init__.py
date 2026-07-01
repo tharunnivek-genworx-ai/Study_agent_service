@@ -4,13 +4,13 @@ from src.api.schemas.qc_schemas import (
     CODE_CATEGORIES,
     PROSE_CATEGORIES,
     VERIFICATION_CATEGORIES,
+    CodeArtifact,
+    DocumentStructure,
     RetryMode,
     RetryRoutingResult,
     is_valid_qc_verification_response,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic import (
-    CodeArtifact,
-    DocumentStructure,
     attach_code_artifact_ids_from_document,
     build_code_review_payloads,
     extract_structure,

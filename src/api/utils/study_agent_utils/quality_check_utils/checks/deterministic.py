@@ -3,32 +3,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
+from src.api.schemas.qc_schemas.qc_document_structure_schema import (
+    CodeArtifact,
+    DocumentStructure,
+)
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     parse_generation_document,
     validate_section_id_coverage,
 )
-
-
-@dataclass
-class CodeArtifact:
-    id: str
-    language: str
-    body: str
-    fenced_code: str
-    line_count: int
-    section_id: str | None = None
-    section_heading: str | None = None
-    subsection_heading: str | None = None
-
-
-@dataclass
-class DocumentStructure:
-    sections: list[dict[str, Any]]
-    code_artifacts: list[CodeArtifact]
-    has_preamble: bool
 
 
 def extract_structure(content: str) -> DocumentStructure:
@@ -36,12 +20,16 @@ def extract_structure(content: str) -> DocumentStructure:
     doc = parse_generation_document(content)
     if doc is None:
         return DocumentStructure(sections=[], code_artifacts=[], has_preamble=False)
+    return extract_structure_from_document(doc)
 
+
+def extract_structure_from_document(document: dict[str, Any]) -> DocumentStructure:
+    """Extract structure directly from a parsed document dict."""
     sections: list[dict[str, Any]] = []
     artifacts: list[CodeArtifact] = []
     artifact_index = 0
 
-    for section in doc.get("sections") or []:
+    for section in document.get("sections") or []:
         if not isinstance(section, dict):
             continue
         section_id = section.get("id")
@@ -182,13 +170,6 @@ def attach_code_artifact_ids_from_document(
             if section_id:
                 check["section_id"] = section_id
     return checks
-
-
-def extract_structure_from_document(document: dict[str, Any]) -> DocumentStructure:
-    """Extract structure directly from a parsed document dict."""
-    import json
-
-    return extract_structure(json.dumps(document, ensure_ascii=False))
 
 
 def build_code_review_payloads(structure: DocumentStructure) -> list[dict[str, Any]]:

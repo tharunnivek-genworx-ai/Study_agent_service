@@ -64,18 +64,33 @@ def parse_generation_document(raw: str) -> dict[str, Any] | None:
     return parsed
 
 
-def canonicalize_generation_json(raw: str) -> str:
-    """Strip fences/commentary and return one compact JSON object string."""
+def _parse_for_canonicalization(
+    raw: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Parse generator output once for canonicalization and domain validation."""
     from src.api.utils.study_agent_utils.quality_check_utils.parsing.json_parse import (
         parse_llm_json_object,
     )
 
-    parsed = parse_generation_document(raw)
-    if parsed is None:
-        parsed = parse_llm_json_object(raw, "generation")
+    document = parse_generation_document(raw)
+    if document is not None:
+        return document, document
+    parsed = parse_llm_json_object(raw, "generation")
     if parsed is None:
         raise ValueError("Generator response is not valid JSON")
+    return parsed, None
+
+
+def canonicalize_generation_json(raw: str) -> str:
+    """Strip fences/commentary and return one compact JSON object string."""
+    parsed, _ = _parse_for_canonicalization(raw)
     return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+
+
+def canonicalize_generation_content(raw: str) -> tuple[str, dict[str, Any] | None]:
+    """Return compact JSON and a domain-valid document when one is present."""
+    parsed, document = _parse_for_canonicalization(raw)
+    return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False), document
 
 
 def try_canonicalize_generation_json(raw: str) -> str | None:

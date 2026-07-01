@@ -45,7 +45,7 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _assert_trainee,
     _get_node_and_assert_space_access,
 )
-from src.api.utils.study_agent_utils.media.study_material_pdf import (
+from src.api.utils.study_agent_utils.media import (
     build_study_material_pdf_filename,
     render_study_material_pdf,
 )
