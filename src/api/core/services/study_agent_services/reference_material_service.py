@@ -60,7 +60,7 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
 )
-from src.api.utils.study_agent_utils.media.media_response import build_node_media_out
+from src.api.utils.study_agent_utils.media import build_node_media_out
 
 _UPLOAD_ROOT = Path("/app/uploads/reference_materials")
 

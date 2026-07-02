@@ -13,12 +13,12 @@ UPGRADES (v2):
 
 from __future__ import annotations
 
-from src.api.control.study_agent.prompts.generation.generation_prompt import (
-    format_reference_user_block,
-)
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     format_must_cover_checklist_line,
+)
+from test_new_prompts.prompts.generation_prompt import (
+    format_reference_user_block,
 )
 
 SECTION_OUTPUT_SCHEMA = """\

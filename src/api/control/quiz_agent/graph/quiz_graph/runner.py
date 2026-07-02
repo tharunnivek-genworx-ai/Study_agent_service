@@ -84,3 +84,67 @@ async def run_quiz_from_checkpoint(
         initial_state,
         run_id=run_id,
     )
+
+
+async def _run_question_rework_graph(
+    session: AsyncSession,
+    initial_state: QuizGraphState,
+    *,
+    run_id: UUID | None = None,
+) -> QuizGraphState:
+    graph = get_quiz_generation_graph()
+    state_with_mode: dict[str, Any] = {**initial_state, "mode": "improve"}
+    config = {"configurable": {"session": session}}
+    result = cast(
+        QuizGraphState,
+        await invoke_graph_with_progress(
+            graph,
+            state_with_mode,
+            config,
+            pipeline=GenerationPipeline.QUIZ,
+            run_id=run_id,
+        ),
+    )
+
+    if result.get("terminal_llm_failure"):
+        logger.warning(
+            "Quiz single-question regen LLM failed (%s) for quiz '%s'.",
+            result.get("llm_error_type"),
+            result.get("quiz_id"),
+        )
+        return result
+
+    if result.get("error"):
+        detail = str(result["error"])
+        logger.error("Quiz single-question regen failed: %s", detail)
+        raise QuizGenerationFailedException(detail)
+
+    return result
+
+
+async def run_quiz_single_regen(
+    session: AsyncSession,
+    initial_state: QuizGraphState,
+    *,
+    run_id: UUID | None = None,
+) -> QuizGraphState:
+    """Fresh single-question regen from service-shaped initial state."""
+    return await _run_question_rework_graph(
+        session,
+        initial_state,
+        run_id=run_id,
+    )
+
+
+async def run_quiz_single_regen_from_checkpoint(
+    session: AsyncSession,
+    initial_state: QuizGraphState,
+    *,
+    run_id: UUID | None = None,
+) -> QuizGraphState:
+    """Resume a failed single-question regen run from a hydrated checkpoint state."""
+    return await _run_question_rework_graph(
+        session,
+        initial_state,
+        run_id=run_id,
+    )

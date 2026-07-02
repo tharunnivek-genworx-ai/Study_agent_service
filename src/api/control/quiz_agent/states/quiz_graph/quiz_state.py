@@ -14,7 +14,7 @@ class QuizGraphState(TypedDict, total=False):
     mentor_id: UUID
     space_id: UUID | None
     node_id: UUID
-    mode: str  # "generate" or "regenerate"
+    mode: str  # "generate" | "regenerate" | "improve"
     quiz_id: UUID | None  # required for regenerate
     question_count: int
     difficulty: str
@@ -31,6 +31,14 @@ class QuizGraphState(TypedDict, total=False):
     validated_questions: list | None
     hints_stale_question_ids: list[str]
     struct_validation_passed: bool
+
+    # ── Single-question rework (improve) branch ───────────────────
+    question_ids: list[UUID]
+    all_questions: list[dict[str, Any]] | None
+    difficulty_profile: str | None
+    parsed_patches: list[dict[str, Any]] | None
+    validated_patches: list[dict[str, Any]] | None
+    rework_status: str | None
 
     # Pre-QC deterministic retry
     gen_attempt: int

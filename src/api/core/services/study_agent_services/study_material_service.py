@@ -40,6 +40,7 @@ from src.api.core.exceptions.study_material_exceptions.study_material_exceptions
     StudyMaterialNoActiveVersionException,
     StudyMaterialNoDraftsException,
     StudyMaterialNotFoundException,
+    StudyMaterialPdfGenerationFailedException,
     StudyMaterialPublishBlockedReferenceMaterialRequiredException,
     StudyMaterialPublishBlockedSpaceUnpublishedException,
     StudyMaterialVersionAlreadyArchivedException,
@@ -133,6 +134,10 @@ from src.api.utils.study_agent_utils.artifacts.study_material_artifacts import (
 )
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     content_for_persistence,
+)
+from src.api.utils.study_agent_utils.media import (
+    build_study_material_pdf_filename,
+    render_study_material_pdf,
 )
 from src.api.utils.study_agent_utils.mentor.mentor_student_visibility import (
     build_mentor_student_visibility,
@@ -1334,6 +1339,37 @@ class StudyMaterialService:
             raise StudyMaterialNotFoundException()
 
         return _study_material_version_out(version)
+
+    async def download_version_pdf(
+        self, node_id: UUID, version_id: UUID, user_id: UUID, role: str
+    ) -> tuple[bytes, str]:
+        """Render a mentor-accessible study material version as PDF."""
+        _assert_mentor(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=False
+        )
+        await _assert_space_access(self.session, node.space_id, user_id, role)
+
+        repo = StudyMaterialRepository(self.session)
+        version = await repo.get_version_by_id(version_id)
+        if version is None or version.node_id != node_id:
+            raise StudyMaterialNotFoundException()
+        if not is_mentor_accessible_sm(version):
+            raise StudyMaterialNotFoundException()
+        if not (version.content or "").strip():
+            raise StudyMaterialNotFoundException()
+        if "GENERATION STATUS: Reference material required" in (version.content or ""):
+            raise StudyMaterialModificationBlockedReferenceMaterialRequiredException()
+
+        try:
+            pdf_bytes = render_study_material_pdf(node.title, version.content)
+        except ValueError:
+            raise StudyMaterialPdfGenerationFailedException() from None
+
+        filename = build_study_material_pdf_filename(
+            f"{node.title}-v{version.version_number}"
+        )
+        return pdf_bytes, filename
 
     # ── active version ─────────────────────────────────────────────────
 

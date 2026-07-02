@@ -10,12 +10,14 @@ Routes for study_material_versions.
   activate    → PATCH /nodes/{node_id}/study-material/activate
   versions    → GET   /nodes/{node_id}/study-material/versions
   version     → GET   /nodes/{node_id}/study-material/versions/{version_id}
+  version_pdf → GET   /nodes/{node_id}/study-material/versions/{version_id}/pdf
   trainee routes → see ``trainee_study_routes`` (GET study-material, PDF, panel, progress)
 """
 
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.services.study_agent_services.study_material_service import (
@@ -343,6 +345,25 @@ async def get_study_material_version(
     service = StudyMaterialService(db)
     return await service.get_version(
         node_id, version_id, current_user.sub, current_user.role
+    )
+
+
+@router.get("/nodes/{node_id}/study-material/versions/{version_id}/pdf")
+async def download_study_material_version_pdf(
+    node_id: UUID,
+    version_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> Response:
+    """Download a mentor-accessible study material version as PDF."""
+    service = StudyMaterialService(db)
+    pdf_bytes, filename = await service.download_version_pdf(
+        node_id, version_id, current_user.sub, current_user.role
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

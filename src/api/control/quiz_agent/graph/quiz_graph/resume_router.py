@@ -10,6 +10,7 @@ from src.api.utils.generation_progress.resume_helpers import (
     RESUME_FLAG,
     coerce_datetime,
     coerce_uuid,
+    coerce_uuid_list,
     is_resume_state,
     last_completed_node_from_state,
 )
@@ -24,16 +25,31 @@ QUIZ_GRAPH_NODES = frozenset(
         "deterministic_validate",
         "quality_check",
         "persist_quiz_draft",
+        "load_quiz_single_regen_context",
+        "build_quiz_single_regen_prompt",
+        "invoke_quiz_single_regen_llm",
+        "parse_quiz_single_regen_output",
+        "deterministic_validate_question_patches",
+        "persist_question_patches",
     }
 )
 
 
-def resolve_resume_next_node(
+def is_question_rework_run(state: QuizGraphState) -> bool:
+    if state.get("mode") == "improve":
+        return True
+    return bool(state.get("question_ids")) and state.get("mode") not in (
+        "generate",
+        "regenerate",
+    )
+
+
+def _resolve_generate_resume_next_node(
     state: QuizGraphState,
     *,
     last_completed_node: str | None,
 ) -> str:
-    """Return the next graph node after a cross-request resume."""
+    """Return the next generate/regenerate graph node after a cross-request resume."""
     if not last_completed_node:
         return "load_generation_context"
 
@@ -98,6 +114,73 @@ def resolve_resume_next_node(
     return "load_generation_context"
 
 
+def _resolve_rework_resume_next_node(
+    state: QuizGraphState,
+    *,
+    last_completed_node: str | None,
+) -> str:
+    """Return the next single-question rework graph node after a cross-request resume."""
+    if not last_completed_node:
+        return "load_quiz_single_regen_context"
+
+    if last_completed_node == "load_quiz_single_regen_context":
+        if not state.get("all_questions"):
+            return "load_quiz_single_regen_context"
+        return "build_quiz_single_regen_prompt"
+
+    if last_completed_node == "build_quiz_single_regen_prompt":
+        if state.get("prompt_input"):
+            return "invoke_quiz_single_regen_llm"
+        return "build_quiz_single_regen_prompt"
+
+    if last_completed_node == "invoke_quiz_single_regen_llm":
+        if state.get("terminal_llm_failure"):
+            return "__end__"
+        if state.get("error"):
+            if state.get("raw_llm_output") and state.get("parsed_patches") is None:
+                return "parse_quiz_single_regen_output"
+            return "invoke_quiz_single_regen_llm"
+        if state.get("parsed_patches") is not None:
+            return "deterministic_validate_question_patches"
+        if state.get("raw_llm_output"):
+            return "parse_quiz_single_regen_output"
+        return "invoke_quiz_single_regen_llm"
+
+    if last_completed_node == "parse_quiz_single_regen_output":
+        if state.get("error"):
+            if state.get("raw_llm_output"):
+                return "parse_quiz_single_regen_output"
+            return "invoke_quiz_single_regen_llm"
+        return "deterministic_validate_question_patches"
+
+    if last_completed_node == "deterministic_validate_question_patches":
+        if state.get("error"):
+            return "__end__"
+        if state.get("validated_patches"):
+            return "persist_question_patches"
+        return "invoke_quiz_single_regen_llm"
+
+    if last_completed_node == "persist_question_patches":
+        return "persist_question_patches"
+
+    return "load_quiz_single_regen_context"
+
+
+def resolve_resume_next_node(
+    state: QuizGraphState,
+    *,
+    last_completed_node: str | None,
+) -> str:
+    """Return the next graph node after a cross-request resume."""
+    if is_question_rework_run(state):
+        return _resolve_rework_resume_next_node(
+            state, last_completed_node=last_completed_node
+        )
+    return _resolve_generate_resume_next_node(
+        state, last_completed_node=last_completed_node
+    )
+
+
 def hydrate_checkpoint_state(
     checkpoint_state: dict[str, Any],
     *,
@@ -119,6 +202,11 @@ def hydrate_checkpoint_state(
     elif params.get("mentor_id"):
         state["mentor_id"] = coerce_uuid(params["mentor_id"])
 
+    if "question_ids" in state:
+        state["question_ids"] = coerce_uuid_list(state["question_ids"])
+    elif params.get("question_ids"):
+        state["question_ids"] = coerce_uuid_list(params["question_ids"])
+
     if "next_llm_retry_at" in state:
         state["next_llm_retry_at"] = coerce_datetime(state["next_llm_retry_at"])
 
@@ -128,10 +216,11 @@ def hydrate_checkpoint_state(
         ("mode", "mode"),
         ("mentor_feedback", "mentor_feedback"),
         ("quiz_id", "quiz_id"),
+        ("node_id", "node_id"),
     ):
         if state_key not in state and params.get(param_key) is not None:
             value = params[param_key]
-            if state_key == "quiz_id":
+            if state_key in ("quiz_id", "node_id"):
                 value = coerce_uuid(value)
             state[state_key] = value
 
@@ -143,6 +232,7 @@ def hydrate_checkpoint_state(
 __all__ = [
     "QUIZ_GRAPH_NODES",
     "hydrate_checkpoint_state",
+    "is_question_rework_run",
     "is_resume_state",
     "last_completed_node_from_state",
     "resolve_resume_next_node",

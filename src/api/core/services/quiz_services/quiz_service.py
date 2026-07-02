@@ -259,7 +259,7 @@ class QuizService:
         initial_state: dict[str, Any],
         run_id: UUID,
     ) -> dict[str, Any]:
-        from src.api.control.quiz_agent.graph.quiz_single_regen_graph.runner import (
+        from src.api.control.quiz_agent.graph.quiz_graph.runner import (
             run_quiz_single_regen,
         )
         from src.api.core.exceptions import (  # noqa: PLC0415
@@ -369,10 +369,10 @@ class QuizService:
         role: str,
     ) -> QuizOut:
         """Continue a failed single-question rework run from its last checkpoint."""
-        from src.api.control.quiz_agent.graph.quiz_single_regen_graph.resume_router import (
+        from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
             hydrate_checkpoint_state,
         )
-        from src.api.control.quiz_agent.graph.quiz_single_regen_graph.runner import (
+        from src.api.control.quiz_agent.graph.quiz_graph.runner import (
             run_quiz_single_regen_from_checkpoint,
         )
         from src.api.core.exceptions import (  # noqa: PLC0415

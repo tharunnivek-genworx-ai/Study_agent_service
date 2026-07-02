@@ -7,6 +7,7 @@ from .quiz_graph import (
     quiz_qc_check_definitions,
     quiz_qc_prompt,
     quiz_qc_retry_verification_prompt,
+    quiz_single_regen_prompt,
 )
 from .quiz_graph.quiz_prompt import (
     OUTPUT_FORMAT_BLOCK,
@@ -18,7 +19,6 @@ from .quiz_graph.quiz_qc_check_definitions import (
     PER_QUESTION_CATEGORIES,
     QUIZ_WIDE_CATEGORIES,
 )
-from .quiz_single_regen_graph import quiz_single_regen_prompt
 
 __all__ = [
     "LLM_QUIZ_WIDE_CATEGORIES",

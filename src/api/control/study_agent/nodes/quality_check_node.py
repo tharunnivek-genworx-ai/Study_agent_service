@@ -12,8 +12,7 @@ from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.qc import qc_retry_verification_prompt
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
-    canonicalize_generation_json,
-    parse_generation_document,
+    canonicalize_generation_content,
 )
 from src.api.utils.study_agent_utils.graph import node_helpers as helpers
 from src.api.utils.study_agent_utils.quality_check_utils.checks.block_placement_checks import (
@@ -21,7 +20,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.checks.block_placement_
 )
 from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic import (
     build_code_review_payloads,
-    extract_structure,
+    extract_structure_from_document,
     structure_check,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.checks.skip_rules import (
@@ -124,14 +123,16 @@ async def quality_check_node(
         return result
 
     try:
-        generated_content = canonicalize_generation_json(raw_content)
+        generated_content, parsed_document = canonicalize_generation_content(
+            raw_content
+        )
     except ValueError:
         logger.warning("QC skipped invalid JSON document on attempt %d", new_attempt)
         return build_invalid_json_return(new_attempt)
 
-    document = parse_generation_document(generated_content) or {}
+    document = parsed_document or {}
 
-    structure = extract_structure(generated_content)
+    structure = extract_structure_from_document(document)
     code_review_payloads = build_code_review_payloads(structure)
     optional_structure_check = structure_check(
         structure,

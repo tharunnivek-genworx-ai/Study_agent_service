@@ -16,10 +16,10 @@ UPGRADES (v2):
 
 from __future__ import annotations
 
-from src.api.control.study_agent.prompts.generation.generation_prompt import (
+from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
+from test_new_prompts.prompts.generation_prompt import (
     JSON_OUTPUT_SCHEMA,
 )
-from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 
 STEM_ACCURACY_BLOCK = (
     "STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. "

@@ -19,16 +19,23 @@ from typing import Any, Literal
 from langgraph.graph import END, StateGraph
 
 from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
+    is_question_rework_run,
     is_resume_state,
     last_completed_node_from_state,
     resolve_resume_next_node,
 )
 from src.api.control.quiz_agent.nodes.quiz_graph import (
     MAX_QC_ATTEMPTS,
+    build_quiz_single_regen_prompt_node,
     deterministic_validate_node,
+    deterministic_validate_question_patches,
+    invoke_quiz_single_regen_llm,
     load_existing_quiz_if_regenerate,
     load_generation_context,
+    load_quiz_single_regen_context,
     parse_quiz_output,
+    parse_quiz_single_regen_output,
+    persist_question_patches,
     persist_quiz_draft,
     quality_check_node,
     quiz_generator_node,
@@ -56,13 +63,25 @@ def _route_from_entry(
     "deterministic_validate",
     "quality_check",
     "persist_quiz_draft",
+    "load_quiz_single_regen_context",
+    "build_quiz_single_regen_prompt",
+    "invoke_quiz_single_regen_llm",
+    "parse_quiz_single_regen_output",
+    "deterministic_validate_question_patches",
+    "persist_question_patches",
+    "__end__",
 ]:
     if not is_resume_state(state):
+        if is_question_rework_run(state):
+            return "load_quiz_single_regen_context"
         return "load_generation_context"
-    return resolve_resume_next_node(
+    next_node = resolve_resume_next_node(
         state,
         last_completed_node=last_completed_node_from_state(state),
-    )  # type: ignore[return-value]
+    )
+    if next_node == "__end__":
+        return "__end__"
+    return next_node  # type: ignore[return-value]
 
 
 def _route_after_load_context(
@@ -128,6 +147,30 @@ def _route_after_quality_check(
     return "quiz_generator"
 
 
+def _route_after_rework_invoke(
+    state: QuizGraphState,
+) -> Literal["parse_quiz_single_regen_output", "__end__"]:
+    if state.get("terminal_llm_failure") or state.get("error"):
+        return "__end__"
+    return "parse_quiz_single_regen_output"
+
+
+def _route_after_rework_parse(
+    state: QuizGraphState,
+) -> Literal["deterministic_validate_question_patches", "__end__"]:
+    if state.get("error"):
+        return "__end__"
+    return "deterministic_validate_question_patches"
+
+
+def _route_after_rework_validate(
+    state: QuizGraphState,
+) -> Literal["persist_question_patches", "__end__"]:
+    if state.get("error"):
+        return "__end__"
+    return "persist_question_patches"
+
+
 def build_quiz_generation_graph() -> Any:
     """Build and compile the quiz draft generation graph."""
     graph = StateGraph(QuizGraphState)
@@ -146,6 +189,27 @@ def build_quiz_generation_graph() -> Any:
     )
     graph.add_node("quality_check", quality_check_node)
     graph.add_node("persist_quiz_draft", persist_quiz_draft)
+    graph.add_node(
+        "load_quiz_single_regen_context",
+        load_quiz_single_regen_context,
+    )
+    graph.add_node(
+        "build_quiz_single_regen_prompt",
+        build_quiz_single_regen_prompt_node,
+    )
+    graph.add_node(
+        "invoke_quiz_single_regen_llm",
+        invoke_quiz_single_regen_llm,
+    )
+    graph.add_node(
+        "parse_quiz_single_regen_output",
+        parse_quiz_single_regen_output,
+    )
+    graph.add_node(
+        "deterministic_validate_question_patches",
+        deterministic_validate_question_patches,
+    )
+    graph.add_node("persist_question_patches", persist_question_patches)
 
     graph.set_entry_point("entry_router")
     graph.add_conditional_edges("entry_router", _route_from_entry)
@@ -159,6 +223,27 @@ def build_quiz_generation_graph() -> Any:
     )
     graph.add_conditional_edges("quality_check", _route_after_quality_check)
     graph.add_edge("persist_quiz_draft", END)
+    graph.add_edge(
+        "load_quiz_single_regen_context",
+        "build_quiz_single_regen_prompt",
+    )
+    graph.add_edge(
+        "build_quiz_single_regen_prompt",
+        "invoke_quiz_single_regen_llm",
+    )
+    graph.add_conditional_edges(
+        "invoke_quiz_single_regen_llm",
+        _route_after_rework_invoke,
+    )
+    graph.add_conditional_edges(
+        "parse_quiz_single_regen_output",
+        _route_after_rework_parse,
+    )
+    graph.add_conditional_edges(
+        "deterministic_validate_question_patches",
+        _route_after_rework_validate,
+    )
+    graph.add_edge("persist_question_patches", END)
 
     return graph.compile()
 
