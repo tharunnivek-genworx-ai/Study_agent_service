@@ -132,7 +132,11 @@ from src.api.utils.space_node_utils.node_role_assert import (
 from src.api.utils.study_agent_utils.artifacts.study_material_artifacts import (
     log_study_material_version,
 )
+from src.api.utils.study_agent_utils.generation.generation_outcome_resolver import (
+    resolve_api_generation_outcome,
+)
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
+    build_action_required,
     content_for_persistence,
 )
 from src.api.utils.study_agent_utils.media import (
@@ -316,19 +320,32 @@ def _study_material_version_out(
 ) -> StudyMaterialVersionOut:
     """Build API output with mentor-facing QC warning copy computed server-side."""
     out = StudyMaterialVersionOut.model_validate(version)
-    if not isinstance(version.qc_result, dict):
+    updates: dict[str, Any] = {}
+
+    if isinstance(version.qc_result, dict):
+        enriched = enrich_qc_result_for_client(
+            version.qc_result,
+            version.concept_plan if isinstance(version.concept_plan, dict) else None,
+        )
+        if enriched:
+            try:
+                updates["qc_result"] = GenerationDiagnosticsOut.model_validate(enriched)
+            except Exception:
+                pass
+
+    outcome = version.generation_outcome
+    detail = version.generation_outcome_detail
+    if outcome:
+        action_required = build_action_required(
+            outcome,
+            detail if isinstance(detail, dict) else None,
+        )
+        if action_required is not None:
+            updates["action_required"] = action_required
+
+    if not updates:
         return out
-    enriched = enrich_qc_result_for_client(
-        version.qc_result,
-        version.concept_plan if isinstance(version.concept_plan, dict) else None,
-    )
-    if not enriched:
-        return out
-    try:
-        qc_out = GenerationDiagnosticsOut.model_validate(enriched)
-    except Exception:
-        return out
-    return out.model_copy(update={"qc_result": qc_out})
+    return out.model_copy(update=updates)
 
 
 def _strip_internal_scores_from_qc_dict(qc_dict: dict[str, Any]) -> dict[str, Any]:
@@ -403,6 +420,9 @@ def _resolve_qc_result_for_persist(
                 _enrich_qc_result_dict(raw, graph_result)
             )
         return True, raw
+
+    if not graph_result.get("qc_evaluated"):
+        return bool(graph_result.get("qc_failed_permanently")), None
 
     if qc_attempt == 0:
         return False, None
@@ -648,6 +668,10 @@ class StudyMaterialService:
         )
         next_llm_retry_at = graph_result.get("next_llm_retry_at")
         qc_attempt_count = graph_result.get("qc_attempt") or 0
+        api_generation_outcome = resolve_api_generation_outcome(graph_result)
+        outcome_detail = graph_result.get("generation_outcome_detail")
+        if not isinstance(outcome_detail, dict):
+            outcome_detail = None
 
         content = content_for_persistence(graph_result["generated_content"])
 
@@ -679,6 +703,9 @@ class StudyMaterialService:
             qc_frozen_check_ids=graph_result.get("qc_frozen_check_ids"),
             qc_frozen_section_keys=graph_result.get("qc_frozen_section_keys"),
             next_llm_retry_at=next_llm_retry_at,
+            generation_outcome=api_generation_outcome,
+            generation_outcome_detail=outcome_detail,
+            qc_evaluated=bool(graph_result.get("qc_evaluated")),
         )
         topic_title = graph_result.get("node_title") or str(node_id)
         log_study_material_version(

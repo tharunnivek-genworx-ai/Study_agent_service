@@ -24,8 +24,7 @@ from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     canonicalize_generation_json,
-    is_reference_required_response,
-    parse_generation_document,
+    classify_generation_output,
 )
 from src.api.utils.study_agent_utils.graph import node_helpers as helpers
 from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
@@ -317,19 +316,23 @@ async def study_agent_node(
             "token_usage": token_usage,
             "llm_model_used": llm_model_used,
             "llm_output_content": raw_content.strip(),
+            "generation_outcome": "generator_error",
+            "generation_outcome_detail": {"reason": "Generator returned invalid JSON."},
             "error": "Generator returned invalid JSON.",
         }
 
-    mode = state.get("generation_mode") or "generate"
-    doc = parse_generation_document(cleaned_content)
-    if doc and is_reference_required_response(doc):
-        cleaned_content = canonicalize_generation_json(cleaned_content)
-    elif (
-        retry_mode == "full_regeneration"
+    classified = classify_generation_output(cleaned_content)
+    outcome = classified.outcome
+    canonical_json = classified.canonical_json
+    doc = classified.document
+    detail = classified.detail
+
+    if (
+        outcome == "study_document"
+        and retry_mode == "full_regeneration"
         and previous_document
         and doc
         and rewrite_section_ids
-        and not is_reference_required_response(doc)
     ):
         merged = merge_full_regeneration_preserving_passing(
             doc,
@@ -337,7 +340,7 @@ async def study_agent_node(
             rewrite_section_ids=rewrite_section_ids,
             topic_split=state.get("topic_split") or [],
         )
-        cleaned_content = canonicalize_generation_json(json.dumps(merged))
+        canonical_json = canonicalize_generation_json(json.dumps(merged))
         doc = merged
         if rewrite_section_ids:
             logger.info(
@@ -346,13 +349,18 @@ async def study_agent_node(
                 ", ".join(sorted(rewrite_section_ids)),
             )
 
+    format_attempt = state.get("generator_format_attempt") or 0
+    if outcome == "malformed_document":
+        format_attempt += 1
+
+    mode = state.get("generation_mode") or "generate"
     improve_status, regenerate_status = helpers.resolve_mode_status(mode, doc)
 
     helpers.log_study_output(
         state,
         generation_type=mode,
         result=result,
-        cleaned_content=cleaned_content,
+        cleaned_content=canonical_json,
         prompt_snapshot=prompt_snapshot,
         llm_model_used=llm_model_used,
         token_usage=token_usage,
@@ -361,11 +369,15 @@ async def study_agent_node(
     )
 
     return {
-        "generated_content": cleaned_content,
+        "generated_content": canonical_json,
         "prompt_snapshot": prompt_snapshot,
         "token_usage": token_usage,
         "llm_model_used": llm_model_used,
         "improve_status": improve_status,
         "regenerate_status": regenerate_status,
-        "llm_output_content": cleaned_content,
+        "llm_output_content": canonical_json,
+        "generation_outcome": outcome,
+        "generation_outcome_detail": detail,
+        "generation_parsed_document": doc,
+        "generator_format_attempt": format_attempt,
     }

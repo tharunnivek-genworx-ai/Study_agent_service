@@ -185,6 +185,12 @@ class TestStudyGenerationJson:
         assert "## Introduction" in persisted
         assert '"sections"' not in persisted
 
+    def test_content_for_persistence_malformed_document(self):
+        raw = json.dumps({"title": "broken", "note": "no sections"})
+        persisted = content_for_persistence(raw)
+        assert "GENERATION STATUS: Malformed document" in persisted
+        assert "Preview:" in persisted
+
     def test_validate_section_id_coverage(self):
         checklist = [
             {"id": "mc_1", "priority": "required"},

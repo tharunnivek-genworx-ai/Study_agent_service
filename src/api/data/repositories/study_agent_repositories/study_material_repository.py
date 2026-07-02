@@ -180,6 +180,9 @@ class StudyMaterialRepository:
         qc_frozen_check_ids: list[str] | None = None,
         qc_frozen_section_keys: list[str] | None = None,
         next_llm_retry_at: datetime | None = None,
+        generation_outcome: str | None = None,
+        generation_outcome_detail: dict[str, Any] | None = None,
+        qc_evaluated: bool = False,
         *,
         commit: bool = True,
     ) -> StudyMaterialVersion:
@@ -214,6 +217,9 @@ class StudyMaterialRepository:
             qc_frozen_check_ids=qc_frozen_check_ids,
             qc_frozen_section_keys=qc_frozen_section_keys,
             next_llm_retry_at=next_llm_retry_at,
+            generation_outcome=generation_outcome,
+            generation_outcome_detail=generation_outcome_detail,
+            qc_evaluated=qc_evaluated,
             lifecycle_status=LIFECYCLE_DRAFT,
         )
         self.db.add(version)
@@ -252,6 +258,9 @@ class StudyMaterialRepository:
         qc_frozen_check_ids: list[str] | None = None,
         qc_frozen_section_keys: list[str] | None = None,
         next_llm_retry_at: datetime | None = None,
+        generation_outcome: str | None = None,
+        generation_outcome_detail: dict[str, Any] | None = None,
+        qc_evaluated: bool = False,
     ) -> StudyMaterialVersion:
         """Deactivate the current active version and insert a new one atomically."""
         if active_version is not None:
@@ -281,6 +290,9 @@ class StudyMaterialRepository:
             qc_frozen_check_ids=qc_frozen_check_ids,
             qc_frozen_section_keys=qc_frozen_section_keys,
             next_llm_retry_at=next_llm_retry_at,
+            generation_outcome=generation_outcome,
+            generation_outcome_detail=generation_outcome_detail,
+            qc_evaluated=qc_evaluated,
             commit=True,
         )
 

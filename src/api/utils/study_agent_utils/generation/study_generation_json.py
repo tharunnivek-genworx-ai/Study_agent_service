@@ -10,11 +10,28 @@ from typing import Any
 from src.api.schemas.study_material_schemas import (
     GenerationDocument,
 )
+from src.api.schemas.study_material_schemas.generation_outcome_schema import (
+    ActionRequiredOut,
+    ApiGenerationOutcome,
+    GenerationOutcomeDetail,
+    GraphGenerationOutcome,
+)
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     checklist_section_id,
 )
 
 _REFERENCE_REQUIRED_STATUS = "reference_required"
+_RAW_PREVIEW_MAX_LEN = 500
+_GENERATOR_ERROR_REASON = "Generator response is not valid JSON"
+_MALFORMED_REASON = "Document failed domain validation"
+
+
+@dataclass(frozen=True)
+class ClassifiedGenerationOutput:
+    canonical_json: str
+    outcome: GraphGenerationOutcome
+    document: dict[str, Any] | None
+    detail: dict[str, Any]
 
 
 @dataclass
@@ -57,6 +74,9 @@ def parse_generation_document(raw: str) -> dict[str, Any] | None:
     parsed = parse_llm_json_object(raw, "generation")
     if parsed is None:
         return None
+    sections = parsed.get("sections")
+    if sections is not None and not isinstance(sections, list):
+        return None
     if is_status_only_response(parsed):
         return parsed
     if not isinstance(parsed.get("sections"), list):
@@ -77,20 +97,160 @@ def _parse_for_canonicalization(
         return document, document
     parsed = parse_llm_json_object(raw, "generation")
     if parsed is None:
-        raise ValueError("Generator response is not valid JSON")
+        raise ValueError(_GENERATOR_ERROR_REASON)
     return parsed, None
+
+
+def _status_outcome_detail(document: dict[str, Any]) -> dict[str, Any]:
+    detail = GenerationOutcomeDetail(
+        message=_optional_str(document.get("message")),
+        reason=_optional_str(document.get("reason")),
+        topic_received=_optional_str(document.get("topic_received")),
+    )
+    return detail.model_dump(exclude_none=True)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _raw_preview(canonical_json: str) -> str:
+    if len(canonical_json) <= _RAW_PREVIEW_MAX_LEN:
+        return canonical_json
+    return f"{canonical_json[:_RAW_PREVIEW_MAX_LEN]}..."
+
+
+def classify_generation_output(raw: str) -> ClassifiedGenerationOutput:
+    """Classify generator output into a graph routing outcome and parsed document."""
+    try:
+        parsed, document = _parse_for_canonicalization(raw)
+        canonical_json = json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+    except ValueError:
+        return ClassifiedGenerationOutput(
+            canonical_json=raw.strip(),
+            outcome="generator_error",
+            document=None,
+            detail={"reason": _GENERATOR_ERROR_REASON},
+        )
+
+    if document is None:
+        return ClassifiedGenerationOutput(
+            canonical_json=canonical_json,
+            outcome="malformed_document",
+            document=None,
+            detail={
+                "reason": _MALFORMED_REASON,
+                "raw_preview": _raw_preview(canonical_json),
+            },
+        )
+
+    if is_status_only_response(document):
+        if is_reference_required_response(document):
+            outcome: GraphGenerationOutcome = "reference_required"
+        else:
+            outcome = "vague_feedback"
+        return ClassifiedGenerationOutput(
+            canonical_json=canonical_json,
+            outcome=outcome,
+            document=document,
+            detail=_status_outcome_detail(document),
+        )
+
+    return ClassifiedGenerationOutput(
+        canonical_json=canonical_json,
+        outcome="study_document",
+        document=document,
+        detail={},
+    )
+
+
+def build_action_required(
+    outcome: GraphGenerationOutcome | ApiGenerationOutcome,
+    detail: dict[str, Any] | GenerationOutcomeDetail | None,
+) -> ActionRequiredOut | None:
+    """Build mentor-facing action guidance for terminal status outcomes."""
+    detail_data = _coerce_outcome_detail(detail)
+    if outcome == "reference_required":
+        return ActionRequiredOut(
+            type="upload_reference",
+            message=detail_data.get("message")
+            or "Reference material is required before generating study content.",
+            topic_received=detail_data.get("topic_received"),
+            reason=detail_data.get("reason"),
+        )
+    if outcome == "vague_feedback":
+        return ActionRequiredOut(
+            type="clarify_feedback",
+            message=detail_data.get("message")
+            or "Please provide more specific feedback before continuing.",
+            topic_received=detail_data.get("topic_received"),
+            reason=detail_data.get("reason"),
+        )
+    return None
+
+
+def _coerce_outcome_detail(
+    detail: dict[str, Any] | GenerationOutcomeDetail | None,
+) -> dict[str, Any]:
+    if detail is None:
+        return {}
+    if isinstance(detail, GenerationOutcomeDetail):
+        return detail.model_dump(exclude_none=True)
+    return {key: value for key, value in detail.items() if value is not None}
+
+
+def render_outcome_content(
+    canonical_json: str,
+    outcome: GraphGenerationOutcome,
+    detail: dict[str, Any] | GenerationOutcomeDetail | None = None,
+) -> str:
+    """Render mentor-facing persisted content for a classified generation outcome."""
+    detail_data = _coerce_outcome_detail(detail)
+    if outcome == "study_document":
+        document = json.loads(canonical_json)
+        return render_sections_to_markdown(document)
+    if outcome in {"reference_required", "vague_feedback"}:
+        document = json.loads(canonical_json)
+        return render_sections_to_markdown(document)
+    if outcome == "malformed_document":
+        lines = [
+            "GENERATION STATUS: Malformed document",
+            "The generator returned JSON that could not be validated as a study document.",
+        ]
+        preview = detail_data.get("raw_preview")
+        if preview:
+            lines.append(f"Preview: {preview}")
+        reason = detail_data.get("reason")
+        if reason:
+            lines.append(f"Reason: {reason}")
+        return "\n".join(lines)
+    if outcome == "generator_error":
+        message = (
+            detail_data.get("message")
+            or detail_data.get("reason")
+            or _GENERATOR_ERROR_REASON
+        )
+        return f"GENERATION ERROR: {message}"
+    return canonical_json
 
 
 def canonicalize_generation_json(raw: str) -> str:
     """Strip fences/commentary and return one compact JSON object string."""
-    parsed, _ = _parse_for_canonicalization(raw)
-    return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+    classified = classify_generation_output(raw)
+    if classified.outcome == "generator_error":
+        raise ValueError(classified.detail.get("reason", _GENERATOR_ERROR_REASON))
+    return classified.canonical_json
 
 
 def canonicalize_generation_content(raw: str) -> tuple[str, dict[str, Any] | None]:
     """Return compact JSON and a domain-valid document when one is present."""
-    parsed, document = _parse_for_canonicalization(raw)
-    return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False), document
+    classified = classify_generation_output(raw)
+    if classified.outcome == "generator_error":
+        raise ValueError(classified.detail.get("reason", _GENERATOR_ERROR_REASON))
+    return classified.canonical_json, classified.document
 
 
 def try_canonicalize_generation_json(raw: str) -> str | None:
@@ -323,10 +483,14 @@ def content_for_persistence(raw_content: str) -> str:
     text = raw_content.strip()
     if not text.startswith("{"):
         return text
-    doc = parse_generation_document(text)
-    if doc is None:
+    classified = classify_generation_output(text)
+    if classified.outcome == "generator_error":
         return text
-    return render_sections_to_markdown(doc)
+    return render_outcome_content(
+        classified.canonical_json,
+        classified.outcome,
+        classified.detail,
+    )
 
 
 def normalize_checklist_id(check_id: str, checklist: list[dict[str, Any]]) -> str:

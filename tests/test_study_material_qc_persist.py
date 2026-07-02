@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from src.api.core.services.study_agent_services.study_material_service import (
     _build_concept_plan_from_graph,
     _hydration_from_active_version,
     _resolve_qc_result_for_persist,
+    _study_material_version_out,
 )
 from src.api.data.repositories.study_agent_repositories.study_material_repository import (
     StudyMaterialRepository,
@@ -28,6 +30,7 @@ def test_resolve_qc_result_persists_on_qc_pass() -> None:
     graph_result = {
         "qc_attempt": 2,
         "qc_passed": True,
+        "qc_evaluated": True,
         "qc_failed_permanently": False,
         "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
         "checklist_llm_model_used": "llama-3.3-70b-versatile",
@@ -58,6 +61,7 @@ def test_resolve_qc_result_permanent_failure_still_persists() -> None:
     graph_result = {
         "qc_attempt": 3,
         "qc_passed": False,
+        "qc_evaluated": True,
         "qc_failed_permanently": True,
         "terminal_llm_failure": True,
         "qc_result": {
@@ -74,9 +78,22 @@ def test_resolve_qc_result_permanent_failure_still_persists() -> None:
     assert "structure" not in (qc_dict.get("scores") or {})
 
 
+def test_resolve_qc_result_none_when_qc_not_evaluated() -> None:
+    failed_permanently, qc_dict = _resolve_qc_result_for_persist(
+        {
+            "qc_attempt": 2,
+            "qc_passed": False,
+            "qc_evaluated": False,
+            "generation_outcome": "reference_required",
+        }
+    )
+    assert failed_permanently is False
+    assert qc_dict is None
+
+
 def test_resolve_qc_result_none_when_qc_never_ran() -> None:
     failed_permanently, qc_dict = _resolve_qc_result_for_persist(
-        {"qc_attempt": 0, "qc_passed": False}
+        {"qc_attempt": 0, "qc_passed": False, "qc_evaluated": False}
     )
     assert failed_permanently is False
     assert qc_dict is None
@@ -192,6 +209,101 @@ async def test_create_version_persists_qc_generation_fields() -> None:
     assert added.qc_result == qc_result
     assert added.next_llm_retry_at == retry_at
     assert version.qc_passed is True
+
+
+def test_create_version_persists_generation_outcome_fields() -> None:
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.flush = AsyncMock()
+
+    repo = StudyMaterialRepository(session)
+    node_id = uuid4()
+    space_id = uuid4()
+    user_id = uuid4()
+    outcome_detail = {
+        "message": "Upload a PDF.",
+        "topic_received": "Rust",
+    }
+
+    async def _run() -> None:
+        version = await repo.create_version(
+            node_id=node_id,
+            space_id=space_id,
+            version_number=1,
+            content="GENERATION STATUS: Reference material required",
+            generation_type="generate",
+            mentor_feedback_used=None,
+            reference_material_id=None,
+            based_on_version_id=None,
+            llm_model_used="llama-3.3-70b-versatile",
+            prompt_snapshot=None,
+            token_usage=100,
+            is_active=True,
+            created_by=user_id,
+            generation_outcome="reference_required",
+            generation_outcome_detail=outcome_detail,
+            qc_evaluated=False,
+            commit=False,
+        )
+        session.add.assert_called_once()
+        added = session.add.call_args[0][0]
+        assert added.generation_outcome == "reference_required"
+        assert added.generation_outcome_detail == outcome_detail
+        assert added.qc_evaluated is False
+        assert version.generation_outcome == "reference_required"
+
+    asyncio.run(_run())
+
+
+def test_study_material_version_out_attaches_action_required() -> None:
+    version = SimpleNamespace(
+        version_id=uuid4(),
+        node_id=uuid4(),
+        space_id=uuid4(),
+        version_number=1,
+        content="GENERATION STATUS: Reference material required",
+        generation_type="generate",
+        mentor_feedback_used=None,
+        reference_material_id=None,
+        based_on_version_id=None,
+        llm_model_used=None,
+        prompt_snapshot=None,
+        token_usage=None,
+        is_active=True,
+        is_published=False,
+        is_archived=False,
+        archived_at=None,
+        published_at=None,
+        published_by=None,
+        created_by=uuid4(),
+        created_at=datetime(2026, 6, 26, 12, 0, tzinfo=UTC),
+        qc_failed_permanently=False,
+        qc_result=None,
+        qc_passed=False,
+        qc_attempt_count=0,
+        generation_run_id=None,
+        concept_plan=None,
+        checklist_llm_model_used=None,
+        qc_verification_mode=None,
+        qc_frozen_check_ids=None,
+        qc_frozen_section_keys=None,
+        next_llm_retry_at=None,
+        generation_outcome="reference_required",
+        generation_outcome_detail={
+            "message": "Upload official docs.",
+            "topic_received": "Quantum",
+        },
+        qc_evaluated=False,
+    )
+
+    out = _study_material_version_out(version)
+
+    assert out.generation_outcome == "reference_required"
+    assert out.qc_evaluated is False
+    assert out.action_required is not None
+    assert out.action_required.type == "upload_reference"
+    assert out.action_required.topic_received == "Quantum"
 
 
 @pytest.mark.asyncio

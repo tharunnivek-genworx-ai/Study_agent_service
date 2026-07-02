@@ -11,9 +11,6 @@ from langchain_core.runnables import RunnableConfig
 from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.qc import qc_retry_verification_prompt
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
-from src.api.utils.study_agent_utils.generation.study_generation_json import (
-    canonicalize_generation_content,
-)
 from src.api.utils.study_agent_utils.graph import node_helpers as helpers
 from src.api.utils.study_agent_utils.quality_check_utils.checks.block_placement_checks import (
     block_placement_checks,
@@ -22,9 +19,6 @@ from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic im
     build_code_review_payloads,
     extract_structure_from_document,
     structure_check,
-)
-from src.api.utils.study_agent_utils.quality_check_utils.checks.skip_rules import (
-    should_skip_qc,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
     DEFAULT_INSTRUCTION,
@@ -51,8 +45,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import
     format_qc_feedback,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.node_returns import (
-    build_invalid_json_return,
-    build_skip_return,
+    build_qc_guard_return,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.result_builder import (
     build_final_qc_result,
@@ -79,20 +72,29 @@ async def quality_check_node(
     """Run JSON structure extraction + Groq Llama 70B QC verification."""
     current_attempt = state.get("qc_attempt") or 0
 
-    if should_skip_qc(state):
-        logger.info("Skipping QC: vague %s response", state.get("generation_mode"))
-        return build_skip_return(state)
+    outcome = state.get("generation_outcome")
+    if outcome != "study_document":
+        logger.error("QC invoked for non-study outcome: %s", outcome)
+        return build_qc_guard_return(
+            state,
+            reason=f"non-study outcome: {outcome}",
+        )
 
     if state.get("terminal_llm_failure"):
-        logger.info("Skipping QC: terminal LLM failure")
-        return build_skip_return(state, preserve_terminal=True)
+        logger.info("QC guard: terminal LLM failure")
+        return build_qc_guard_return(state, reason="terminal_llm_failure")
 
     if state.get("error") or not state.get("generated_content"):
-        logger.info("Skipping QC: error or no generated content")
-        return build_skip_return(state)
+        logger.info("QC guard: error or no generated content")
+        return build_qc_guard_return(state, reason="error or missing content")
+
+    document = state.get("generation_parsed_document")
+    if not document:
+        logger.error("QC invoked without generation_parsed_document")
+        return build_qc_guard_return(state, reason="missing parsed document")
 
     teaching_instruction = state.get("effective_instruction") or DEFAULT_INSTRUCTION
-    raw_content = state.get("generated_content") or ""
+    generated_content = state.get("generated_content") or ""
     must_cover_checklist: list[dict[str, Any]] = state.get("must_cover_checklist") or []
     topic_split: list[dict[str, Any]] = state.get("topic_split") or []
     new_attempt = current_attempt + 1
@@ -121,16 +123,6 @@ async def quality_check_node(
             },
         )
         return result
-
-    try:
-        generated_content, parsed_document = canonicalize_generation_content(
-            raw_content
-        )
-    except ValueError:
-        logger.warning("QC skipped invalid JSON document on attempt %d", new_attempt)
-        return build_invalid_json_return(new_attempt)
-
-    document = parsed_document or {}
 
     structure = extract_structure_from_document(document)
     code_review_payloads = build_code_review_payloads(structure)
@@ -353,6 +345,7 @@ async def quality_check_node(
     if passed:
         return {
             "qc_passed": True,
+            "qc_evaluated": True,
             "qc_feedback": "",
             "qc_failed_permanently": False,
             **helpers.base_qc_return(
@@ -382,6 +375,7 @@ async def quality_check_node(
 
     return {
         "qc_passed": False,
+        "qc_evaluated": True,
         "qc_feedback": feedback,
         "qc_failed_permanently": permanently_failed,
         **helpers.base_qc_return(

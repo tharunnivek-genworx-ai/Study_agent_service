@@ -5,6 +5,9 @@ from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from src.api.schemas.common import GenerationMode
+from src.api.schemas.study_material_schemas.generation_outcome_schema import (
+    GraphGenerationOutcome,
+)
 
 
 class StudyMaterialGraphState(TypedDict, total=False):
@@ -23,6 +26,10 @@ class StudyMaterialGraphState(TypedDict, total=False):
     current_draft_content: str
     mentor_feedback: str
     generated_content: str
+    generation_outcome: GraphGenerationOutcome | None
+    generation_outcome_detail: dict[str, Any] | None
+    generation_parsed_document: dict[str, Any] | None
+    generator_format_attempt: int
     prompt_snapshot: str
     token_usage: int
     llm_model_used: str
@@ -40,6 +47,7 @@ class StudyMaterialGraphState(TypedDict, total=False):
     checklist_llm_model_used: str | None
 
     # ── Quality-Check fields ──────────────────────────────────────
+    qc_evaluated: bool  # True only when QC node completes a verification pass
     qc_passed: bool  # True when QC evaluation passed
     qc_result: dict[str, Any] | None  # Full parsed JSON report from QC LLM
     qc_feedback: str  # Formatted QC issues for the retry prompt

@@ -95,3 +95,8 @@ class StudyMaterialVersion(Base):
     next_llm_retry_at = Column(
         "nextllmretryat", TIMESTAMP(timezone=True), nullable=True
     )
+    generation_outcome = Column("generationoutcome", String(32), nullable=True)
+    generation_outcome_detail = Column("generationoutcomedetail", JSONB, nullable=True)
+    qc_evaluated = Column(
+        "qcevaluated", Boolean, nullable=False, server_default="false", default=False
+    )

@@ -11,6 +11,7 @@ from src.api.control.study_agent.graph.resume_router import (
     is_resume_state,
     last_completed_node_from_state,
     resolve_resume_next_node,
+    route_after_study_agent,
 )
 from src.api.control.study_agent.nodes import (
     concept_checklist_node,
@@ -40,13 +41,17 @@ def _route_from_entry(
     "concept_checklist",
     "study_agent",
     "quality_check",
+    "__end__",
 ]:
     if not is_resume_state(state):
         return "resolver"
-    return resolve_resume_next_node(
+    next_node = resolve_resume_next_node(
         state,
         last_completed_node=last_completed_node_from_state(state),
-    )  # type: ignore[return-value]
+    )
+    if next_node == "__end__":
+        return "__end__"
+    return next_node  # type: ignore[return-value]
 
 
 def _route_after_resolver(
@@ -81,12 +86,8 @@ def _route_after_concept_checklist(
 
 def _route_after_study_agent(
     state: StudyMaterialGraphState,
-) -> Literal["quality_check", "__end__"]:
-    if state.get("terminal_llm_failure"):
-        return "__end__"
-    if state.get("error"):
-        return "__end__"
-    return "quality_check"
+) -> Literal["quality_check", "__end__", "study_agent"]:
+    return route_after_study_agent(state)
 
 
 def _route_after_quality_check(
