@@ -235,7 +235,7 @@ BARREL_RULES: list[tuple[str, str]] = [
         "src.api.control.quiz_agent.prompts",
     ),
     (
-        "src.api.control.quiz_agent.prompts.quiz_single_regen_graph.quiz_single_regen_prompt",
+        "src.api.control.quiz_agent.prompts.quiz_graph.quiz_single_regen_prompt",
         "src.api.control.quiz_agent.prompts",
     ),
 ]

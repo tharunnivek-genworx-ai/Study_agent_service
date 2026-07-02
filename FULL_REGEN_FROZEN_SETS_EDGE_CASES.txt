@@ -1,0 +1,591 @@
+================================================================================
+FULL REGENERATION & FROZEN SETS — FAILURES, EDGE CASES, TODAY'S PIPELINE
+================================================================================
+Generated: 2026-07-01
+Scope: study_agent_service QC retry loop (quality_check_node, study_agent_node,
+       retry_routing, frozen_sets, document_merge, targeted_merge)
+Related: QC_PIPELINE_INCONSISTENCIES_AUDIT.txt (broader audit)
+
+This document explains how full_regeneration and frozen_check_ids /
+qc_frozen_section_keys interact in the CURRENT pipeline, where the design
+breaks down, and every edge case that can produce stale skips, incomplete QC
+results, or surprising behavior.
+
+Severity key:
+  [CRITICAL] Wrong QC conclusion or skipped verification on changed content
+  [HIGH]     Significant logical gap or inconsistent behavior
+  [MED]      Fragility, cost waste, or confusing mental model
+  [LOW]      Observability or naming gap
+
+================================================================================
+PART 0 — QUICK MENTAL MODEL (TODAY)
+================================================================================
+
+Graph loop (graph.py):
+  concept_checklist → study_agent → quality_check ─┐
+                              ↑                  │
+                              └──── retry ───────┘
+
+After QC FAIL (content, attempts < 3):
+  classify_retry_routing() sets qc_retry_mode and targets
+  → study_agent rewrites
+  → quality_check runs again
+
+Two QC verification modes (quality_check_node.py):
+  fixed_sections present  → TARGETED QC (run_retry_verification_pass)
+  fixed_sections absent   → FULL QC (run_verification_pass)
+
+Two generator retry families (study_agent_node.py):
+  section_patch | section_insert | section_patch_then_insert
+      → run_section_retry() → sets fixed_sections → TARGETED QC next
+  full_regeneration
+      → full document LLM → optional merge → NO fixed_sections → FULL QC next
+
+Frozen sets (only on FULL QC path):
+  qc_frozen_check_ids     — passed must_cover checklist ids; omitted from prompt
+  qc_frozen_section_keys  — sections with passed code_quality/stack_fidelity;
+                            listed in <frozen_section_ids> prompt block
+
+  Built by: accumulate_frozen_sets() after each FULL QC pass (not targeted).
+  Consumed by: run_verification_pass() on the NEXT full QC pass.
+  NOT consumed by: run_retry_verification_pass() (section patch/insert path).
+
+Full regen selective preserve (study_agent_node.py + document_merge.py):
+  LLM writes entire new document.
+  merge_full_regeneration_preserving_passing() runs ONLY when:
+    retry_mode == full_regeneration
+    AND previous_document exists
+    AND rewrite_section_ids (= qc_reverify_section_ids) is NON-EMPTY
+  Sections IN rewrite set  → take from new LLM output
+  Sections NOT in rewrite  → keep bytes from previous_document
+
+Core invariant frozen sets ASSUME but do NOT enforce:
+  "If an id is frozen, the underlying section/checklist content is unchanged
+   since it last passed QC."
+
+There is NO content hash, NO invalidation on rewrite, NO merge of prior passed
+checks into full QC qc_result. When the invariant breaks, behavior is wrong.
+
+================================================================================
+PART 1 — HOW FROZEN SETS ARE BUILT AND CONSUMED (CODE PATH)
+================================================================================
+
+1.1 accumulate_frozen_sets (frozen_sets.py)
+    INPUT:  current qc_result checks, existing qc_frozen_check_ids,
+            existing qc_frozen_section_keys
+    OUTPUT: merged sorted frozen_check_ids, frozen_section_ids
+    RULES:
+      - For each PASSED check in current result:
+          category == must_cover     → add checklist_id to frozen_check_ids
+          category in CODE_CATEGORIES → add section_id to frozen_section_ids
+      - Failed checks add nothing
+      - Prior frozen ids are unioned in (never removed)
+
+    CALLED: quality_check_node.py line ~346, ONLY when NOT targeted:
+      if not is_targeted:
+          frozen_check_ids, frozen_section_ids = accumulate_frozen_sets(...)
+
+    NOT CALLED on targeted QC (section patch/insert). Pass 1 frozen state
+    persists unchanged through pass 2.
+
+1.2 Full QC prompt filtering (qc_verification_prompt.build_user_message)
+    frozen_check_ids:
+      must_cover_checklist items whose id is in frozen set are EXCLUDED from
+      <must_cover_checklist> block entirely.
+
+    frozen_section_ids:
+      Section ids listed in <frozen_section_ids> block.
+      System prompt does not strongly instruct "skip code checks"; relies on
+      LLM + list presence. No mechanical enforcement in code.
+
+1.3 Full QC result assembly (quality_check_node.py)
+    On FULL path (no fixed_sections):
+      verification_for_build = verification   # raw LLM output only
+      build_final_qc_result(verification_for_build, structure_checks, ...)
+
+    SKIPPED checks (frozen) do NOT appear in qc_result.checks.
+    Prior passed checks for frozen items are NOT merged back in.
+    (Contrast: targeted path uses merge_targeted_qc_checks().)
+
+    IMPLICATION [HIGH]:
+      Full QC retry produces PARTIAL check lists. Scores (derive_scores) only
+      reflect evaluated checks. Frozen passes are invisible in qc_result until
+      you infer from frozen_* state fields.
+
+1.4 State persistence (base_qc_return in node_helpers.py)
+    frozen ids written to state only when accumulate_frozen_sets returned
+    non-None (full QC only).
+    On targeted QC fail, frozen fields omitted from return → LangGraph keeps
+    prior values in state.
+
+    DB hydration (study_material_service.py ~379):
+      qc_frozen_check_ids and qc_frozen_section_keys restored on resume.
+      No section content hashes — cannot validate on resume.
+
+================================================================================
+PART 2 — HOW FULL REGENERATION WORKS (CODE PATH)
+================================================================================
+
+2.1 When full_regeneration is chosen (classify_retry_routing)
+    FORCE (always wins via _reconcile_mode):
+      [F1] Critical teaching_alignment failure
+      [F2] teaching_alignment fail + unmapped_count >= 2
+      [F3] det_structure_coverage + >= 40% required sections missing (widespread)
+      [F4] >= 40% of required mc_* checklist items failed OR missing
+      [F5] >= 4 distinct failed_section_ids
+      [F6] unmapped_count >= 3
+
+    SPECIAL (deterministic mode "none"):
+      [F7] teaching_alignment is the SOLE failed category
+           → full_regeneration even with empty failed_section_ids
+
+    LLM retry_recommendation.mode == "full_regeneration" does NOT upgrade
+    section_patch unless one of F1-F6 fires (_reconcile_mode returns deterministic
+    unless force_full_regen).
+
+2.2 study_agent_node full regen steps
+    INPUT from prior QC fail:
+      qc_retry_mode = "full_regeneration"
+      qc_reverify_section_ids = routing.failed_section_ids (sections to rewrite)
+      qc_feedback = format_qc_feedback(qc_result)
+      generated_content = previous draft
+
+    STEPS:
+      1. previous_document = parse_current_document(state)
+      2. rewrite_section_ids = set(qc_reverify_section_ids)
+      3. _build_user_message() → generation_prompt + build_qc_feedback_block()
+           adds <quality_check_feedback> and <previous_draft_json>
+      4. LLM returns FULL new JSON document
+      5. IF rewrite_section_ids non-empty:
+           merge_full_regeneration_preserving_passing(new, previous, rewrite_ids)
+         ELSE:
+           use LLM output as-is (entire document replaced)
+
+    OUTPUT:
+      generated_content (merged or full replace)
+      fixed_sections = NOT SET (defaults cleared / absent)
+      → next QC is FULL mode
+
+2.3 merge_full_regeneration_preserving_passing (document_merge.py)
+    Docstring: "Keep passing sections from previous_document; take rewrites
+                from new_document."
+
+    For each section_id in topic_split order:
+      if section_id in rewrite_section_ids:
+          section = new_by_id[section_id] OR fallback previous
+      else:
+          section = previous_by_id[section_id] OR fallback new
+
+    Passing sections are BYTE-IDENTICAL to previous draft, not LLM's version
+    of those sections (LLM may have rewritten them; merge discards that).
+
+================================================================================
+PART 3 — EDGE CASE CATALOG (FROZEN + FULL REGEN)
+================================================================================
+
+------------------------------------------------------------------------------
+CASE A — Teaching-alignment-only full regen [CRITICAL]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Only teaching_alignment failed (no section-level failures).
+  _teaching_alignment_sole_failure → full_regeneration.
+  _map_failures_to_targets SKIPS teaching_alignment → failed_section_ids = [].
+
+PIPELINE:
+  1. study_agent: LLM writes complete new document
+  2. rewrite_section_ids is EMPTY → merge SKIPPED (falsy guard line ~331)
+  3. Entire previous document replaced by LLM output
+  4. Next QC: FULL mode with qc_frozen_* from attempt 1 STILL IN STATE
+
+FAILURE:
+  Frozen checklist ids and frozen section ids refer to content from the OLD
+  document. New document may differ everywhere. QC prompt SKIPS re-verification
+  of frozen items on content that no longer exists.
+
+EXAMPLE:
+  Attempt 1: s1,s2,s3 all pass must_cover and code → frozen mc_1,mc_2,mc_3 + s1,s2
+  Attempt 1: teaching_alignment fails → full_regeneration
+  Attempt 2: LLM rewrites entire doc (new prose, maybe same ids)
+  Attempt 2 QC: mc_1, mc_2 skipped; code on s1,s2 skipped
+  → Passed QC on never-verified new content.
+
+FILES: retry_routing.py (161-162, 300-322), study_agent_node.py (327-332),
+       quality_check_node.py (219-220), frozen_sets.py
+
+------------------------------------------------------------------------------
+CASE B — Mixed failure in same section [CRITICAL]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Section s2: must_cover PASSES → mc_2 frozen after attempt 1
+  Section s2: content_accuracy FAILS → s2 in qc_reverify_section_ids
+  Routing: section_patch OR full_regeneration (if widespread)
+
+FULL REGEN PATH:
+  merge rewrites s2 from new LLM; s2 content CHANGES
+  frozen mc_2 still in state (must_cover passed on OLD s2)
+  frozen s2 may also be in qc_frozen_section_keys if code passed on OLD s2
+
+FAILURE:
+  Next full QC skips mc_2 checklist evaluation and s2 code checks while s2
+  body is new text.
+
+SECTION PATCH PATH (then later full regen preserving other sections):
+  Patch rewrites s2; targeted QC re-checks s2 (frozen not used in targeted).
+  If later full regen fails only s3, s2 preserved + frozen mc_2/s2 from
+  attempt 1 still apply → stale if s2 was patched after freeze.
+
+EXAMPLE:
+  Python Loops: s2 for-loop code passes (frozen s2), explanation wrong (fail s2)
+  Full regen: new s2 explanation + code
+  QC: skips code_quality on s2 because frozen
+
+FILES: frozen_sets.py (must_cover vs CODE_CATEGORIES split),
+       retry_routing.py (_map_failures_to_targets)
+
+------------------------------------------------------------------------------
+CASE C — Patch then full regen preserve chain [HIGH]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Attempt 1 full QC: s1 passes → frozen s1, mc_1
+  Attempt 2 section_patch on s2 only
+  Attempt 2 targeted QC: does NOT update frozen sets
+  Attempt 3 QC fails widespread → full_regeneration
+  rewrite_section_ids = {s3, s4} only (s1,s2 not in fail set)
+  merge preserves s1 (original) and s2 (PATCHED version)
+
+FAILURE:
+  frozen s1 based on pre-patch attempt 1 — OK if s1 never touched.
+  frozen mc_1 — OK if s1 unchanged.
+  If s2 was patched in attempt 2, s2 is NOT in frozen_section_keys from pass 1
+  unless code passed before patch. If code passed attempt 1 then patch changed
+  code, no frozen s2 but mc_2 might still be frozen if must_cover passed
+  attempt 1 on old s2 content.
+
+  accumulate_frozen_sets never ran after patch pass to refresh state.
+
+FILES: quality_check_node.py (346-351 skip on targeted),
+       study_agent_node.py (merge preserve)
+
+------------------------------------------------------------------------------
+CASE D — Selective full regen (happy path) [OK if invariant holds]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  2 of 5 sections fail → full_regeneration (40% rule or 4+ sections etc.)
+  qc_reverify_section_ids = {failed sections only}
+
+PIPELINE:
+  merge keeps 3 passing sections verbatim from previous_document
+  frozen ids for passing sections/checklist items SHOULD match preserved bytes
+
+CONDITION FOR CORRECTNESS:
+  Frozen ids must ONLY cover sections/checklist items NOT in rewrite set.
+  TODAY: no code removes frozen entries for rewritten section ids.
+
+FAILURE if:
+  mc_2 tied to s2, s2 in rewrite set, mc_2 still frozen from attempt 1 pass
+  → same as Case B.
+
+FILES: document_merge.py, frozen_sets.py (no pruning)
+
+------------------------------------------------------------------------------
+CASE E — Full QC partial qc_result [HIGH]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Any full QC attempt 2+ with non-empty frozen sets.
+
+PIPELINE:
+  LLM evaluates only non-frozen checklist + non-frozen code sections
+  build_final_qc_result uses ONLY new verification checks
+  No merge_targeted_qc_checks on full path
+
+FAILURE:
+  qc_result.checks missing frozen items entirely.
+  derive_scores() computes section_depth from partial must_cover set.
+  format_qc_feedback() only shows newly evaluated failures.
+  DB persisted qc_result incomplete vs true document state.
+  Debugging: looks like fewer checks than attempt 1 with no explanation in artifact.
+
+FILES: quality_check_node.py (285-287 vs 275-283),
+       result_builder.py (build_final_qc_result)
+
+------------------------------------------------------------------------------
+CASE F — Frozen "skip" is prompt-only for code sections [MED]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  frozen_section_ids non-empty on full QC.
+
+PIPELINE:
+  <frozen_section_ids> appended to user message.
+  Full <study_document_json> still contains ALL sections including frozen.
+  LLM asked to verify full document but given list of sections to treat as frozen.
+
+FAILURE:
+  No mechanical filter removes code blocks from evaluation scope.
+  LLM may still emit code_quality checks for frozen sections.
+  Or may skip when it shouldn't after content changed (Case A/B).
+  Inconsistent vs must_cover where items are actually removed from checklist block.
+
+FILES: qc_verification_prompt.py (325-330)
+
+------------------------------------------------------------------------------
+CASE G — Frozen must_cover vs targeted reverify contradiction [MED]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Pass 1 full QC: mc_2 passes → frozen
+  Pass 2 section_patch on s2 (must_cover had failed OR passed — if passed, frozen)
+
+PIPELINE:
+  Targeted QC: checklist_for_reverify includes mc_2 for s2
+  merge_targeted_qc_checks EVICTS prior mc_2 pass (check_targets_reverify)
+  frozen qc_frozen_check_ids still contains mc_2 in graph state
+
+FAILURE:
+  Mental model clash: "frozen" means skip on full QC, but patched sections
+  always re-verified on targeted QC regardless of freeze.
+  State field qc_frozen_check_ids stale relative to targeted merge outcome.
+
+FILES: targeted_merge.py (check_targets_reverify),
+       frozen_sets.py, quality_check_node.py
+
+------------------------------------------------------------------------------
+CASE H — accumulate_frozen_sets never shrinks [MED]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Checklist item mc_3 passed attempt 1 → frozen
+  Attempt 2 full regen rewrites section for mc_3 (in rewrite set)
+  mc_3 should be re-evaluated but remains in frozen set from union
+
+PIPELINE:
+  accumulate_frozen_sets only ADDS passed ids; never removes stale entries.
+  No pruning against qc_reverify_section_ids or rewrite_section_ids.
+
+FAILURE:
+  Frozen set monotonically grows; stale ids persist across regen cycles.
+
+FILES: frozen_sets.py (lines 18-34)
+
+------------------------------------------------------------------------------
+CASE I — Resume from DB with frozen ids [HIGH]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  Generation run checkpointed / resumed after QC fail.
+  study_material_service hydrates qc_frozen_check_ids, qc_frozen_section_keys.
+
+PIPELINE:
+  No stored section content hashes.
+  If generated_content changed between checkpoint and resume (or manual edit),
+  frozen ids point at unverified content.
+
+FAILURE:
+  Cross-request stale frozen state with no validation gate.
+
+FILES: study_material_service.py (~379-382), study_material_versions DB columns
+
+------------------------------------------------------------------------------
+CASE J — Full regen 40% rule vs ts_* section ids [MED]
+------------------------------------------------------------------------------
+
+TRIGGER:
+  topic_split uses ts_1, ts_2, ts_3; checklist uses mc_* with section_id → ts_*
+  Multiple ts_* sections fail deterministic checks; all mc_* pass.
+
+PIPELINE:
+  failed_section_ids = {ts_1, ts_2, ts_3}
+  affected_required = (failed_section_ids | missing) & required_mc_ids
+  If mc ids don't overlap ts ids in the intersection, 40% rule may NOT fire.
+  May get section_patch (3 sections) instead of full_regeneration.
+
+FAILURE:
+  Not a frozen-set bug directly, but affects when full regen + merge + frozen
+  path activates vs section patch path (which uses targeted QC, no frozen update).
+
+FILES: retry_routing.py (257-266), QC_PIPELINE_INCONSISTENCIES_AUDIT 1.3, 7.1
+
+------------------------------------------------------------------------------
+CASE K — Empty rewrite + frozen after widespread prior pass [CRITICAL variant]
+------------------------------------------------------------------------------
+
+Same as Case A but can also occur if:
+  routing forces full_regeneration via F7 (teaching only) after a doc where
+  many items passed and were frozen on attempt 1.
+
+  frozen set large + entire doc replaced + no merge = maximum stale skip surface.
+
+================================================================================
+PART 4 — SCENARIO WALKTHROUGH (CONCRETE EXAMPLE)
+================================================================================
+
+Topic: Python Loops
+Sections: s1 Intro, s2 For loops, s3 While loops, s4 (missing)
+Checklist: mc_1→s1, mc_2→s2, mc_3→s3, mc_4→s4
+
+── Attempt 1: Full QC ──────────────────────────────────────────────────────
+  Results:
+    mc_1 pass, mc_2 pass, mc_3 pass
+    s2 code_quality FAIL (wrong output in example)
+    mc_4 must_cover FAIL (no s4 in document)
+  Routing: section_patch_then_insert
+    qc_reverify_section_ids = [s2]
+    qc_missing_checklist_ids = [mc_4]
+  Frozen after accumulate: mc_1, mc_2, mc_3 (must_cover passes)
+  NOT frozen: s2 (code failed)
+
+── Attempt 2: study_agent patch_then_insert ────────────────────────────────
+  Patches s2, inserts s4
+  fixed_sections = [s2_new, s4_new]
+  frozen state UNCHANGED (not updated on targeted path)
+
+── Attempt 2: Targeted QC ──────────────────────────────────────────────────
+  Re-verifies s2, s4 only; merges with attempt 1 checks for s1, s3
+  Suppose PASS
+  qc_passed = True → END
+  frozen still mc_1,mc_2,mc_3 from attempt 1 (mc_2 pass from attempt 1,
+  but s2 was patched — frozen mc_2 never refreshed)
+
+If attempt 2 FAILED instead with 4+ section failures → full_regeneration:
+
+── Attempt 3: Full regen ─────────────────────────────────────────────────
+  rewrite_section_ids from new routing (e.g. {s2, s3, s4})
+  merge preserves s1 from attempt 2 doc
+  frozen mc_1 still set; s1 unchanged → OK
+  frozen mc_2, mc_3 may be stale if s2/s3 rewritten
+
+── Attempt 3: Full QC ────────────────────────────────────────────────────
+  Skips mc_1 in prompt (frozen) — OK if s1 preserved
+  Skips mc_2, mc_3 if still frozen — WRONG if s2/s3 rewritten
+  qc_result contains only non-frozen evaluations (Case E)
+
+================================================================================
+PART 5 — CONDITIONS SUMMARY TABLE
+================================================================================
+
+┌────────────────────────────┬──────────────┬─────────────┬──────────────────┐
+│ Condition                  │ Retry mode   │ QC mode     │ Frozen updated?  │
+├────────────────────────────┼──────────────┼─────────────┼──────────────────┤
+│ First QC                   │ (none)       │ full        │ yes (accumulate) │
+│ Section fail only          │ section_patch│ targeted    │ no               │
+│ Missing section only       │ section_insert│ targeted   │ no               │
+│ Both fail types            │ patch+insert │ targeted    │ no               │
+│ Widespread / TA critical   │ full_regen   │ full        │ yes if full QC   │
+│ TA sole fail               │ full_regen   │ full        │ yes; merge skip  │
+│ QC pass                    │ cleared      │ n/a         │ yes on last full │
+│ QC infra fail              │ unchanged    │ full/target │ no               │
+│ Permanent fail (3 attempts)│ last mode    │ n/a         │ last values kept │
+└────────────────────────────┴──────────────┴─────────────┴──────────────────┘
+
+merge_full_regeneration_preserving_passing runs when:
+  full_regeneration AND previous_document AND doc AND rewrite_section_ids truthy
+
+frozen sets consumed when:
+  full QC AND run_verification_pass (NOT targeted)
+
+frozen sets grown when:
+  full QC completes AND accumulate_frozen_sets runs (pass or fail)
+
+================================================================================
+PART 6 — ROOT CAUSES (WHY THESE FAILURES EXIST)
+================================================================================
+
+RC1  Frozen ids are ACCUMULATED state, not DERIVED from content lineage.
+     No hash of section JSON; no invalidation on rewrite/patch/regen.
+
+RC2  Full QC uses PROMPT SKIPPING instead of MERGE (unlike targeted QC).
+     Skipped checks disappear from qc_result; no mechanical guarantee.
+
+RC3  Full regen has SPLIT semantics: LLM asked for whole doc; merge preserves
+     subset. Frozen sets don't know which sections merge kept vs replaced.
+
+RC4  Targeted and full paths don't share one "verification scope" model.
+     targeted_merge has stale eviction; frozen_sets has no equivalent.
+
+RC5  teaching_alignment routes to full_regeneration with empty rewrite set,
+     producing whole-doc replace while frozen state carries over.
+
+RC6  accumulate_frozen_sets only unions; never prunes on qc_reverify_section_ids.
+
+================================================================================
+PART 7 — RECOMMENDED FIX DIRECTION (NOT IMPLEMENTED)
+================================================================================
+
+For implementers — see prior chat for full design. Minimal fix order:
+
+  P0  Clear ALL frozen ids when full_regen runs without merge (Case A, K)
+  P1  prune_frozen_sets(rewrite_section_ids, fixed_section_ids, checklist)
+      before run_verification_pass
+  P2  merge_incremental_qc_checks on full path (like targeted_merge)
+  P3  qc_section_content_hashes + touched_section_ids from study_agent
+  P4  Persist hashes; validate on resume
+
+================================================================================
+PART 8 — KEY FILE REFERENCE
+================================================================================
+
+quality_check_node.py
+  - is_targeted = bool(fixed_sections)           line ~177
+  - run_verification_pass / run_retry_*          line ~202-223
+  - merge_targeted_qc_checks (targeted only)     line ~275-283
+  - classify_retry_routing                       line ~300
+  - accumulate_frozen_sets (full only)           line ~346-351
+
+study_agent_node.py
+  - run_section_retry vs full gen                line ~278-285
+  - merge_full_regeneration_preserving_passing   line ~327-340
+  - rewrite_section_ids = qc_reverify_section_ids line ~276
+
+retry_routing.py
+  - classify_retry_routing                       line ~367
+  - _should_force_full_regeneration              line ~233
+  - _deterministic_mode                          line ~277
+  - _reconcile_mode                              line ~309
+
+frozen_sets.py
+  - accumulate_frozen_sets                       line ~12
+
+document_merge.py
+  - merge_full_regeneration_preserving_passing   line ~195
+  - merge_section_patches / insert_sections      line ~37, ~87
+
+targeted_merge.py
+  - merge_targeted_qc_checks                     line ~175
+  - check_targets_reverify (stale eviction)    line ~77
+
+qc_verification_prompt.py
+  - frozen checklist filter                      line ~299-310
+  - frozen_section_ids block                     line ~325-330
+
+node_helpers.py
+  - run_section_retry                            line ~455
+  - routing_state / base_qc_return               line ~556, ~612
+
+study_material_service.py
+  - frozen hydration on resume                   line ~379
+
+================================================================================
+PART 9 — REAL RUN ARTIFACT NOTES
+================================================================================
+
+Calculus run_20260630_214421:
+  attempt01 → section_patch (3 det_equation failures on ts_1-ts_3)
+  attempt02 → study_generator regen; frozen null in attempt02 metadata
+  Illustrates: deterministic failures → patch, not full regen; frozen empty
+  on first fail before accumulate on passing mc items only if QC passed
+  those checks.
+
+transcendental_idealism run_20260627_145507:
+  attempt01 frozen_check_ids populated in metadata
+  attempt02 retry_mode full_regeneration, frozen_section_ids null
+  Shows full regen retry path in test harness; frozen state behavior across
+  attempts visible in qc/attempt_*/metadata.json.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

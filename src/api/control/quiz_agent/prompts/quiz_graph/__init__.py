@@ -5,6 +5,7 @@ from . import (
     quiz_qc_check_definitions,
     quiz_qc_prompt,
     quiz_qc_retry_verification_prompt,
+    quiz_single_regen_prompt,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "quiz_qc_check_definitions",
     "quiz_qc_prompt",
     "quiz_qc_retry_verification_prompt",
+    "quiz_single_regen_prompt",
 ]

@@ -1,0 +1,309 @@
+================================================================================
+STUDY AGENT QC PIPELINE — INCONSISTENCIES & LOGICAL ISSUES AUDIT
+================================================================================
+Generated from end-to-end chat analysis (retry routing, frozen sets, QC feedback,
+section patch, deterministic checks, subsection remediation, full regen).
+Date: 2026-07-01
+Scope: study_agent_service QC → retry → study_generator loop
+
+This document lists design tensions, redundancies, missing guarantees, and
+logical gaps identified while tracing the pipeline. Items are grouped by area.
+Severity: [HIGH] user-visible wrong behavior risk | [MED] inefficiency or
+fragility | [LOW] documentation/observability gap
+
+================================================================================
+1. RETRY ROUTING (retry_routing.py)
+================================================================================
+
+1.1 [MED] Redundant validate_section_id_coverage calls
+    When det_structure_coverage fails, the same coverage computation runs up to
+    three times in one QC pass:
+      - structure_check in quality_check_node (deterministic QC)
+      - _missing_section_ids_from_structure in classify_retry_routing (~392)
+      - _structure_coverage_widespread (~249) calls it again
+    structure_missing from line 392 could be passed into _should_force_full_regeneration
+    instead of re-calling validate_section_id_coverage.
+
+1.2 [MED] det_structure_coverage skipped in _map_failures_to_targets
+    Structure failures are intentionally skipped in the generic mapper (lines 164-168)
+    then handled in a separate block (391-406). Correct behavior but split logic
+    makes the flow harder to follow and contributes to redundant coverage calls.
+
+1.3 [HIGH] Full-regen rule 4 (40% required mc_*) often ineffective for topic_split
+    affected_required = (failed_section_ids | missing_checklist_ids) & required_mc_ids
+    For topic_split pipelines, failed_section_ids are typically ts_* (topic split ids)
+    while required checklist ids are mc_*. The intersection is often EMPTY when only
+  section-level deterministic failures exist (e.g. Calculus: ts_1-ts_3 failed, all mc_* passed).
+    Escalation to full_regeneration via this rule may not fire when intuitively "many
+    sections failed" if those sections are ts_* not mc_*.
+
+1.4 [LOW] coverage_ratio = 1.0 when required_ids is empty (vacuous truth)
+    validate_section_id_coverage returns coverage_ratio 1.0 when there is no blueprint
+    to compare against. This is not used for pass/fail (missing_ids drives that) but
+    the metric is misleading if ever consumed for reporting.
+
+1.5 [MED] LLM full_regeneration recommendation cannot upgrade scoped deterministic mode
+    _reconcile_mode returns deterministic section_patch even if LLM recommends
+    full_regeneration, unless force_full_regen is true. Conversely, teaching_alignment
+    sole failure with deterministic mode "none" forces full_regeneration.
+    Asymmetric: LLM cannot escalate; teaching_alignment can.
+
+1.6 [LOW] unmapped_count threshold (>=3) vs det_* checks
+    Deterministic document_coherence checks (det_equation_in_content, etc.) always
+    carry section_id when the section exists, so they rarely increment unmapped_count.
+    Rule is more relevant to LLM checks with empty section_id.
+
+1.7 [MED] teaching_alignment failures skipped in _map_failures_to_targets
+    teaching_alignment checks never add to failed_section_ids. They only influence
+    full_regen via _should_force_full_regeneration. No section_patch path for
+    teaching_alignment-only issues unless bundled with other failures.
+
+================================================================================
+2. FROZEN SETS vs TARGETED MERGE (frozen_sets.py, targeted_merge.py)
+================================================================================
+
+2.1 [MED] Frozen must_cover does not protect patched sections on pass 2
+    qc_frozen_check_ids omits passed mc_* from FULL QC prompt only.
+    On targeted QC (pass 2), targeted_merge EVICTS must_cover for any section in
+    reverify_section_ids — even if mc_N was frozen after passing pass 1.
+    "Frozen" implies "don't re-check" but patched sections are always re-checked.
+    Naming/mental model mismatch.
+
+2.2 [MED] content_accuracy is section-scoped but not frozen
+    content_accuracy has section_id and routes to failed_section_ids like other
+    section failures. Passes are preserved on UNTOUCHED sections via targeted_merge,
+    not via frozen sets. On a later FULL QC, all content_accuracy claims are
+    re-evaluated. Asymmetric with must_cover (frozen by checklist_id) and code
+    (frozen by section_id for code categories only).
+
+2.3 [LOW] No frozen list for document_coherence / teaching_alignment
+    By design, but means full QC always re-runs document_coherence LLM check and
+    all content_accuracy claims. Only must_cover and code get prompt optimization.
+
+2.4 [MED] accumulate_frozen_sets skipped on targeted QC pass
+    frozen state from pass 1 persists unchanged on pass 2 (None passed to
+    base_qc_return). Correct for preserving pass-1 freezes, but if pass 2 passes
+    new must_cover items, they are NOT added to frozen sets until another full pass.
+
+================================================================================
+3. QC FEEDBACK & ARTIFACT LOGGING
+================================================================================
+
+3.1 [MED] qc_feedback text block not logged in 05_qc_result.json
+    format_qc_feedback() produces qc_feedback in graph state on fail, but
+    log_qc_agent payload for qc_result only includes structured qc_result dict.
+    The formatted text block is not persisted as its own artifact field.
+    Recoverable by re-running format_qc_feedback on logged qc_result.
+
+3.2 [MED] qc_section_failures not logged as separate artifact
+    Structured per-section failure bundles (routing.section_failures) live only in
+    LangGraph state between QC fail and study_agent retry. Not written to
+    05_qc_result.json or a dedicated routing artifact in production (test harness
+    writes retry_routing.json).
+
+3.3 [HIGH] Two different feedback channels with no unified audit trail
+    section_patch path: qc_section_failures → section_rework_prompt (<sections_to_fix>)
+    full_regeneration path: qc_feedback text → <quality_check_feedback>
+    Most failures (section_patch) never produce qc_feedback in a way that matters;
+    full_regen failures never use structured section_failures in the patch prompt.
+    Debugging a retry requires knowing which channel was used.
+
+3.4 [LOW] Reference material duplicated on full_regeneration
+    build_qc_feedback_block adds <reference_material_for_correction> in addition to
+    <reference_material> already in the main user message. Redundant tokens.
+
+3.5 [LOW] failed_qc_feedback (DB hydration) separate from in-run qc_feedback
+    improve/regenerate from previously failed draft uses failed_qc_feedback from DB;
+    in-pipeline QC retry uses qc_feedback. Two paths, easy to conflate when reading logs.
+
+================================================================================
+4. SECTION PATCH SCOPE & PRESERVATION (section_rework_prompt, document_merge)
+================================================================================
+
+4.1 [HIGH] Whole-section replacement, not line-level or field-level patch
+    merge_section_patches replaces the entire section dict by id:
+      sections[index] = copy.deepcopy(patch)
+    No structural merge of subsections, formula_blocks, or content fields.
+
+4.2 [HIGH] No verbatim preservation rules inside patched sections
+    improve_prompt and regeneration_prompt have explicit "copy verbatim" rules for
+    untouched sections/subsections/blocks. section_rework_prompt does NOT require:
+      - Copy subsections not in subsections_to_fix verbatim from current_section_json
+      - Volume preservation / anti-thinning for unchanged parts
+    Only mandate: fix listed failures, preserve section id.
+
+4.3 [MED] Valid content in OTHER sections is guaranteed; within failed section is not
+    Unfailed sections (e.g. ts_4, ts_5 when ts_1-ts_3 fail) are never sent to LLM
+    and never touched by merge. Valid subsections/blocks WITHIN a failed section
+    rely entirely on LLM instruction-following.
+
+4.4 [MED] current_section_json provided but preservation not enforced
+    build_sections_to_fix_block embeds full current_section_json as reference.
+    Code does not diff or merge LLM output against it for unchanged parts.
+
+4.5 [LOW] Section patch uses generation sampling when mode=generate
+    full_regeneration with generation_mode=generate uses study_generation_temperature
+    (0.25), not revision temperature (0.35). Section patch always uses revision
+    sampling. Inconsistent retry aggressiveness across retry types.
+
+================================================================================
+5. SUBSECTION HANDLING
+================================================================================
+
+5.1 [HIGH] Subsections have no ids in document schema
+    Only section-level id (ts_*, mc_*). Subsections identified by heading string only.
+    No stable subsection key for routing, freezing, or merge.
+
+5.2 [HIGH] Subsection targeting via regex on evidence text only
+    _subsection_remediation_targets parses failure evidence with:
+      subsection\s+['"]([^'"]+)['"]
+    Designed for deterministic _location_evidence format:
+      Section 'X', subsection 'Y': detail
+    Fragile if evidence wording changes.
+
+5.3 [MED] LLM QC may mention subsections but not in parseable format
+    QC schema has section_id only — no subsection_heading field.
+    LLM evidence may say "'Definite Integrals' subsection" or
+    "The subsection 'Foo' explains..." — regex may or may not match.
+    subsection remediation blocks only appear when regex matches.
+
+5.4 [MED] No deterministic-only preservation prompt branch
+    No separate prompt section when all failures are det_* block-placement checks.
+    Same section_rework_prompt for must_cover depth failures, content_accuracy,
+    and det_equation_in_content. Only one bullet names det_equation_in_content.
+
+5.5 [LOW] subsection remediation duplicated in prompt
+    subsections_to_fix in <sections_to_fix> JSON plus <subsection_equation_remediation>
+    block plus conditional closing text — triple reinforcement, but still soft guarantee.
+
+5.6 [MED] Section-level det_equation_in_content does not set subsections_to_fix
+    Calculus example: evidence "Section 'Derivatives': Prose contains display-math"
+    → entire section content rewrite implied; no subsection granularity even if
+    document has subsections with mixed valid/invalid content.
+
+================================================================================
+6. DETERMINISTIC vs LLM CHECK INTEGRATION
+================================================================================
+
+6.1 [MED] det_* checks use category document_coherence
+    Same category as LLM document_coherence check. Scores bucket section_depth
+    bundles must_cover + document_coherence. Deterministic failures affect
+    section_depth score alongside LLM must_cover — can be confusing in artifacts.
+
+6.2 [LOW] det_structure_coverage handled differently from other det_* in routing
+    Skipped in mapper; enriched into missing_checklist_ids separately.
+    Other det_* checks use generic section_id → failed_section_ids path.
+
+6.3 [MED] Deterministic failures default to section_patch, not full_regen
+    det_equation_in_content on 3 sections → section_patch (threshold is 4+).
+    Correct for surgical fix, but combined with 4.1-4.2 means 3 full section
+    rewrites rather than minimal edits.
+
+6.4 [LOW] structure_checks vs prose_checks naming in quality_check_node
+    block_placement_checks (det_*) grouped under structure_checks variable name
+    in node though category is document_coherence not structure.
+
+================================================================================
+7. ID MODEL & ROUTING TARGET MISMATCHES
+================================================================================
+
+7.1 [MED] ts_* (topic_split) vs mc_* (checklist) dual id system
+    topic_split drives section ids (ts_1, ts_2); checklist items have mc_* with
+    section_id pointing to ts_*. Routing uses both sets in different rules.
+    Full-regen 40% rule intersects with mc_* only — ts_* failures don't count.
+
+7.2 [MED] must_cover fail with empty section_id
+    Benzene example: mc_4 failed with section_id "" → goes to missing_checklist_ids
+    or unmapped depending on resolve path, not failed_section_ids for patch.
+    Ambiguous when checklist item exists but section mapping is missing.
+
+7.3 [LOW] fixed_sections cleared by base_qc_return on every QC exit
+    QC node always passes fixed_sections=None in base_qc_return. study_agent sets
+    fixed_sections; QC reads them on next entry for targeted pass. Correct cycle
+    but easy to misread — fixed_sections is not QC output.
+
+================================================================================
+8. FULL REGENERATION vs SECTION PATCH
+================================================================================
+
+8.1 [MED] Full regen asks for whole document; post-merge may preserve passing sections
+    merge_full_regeneration_preserving_passing keeps sections NOT in
+    qc_reverify_section_ids from previous_document. LLM asked for full rewrite but
+    pipeline may splice old passing sections back — intentional optimization but
+    prompt says rewrite everything.
+
+8.2 [LOW] Full regen uses generation_prompt (same as initial generate)
+    Not regeneration_prompt. qc_fix_block adds quality_check_feedback + previous_draft.
+    previous_failed_qc_block from DB not used in-pipeline.
+
+8.3 [MED] Escalation thresholds may not match user expectation
+    3 failed sections → patch; 4+ → full regen. Deterministic math-in-prose on
+    3 sections triggers 3 full section LLM rewrites, not minimal line edits.
+
+================================================================================
+9. TARGETED QC (PASS 2) CONSISTENCY
+================================================================================
+
+9.1 [MED] Patched section re-verifies ALL scoped check types
+    targeted_merge evicts must_cover, content_accuracy, document_coherence for
+    reverify sections — not just the failure category that triggered the patch.
+
+9.2 [LOW] frozen_check_ids still passed to scoped checklist on targeted verify
+    checklist_for_reverify scopes checklist items but frozen ids from pass 1
+    don't skip must_cover in targeted pass prompt the same way as full pass.
+
+9.3 [MED] Deterministic structure_checks re-run on targeted pass?
+    quality_check_node re-runs block_placement_checks on full merged document
+    each QC entry — deterministic checks always fresh on entire doc.
+
+================================================================================
+10. OBSERVABILITY & DEBUGGING GAPS
+================================================================================
+
+10.1 [LOW] prompt_snapshot for section patch in 02_study_generator.json
+     Contains full patch prompt including sections_to_fix — good for debug.
+     But no separate routing_input.json in production like test harness.
+
+10.2 [LOW] No artifact linking QC attempt N fail → study attempt N+1 patch input
+     Must correlate 05_qc_result attempt01 fail with 02_study_generator attempt02
+     manually via pipeline_attempt field.
+
+10.3 [MED] Retry rationale in routing not logged to qc_result artifact
+     classify_retry_routing produces rationale string; not in 05_qc_result.json payload.
+
+================================================================================
+11. PROMPT / SCHEMA GAPS (POTENTIAL IMPROVEMENTS — NOT BUGS PER SE)
+================================================================================
+
+11.1 Add subsection_heading to QcCheckItem schema and deterministic checks
+11.2 Pass structure_missing into _structure_coverage_widespread (dedupe)
+11.3 Log qc_feedback and qc_section_failures in qc_result artifact
+11.4 section_rework verbatim rules for subsections not in subsections_to_fix
+11.5 Mechanical subsection merge instead of full section replace for det_* failures
+11.6 Branch section_rework prompt on failure category (deterministic vs depth vs accuracy)
+11.7 Include ts_* in full-regen affected ratio or use failed_section_ids count only
+11.8 Freeze content_accuracy passes by section_id (optional, for full QC cost)
+
+================================================================================
+12. REAL RUN EXAMPLES REFERENCED IN CHAT
+================================================================================
+
+Calculus run_20260630_214421 attempt01:
+  - 3x det_equation_in_content on ts_1, ts_2, ts_3 (section-level evidence)
+  - All must_cover passed
+  - qc_retry_mode: section_patch (not full_regen)
+  - No subsections_to_fix (no subsection in evidence)
+  - section_depth: 7 (3 failed det + 7 passed checks in bucket)
+
+Benzene run_20260625_161039:
+  - mc_4 must_cover failed with section_id ""
+  - teaching_alignment score 1, overall warn
+  - section_patch routing
+
+Integrals run_20260628_231755:
+  - det_equation_in_content WITH subsection in evidence
+  - subsection remediation blocks would activate
+
+================================================================================
+END OF AUDIT
+================================================================================

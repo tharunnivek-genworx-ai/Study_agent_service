@@ -10,11 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from src.api.control.hint_agent.nodes.hint_nodes import load_hint_context
-from src.api.control.quiz_agent.graph.quiz_single_regen_graph.resume_router import (
+from src.api.control.quiz_agent.graph.quiz_graph.quiz_generation_graph import (
+    build_quiz_generation_graph,
+    reset_quiz_generation_graph,
+)
+from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
     hydrate_checkpoint_state,
     resolve_resume_next_node,
 )
-from src.api.control.quiz_agent.nodes.quiz_single_regen_graph.nodes import (
+from src.api.control.quiz_agent.nodes.quiz_graph import (
     deterministic_validate_question_patches,
     invoke_quiz_single_regen_llm,
     parse_quiz_single_regen_output,
@@ -82,7 +86,7 @@ class TestQuestionReworkGraphPipeline:
             }
 
             with patch(
-                "src.api.control.quiz_agent.nodes.quiz_single_regen_graph.nodes.call_quiz_llm",
+                "src.api.control.quiz_agent.nodes.quiz_graph.invoke_quiz_single_regen_llm_node.call_quiz_llm",
                 AsyncMock(return_value=_llm_result(content=llm_output)),
             ):
                 invoke_state = await invoke_quiz_single_regen_llm(state)  # type: ignore[arg-type]
@@ -108,7 +112,7 @@ class TestQuestionReworkGraphPipeline:
             config = {"configurable": {"session": MagicMock()}}
 
             with patch(
-                "src.api.control.quiz_agent.nodes.quiz_single_regen_graph.nodes.QuizRepository",
+                "src.api.control.quiz_agent.nodes.quiz_graph.persist_question_patches_node.QuizRepository",
                 return_value=mock_repo,
             ):
                 persist_state = await persist_question_patches(
@@ -194,9 +198,117 @@ class TestPatchQuestionsFromAi:
         asyncio.run(_run())
 
 
+class TestUnifiedGraphQuestionReworkRouting:
+    def test_question_ids_without_mode_skips_quality_check(self) -> None:
+        """Fresh rework via question_ids routes through rework branch, not QC."""
+
+        async def _run() -> list[str]:
+            question_id = uuid4()
+            quiz_id = uuid4()
+            node_id = uuid4()
+            mentor_id = uuid4()
+            space_id = uuid4()
+            qid_str = str(question_id)
+
+            llm_output = json.dumps([_sample_llm_patch(question_id=qid_str)])
+
+            mock_question = MagicMock()
+            mock_question.question_id = question_id
+            mock_question.question_text = "What is encapsulation?"
+            mock_question.option_a = "Hiding data"
+            mock_question.option_b = "Inheritance"
+            mock_question.option_c = "Polymorphism"
+            mock_question.option_d = "Abstraction"
+            mock_question.correct_option = "A"
+            mock_question.explanation = "Encapsulation hides internal state."
+            mock_question.order_index = 0
+
+            mock_quiz = MagicMock()
+            mock_quiz.node_id = node_id
+            mock_quiz.is_published = False
+            mock_quiz.difficulty = "medium"
+
+            mock_repo = MagicMock()
+            mock_repo.get_quiz_by_id = AsyncMock(return_value=mock_quiz)
+            mock_repo.get_active_questions_by_quiz = AsyncMock(
+                return_value=[mock_question]
+            )
+            mock_repo.patch_questions_from_ai = AsyncMock(return_value=[qid_str])
+
+            mock_node = MagicMock()
+            mock_node.space_id = space_id
+            mock_node.title = "OOP Principles"
+
+            active_version = SimpleNamespace(
+                version_id=uuid4(),
+                content="Study material on encapsulation and OOP.",
+                concept_plan=None,
+            )
+            mock_study_repo = MagicMock()
+            mock_study_repo.get_published_version = AsyncMock(return_value=None)
+            mock_study_repo.get_active_version = AsyncMock(return_value=active_version)
+            mock_study_repo.get_latest_workspace_draft = AsyncMock(return_value=None)
+
+            initial_state = {
+                "node_id": node_id,
+                "quiz_id": quiz_id,
+                "mentor_id": mentor_id,
+                "question_ids": [question_id],
+                "mentor_feedback": "Make distractors harder.",
+            }
+            config = {"configurable": {"session": MagicMock()}}
+
+            reset_quiz_generation_graph()
+            graph = build_quiz_generation_graph()
+            visited_nodes: list[str] = []
+
+            with (
+                patch(
+                    "src.api.control.quiz_agent.nodes.quiz_graph.load_generation_context_node._get_node_and_assert_space_access",
+                    AsyncMock(return_value=mock_node),
+                ),
+                patch(
+                    "src.api.control.quiz_agent.nodes.quiz_graph.load_generation_context_node.StudyMaterialRepository",
+                    return_value=mock_study_repo,
+                ),
+                patch(
+                    "src.api.control.quiz_agent.nodes.quiz_graph.load_quiz_single_regen_context_node.QuizRepository",
+                    return_value=mock_repo,
+                ),
+                patch(
+                    "src.api.control.quiz_agent.nodes.quiz_graph.persist_question_patches_node.QuizRepository",
+                    return_value=mock_repo,
+                ),
+                patch(
+                    "src.api.control.quiz_agent.nodes.quiz_graph.invoke_quiz_single_regen_llm_node.call_quiz_llm",
+                    AsyncMock(return_value=_llm_result(content=llm_output)),
+                ),
+            ):
+                async for chunk in graph.astream(
+                    initial_state,
+                    config,
+                    stream_mode="updates",
+                ):
+                    visited_nodes.extend(chunk.keys())
+
+            return visited_nodes
+
+        visited = asyncio.run(_run())
+
+        assert "quality_check" not in visited
+        assert "persist_question_patches" in visited
+        assert visited[-1] == "persist_question_patches"
+        assert "load_quiz_single_regen_context" in visited
+        assert "load_generation_context" not in visited
+        assert "quiz_generator" not in visited
+
+
 class TestQuizSingleRegenResumeRouter:
     def test_resume_after_invoke_routes_to_parse(self) -> None:
-        state = {"raw_llm_output": '[{"question_id": "q1"}]'}
+        state = {
+            "mode": "improve",
+            "raw_llm_output": '[{"question_id": "q1"}]',
+        }
         assert (
             resolve_resume_next_node(
                 state, last_completed_node="invoke_quiz_single_regen_llm"
@@ -205,7 +317,10 @@ class TestQuizSingleRegenResumeRouter:
         )
 
     def test_resume_after_validate_routes_to_persist(self) -> None:
-        state = {"validated_patches": [_sample_llm_patch(question_id="q1")]}
+        state = {
+            "mode": "improve",
+            "validated_patches": [_sample_llm_patch(question_id="q1")],
+        }
         assert (
             resolve_resume_next_node(
                 state,

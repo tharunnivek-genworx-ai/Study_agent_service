@@ -8,6 +8,7 @@ from src.api.control.quiz_agent.graph.quiz_graph.quiz_generation_graph import (
 from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
     QUIZ_GRAPH_NODES,
     hydrate_checkpoint_state,
+    is_question_rework_run,
     is_resume_state,
     last_completed_node_from_state,
     resolve_resume_next_node,
@@ -15,6 +16,8 @@ from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
 from src.api.control.quiz_agent.graph.quiz_graph.runner import (
     run_quiz_from_checkpoint,
     run_quiz_generation,
+    run_quiz_single_regen,
+    run_quiz_single_regen_from_checkpoint,
 )
 
 __all__ = [
@@ -22,10 +25,13 @@ __all__ = [
     "build_quiz_generation_graph",
     "get_quiz_generation_graph",
     "hydrate_checkpoint_state",
+    "is_question_rework_run",
     "is_resume_state",
     "last_completed_node_from_state",
     "reset_quiz_generation_graph",
     "resolve_resume_next_node",
     "run_quiz_from_checkpoint",
     "run_quiz_generation",
+    "run_quiz_single_regen",
+    "run_quiz_single_regen_from_checkpoint",
 ]
