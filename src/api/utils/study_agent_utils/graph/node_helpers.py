@@ -550,6 +550,9 @@ async def run_section_retry(
         "llm_model_used": llm_model_used,
         "llm_output_content": cleaned_content,
         "fixed_sections": fixed_sections,
+        "generation_outcome": "study_document",
+        "generation_outcome_detail": {},
+        "generation_parsed_document": merged_doc,
     }
 
 

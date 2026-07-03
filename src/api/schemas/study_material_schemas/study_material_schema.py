@@ -46,6 +46,10 @@ from src.api.schemas.common.generation_diagnostics_schema import (
     GenerationDiagnosticsOut,
     QualityCheckItemOut,
 )
+from src.api.schemas.study_material_schemas.generation_outcome_schema import (
+    ActionRequiredOut,
+    ApiGenerationOutcome,
+)
 from src.api.utils.study_agent_utils.mentor.mentor_display_badge import (
     compute_mentor_display_badge,
     compute_student_visibility_hint,
@@ -349,6 +353,10 @@ class StudyMaterialVersionOut(BaseModel):
     qc_frozen_check_ids: list[str] | None = None
     qc_frozen_section_keys: list[str] | None = None
     next_llm_retry_at: datetime | None = None
+    generation_outcome: ApiGenerationOutcome | None = None
+    generation_outcome_detail: dict[str, Any] | None = None
+    qc_evaluated: bool = False
+    action_required: ActionRequiredOut | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

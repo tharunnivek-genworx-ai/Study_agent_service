@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from src.api.control.study_agent.graph.graph import _route_after_study_agent
 from src.api.control.study_agent.graph.resume_router import (
     hydrate_checkpoint_state,
     resolve_resume_next_node,
+    route_after_study_agent,
 )
 
 
@@ -35,11 +37,43 @@ def test_resolve_resume_after_concept_checklist_without_plan_retries_checklist()
 def test_resolve_resume_after_study_agent_enters_quality_check() -> None:
     state = {
         "generated_content": '{"sections": [{"id": "s1", "heading": "Intro"}]}',
+        "generation_outcome": "study_document",
     }
     assert (
         resolve_resume_next_node(state, last_completed_node="study_agent")
         == "quality_check"
     )
+
+
+def test_resolve_resume_after_study_agent_reference_required_ends() -> None:
+    state = {
+        "generated_content": '{"generation_status":"reference_required","message":"Upload a PDF"}',
+        "generation_outcome": "reference_required",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="study_agent") == "__end__"
+    )
+
+
+def test_resolve_resume_after_study_agent_malformed_retries_generation() -> None:
+    state = {
+        "generated_content": '{"title":"broken"}',
+        "generation_outcome": "malformed_document",
+        "generator_format_attempt": 1,
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="study_agent")
+        == "study_agent"
+    )
+
+
+def test_route_after_study_agent_malformed_exhausted_ends() -> None:
+    state = {
+        "generation_outcome": "malformed_document",
+        "generator_format_attempt": 3,
+    }
+    assert route_after_study_agent(state) == "__end__"
+    assert _route_after_study_agent(state) == "__end__"
 
 
 def test_resolve_resume_after_quality_check_infra_error_retries_qc() -> None:

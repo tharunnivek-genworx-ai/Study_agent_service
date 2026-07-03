@@ -21,6 +21,12 @@ from src.api.schemas.study_material_schemas.generation_document_schema import (
     Section,
     Subsection,
 )
+from src.api.schemas.study_material_schemas.generation_outcome_schema import (
+    ActionRequiredOut,
+    ApiGenerationOutcome,
+    GenerationOutcomeDetail,
+    GraphGenerationOutcome,
+)
 from src.api.schemas.study_material_schemas.llama_parse_schema import (
     LlamaParseExtractionResult,
     ParseImageRecord,
@@ -95,6 +101,8 @@ from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import
 )
 
 __all__ = [
+    "ActionRequiredOut",
+    "ApiGenerationOutcome",
     "ArchiveSummaryOut",
     "BreadcrumbItemOut",
     "CodeBlock",
@@ -102,6 +110,8 @@ __all__ = [
     "ConceptPlanOut",
     "FormulaBlock",
     "GenerationDocument",
+    "GenerationOutcomeDetail",
+    "GraphGenerationOutcome",
     "ImproveStatus",
     "LlamaParseExtractionResult",
     "load_study_material_schema",

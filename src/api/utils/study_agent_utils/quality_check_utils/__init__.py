@@ -16,9 +16,6 @@ from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic im
     extract_structure,
     structure_check,
 )
-from src.api.utils.study_agent_utils.quality_check_utils.checks.skip_rules import (
-    should_skip_qc,
-)
 from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
     DEFAULT_INSTRUCTION,
     FROZEN_SECTION_CATEGORIES,
@@ -57,8 +54,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import
     format_qc_feedback,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.node_returns import (
-    build_invalid_json_return,
-    build_skip_return,
+    build_qc_guard_return,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.result_builder import (
     build_final_qc_result,
@@ -101,8 +97,7 @@ __all__ = [
     "build_document_outline",
     "build_final_qc_result",
     "build_infra_failure_return",
-    "build_invalid_json_return",
-    "build_skip_return",
+    "build_qc_guard_return",
     "check_targets_reverify",
     "classify_retry_routing",
     "derive_overall_status",
@@ -125,7 +120,6 @@ __all__ = [
     "run_llm_verification_pass",
     "run_retry_verification_pass",
     "run_verification_pass",
-    "should_skip_qc",
     "split_verification_checks",
     "structure_check",
 ]
