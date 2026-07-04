@@ -106,22 +106,26 @@ def _code_artifact_from_block(
     )
 
 
-def structure_check(
-    structure: DocumentStructure,
-    *,
+def structure_coverage_missing_ids(
+    doc: dict[str, Any],
     checklist: list[dict[str, Any]] | None = None,
-    doc: dict[str, Any] | None = None,
+    *,
     topic_split: list[dict[str, Any]] | None = None,
-) -> dict[str, Any] | None:
-    """Return a failed check when required section ids are missing."""
-    if doc is None:
-        return None
+) -> set[str]:
+    """Return required section ids absent from *doc* (single coverage computation)."""
     coverage = validate_section_id_coverage(
         doc, checklist or [], topic_split=topic_split
     )
-    if not coverage.missing_ids:
+    return set(coverage.missing_ids)
+
+
+def structure_check_from_missing_ids(
+    missing_ids: set[str] | frozenset[str],
+) -> dict[str, Any] | None:
+    """Build det_structure_coverage failure check from precomputed missing ids."""
+    if not missing_ids:
         return None
-    missing = ", ".join(sorted(coverage.missing_ids))
+    missing = ", ".join(sorted(missing_ids))
     return {
         "id": "det_structure_coverage",
         "category": "structure",
@@ -131,6 +135,26 @@ def structure_check(
         "evidence": f"Missing section ids: {missing}",
         "corrective_hint": "Add one section per topic_split entry (or required checklist item) with matching id.",
     }
+
+
+def structure_check(
+    structure: DocumentStructure,
+    *,
+    checklist: list[dict[str, Any]] | None = None,
+    doc: dict[str, Any] | None = None,
+    topic_split: list[dict[str, Any]] | None = None,
+    structure_missing_ids: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any] | None:
+    """Return a failed check when required section ids are missing."""
+    del structure
+    if doc is None:
+        return None
+    missing_ids = (
+        set(structure_missing_ids)
+        if structure_missing_ids is not None
+        else structure_coverage_missing_ids(doc, checklist, topic_split=topic_split)
+    )
+    return structure_check_from_missing_ids(missing_ids)
 
 
 def _infer_section_type(heading: str) -> str:

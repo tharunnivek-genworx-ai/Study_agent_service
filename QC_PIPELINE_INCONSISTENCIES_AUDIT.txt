@@ -16,47 +16,66 @@ fragility | [LOW] documentation/observability gap
 ================================================================================
 
 1.1 [MED] Redundant validate_section_id_coverage calls
-    When det_structure_coverage fails, the same coverage computation runs up to
-    three times in one QC pass:
-      - structure_check in quality_check_node (deterministic QC)
-      - _missing_section_ids_from_structure in classify_retry_routing (~392)
-      - _structure_coverage_widespread (~249) calls it again
-    structure_missing from line 392 could be passed into _should_force_full_regeneration
-    instead of re-calling validate_section_id_coverage.
+    [FIXED 2026-07-03] structure_coverage_missing_ids() runs once in quality_check_node;
+    result passed to structure_check() and classify_retry_routing(structure_missing_ids=...).
+    retry_routing reuses the same set for missing_checklist enrichment and
+    _structure_coverage_widespread (no second/third validate call on the QC path).
+    Standalone classify_retry_routing callers still validate at most once when needed.
+    Prior issue: up to three calls per QC pass when det_structure_coverage failed.
 
 1.2 [MED] det_structure_coverage skipped in _map_failures_to_targets
-    Structure failures are intentionally skipped in the generic mapper (lines 164-168)
-    then handled in a separate block (391-406). Correct behavior but split logic
-    makes the flow harder to follow and contributes to redundant coverage calls.
+    [FIXED 2026-07-03] Structure coverage resolution and missing_checklist enrichment
+    now live in _map_failures_to_targets (via _resolve_structure_missing_ids and
+    _enrich_missing_checklist_from_structure). classify_retry_routing passes
+    structure_missing_ids through once; mapper returns structure_missing for
+    _structure_coverage_widespread. Prior issue: skip in generic loop then duplicate
+    block in classify_retry_routing made flow hard to follow.
 
 1.3 [HIGH] Full-regen rule 4 (40% required mc_*) often ineffective for topic_split
-    affected_required = (failed_section_ids | missing_checklist_ids) & required_mc_ids
+    [FIXED 2026-07-03] _affected_required_checklist_ids() now maps failed_section_ids
+    (ts_*) to checklist ids via checklist_section_id() before intersecting required.
+    Legacy mc_*-as-section-id pipelines still work via union with failed_section_ids.
+    Prior bug: affected_required = (failed_section_ids | missing_checklist_ids) & required_mc_ids
     For topic_split pipelines, failed_section_ids are typically ts_* (topic split ids)
-    while required checklist ids are mc_*. The intersection is often EMPTY when only
-  section-level deterministic failures exist (e.g. Calculus: ts_1-ts_3 failed, all mc_* passed).
+    while required checklist ids are mc_*. The intersection was often EMPTY when only
+    section-level deterministic failures exist (e.g. Calculus: ts_1-ts_3 failed, all mc_* passed).
     Escalation to full_regeneration via this rule may not fire when intuitively "many
     sections failed" if those sections are ts_* not mc_*.
 
 1.4 [LOW] coverage_ratio = 1.0 when required_ids is empty (vacuous truth)
-    validate_section_id_coverage returns coverage_ratio 1.0 when there is no blueprint
-    to compare against. This is not used for pass/fail (missing_ids drives that) but
-    the metric is misleading if ever consumed for reporting.
+    [FIXED 2026-07-03] Removed unused coverage_ratio from SectionCoverageResult.
+    Pass/fail and routing already use missing_ids only; ratio was never consumed
+    in production.
 
 1.5 [MED] LLM full_regeneration recommendation cannot upgrade scoped deterministic mode
-    _reconcile_mode returns deterministic section_patch even if LLM recommends
-    full_regeneration, unless force_full_regen is true. Conversely, teaching_alignment
-    sole failure with deterministic mode "none" forces full_regeneration.
-    Asymmetric: LLM cannot escalate; teaching_alignment can.
+    [FIXED 2026-07-03 — INTENTIONAL] Asymmetric reconcile policy is by design.
+    _reconcile_mode keeps deterministic section_patch/insert when scoped failures
+    map cleanly; LLM retry_recommendation can confirm compatible modes only, not
+    escalate to full_regeneration (avoids costly LLM over-escalation; prompt says
+    full_regen only for >50% required fail or fundamental teaching misalignment).
+    teaching_alignment sole failure still forces full_regeneration when deterministic
+    mode is "none" (document-level issue with no section_id patch target).
+    Prior audit framed this as a bug; it is a deliberate safety rail — deterministic
+    routing corrects unreliable LLM retry_recommendation output in both directions.
 
 1.6 [LOW] unmapped_count threshold (>=3) vs det_* checks
-    Deterministic document_coherence checks (det_equation_in_content, etc.) always
-    carry section_id when the section exists, so they rarely increment unmapped_count.
-    Rule is more relevant to LLM checks with empty section_id.
+    [FIXED 2026-07-03 — INTENTIONAL] F6 (unmapped_count >= 3) targets routing
+    ambiguity from failures that cannot map to a document section_id — mainly LLM
+    QC checks with empty or invalid section_id, or must_cover without a resolvable
+    checklist id. det_* block-placement checks always carry section_id when the
+    section exists, so they increment failed_section_ids (F5 at >= 4) not
+    unmapped_count. Prior audit read like a gap; F6 is deliberately LLM/unmappable
+    oriented, not a catch-all for deterministic det_* failures.
 
 1.7 [MED] teaching_alignment failures skipped in _map_failures_to_targets
-    teaching_alignment checks never add to failed_section_ids. They only influence
-    full_regen via _should_force_full_regeneration. No section_patch path for
-    teaching_alignment-only issues unless bundled with other failures.
+    [FIXED 2026-07-03 — INTENTIONAL] teaching_alignment is a single document-level
+    check (whole doc vs teaching instruction) with no section_id patch target.
+    _map_failures_to_targets skips it by design; routing uses F1/F2/F7 →
+    full_regeneration and qc_feedback, not section_failures / section_patch.
+    When bundled with section-level failures, those other checks still drive
+    section_patch; alignment is re-evaluated on the next QC pass. Prior audit
+    read like a gap; document-level misalignment cannot be surgically patched
+    without inventing section blame.
 
 ================================================================================
 2. FROZEN SETS vs TARGETED MERGE (frozen_sets.py, targeted_merge.py)
@@ -69,18 +88,12 @@ fragility | [LOW] documentation/observability gap
     "Frozen" implies "don't re-check" but patched sections are always re-checked.
     Naming/mental model mismatch.
 
-2.2 [MED] content_accuracy is section-scoped but not frozen
-    content_accuracy has section_id and routes to failed_section_ids like other
-    section failures. Passes are preserved on UNTOUCHED sections via targeted_merge,
-    not via frozen sets. On a later FULL QC, all content_accuracy claims are
-    re-evaluated. Asymmetric with must_cover (frozen by checklist_id) and code
-    (frozen by section_id for code categories only).
 
-2.3 [LOW] No frozen list for document_coherence / teaching_alignment
+2.2 [LOW] No frozen list for document_coherence / teaching_alignment
     By design, but means full QC always re-runs document_coherence LLM check and
     all content_accuracy claims. Only must_cover and code get prompt optimization.
 
-2.4 [MED] accumulate_frozen_sets skipped on targeted QC pass
+2.3 [MED] accumulate_frozen_sets skipped on targeted QC pass
     frozen state from pass 1 persists unchanged on pass 2 (None passed to
     base_qc_return). Correct for preserving pass-1 freezes, but if pass 2 passes
     new must_cover items, they are NOT added to frozen sets until another full pass.
@@ -276,7 +289,7 @@ fragility | [LOW] documentation/observability gap
 ================================================================================
 
 11.1 Add subsection_heading to QcCheckItem schema and deterministic checks
-11.2 Pass structure_missing into _structure_coverage_widespread (dedupe)
+11.2 [FIXED 2026-07-03] Pass structure_missing into _structure_coverage_widespread (dedupe)
 11.3 Log qc_feedback and qc_section_failures in qc_result artifact
 11.4 section_rework verbatim rules for subsections not in subsections_to_fix
 11.5 Mechanical subsection merge instead of full section replace for det_* failures

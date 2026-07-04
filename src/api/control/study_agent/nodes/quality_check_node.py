@@ -19,6 +19,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic im
     build_code_review_payloads,
     extract_structure_from_document,
     structure_check,
+    structure_coverage_missing_ids,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
     DEFAULT_INSTRUCTION,
@@ -126,11 +127,17 @@ async def quality_check_node(
 
     structure = extract_structure_from_document(document)
     code_review_payloads = build_code_review_payloads(structure)
+    structure_missing_ids = structure_coverage_missing_ids(
+        document,
+        must_cover_checklist,
+        topic_split=topic_split,
+    )
     optional_structure_check = structure_check(
         structure,
         checklist=must_cover_checklist,
         doc=document,
         topic_split=topic_split,
+        structure_missing_ids=structure_missing_ids,
     )
     structure_checks: list[dict[str, Any]] = []
     if optional_structure_check:
@@ -294,6 +301,7 @@ async def quality_check_node(
         document,
         must_cover_checklist,
         topic_split=topic_split,
+        structure_missing_ids=structure_missing_ids,
     )
 
     overall_status = qc_result["overall_status"]

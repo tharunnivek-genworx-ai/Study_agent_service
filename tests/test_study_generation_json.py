@@ -198,7 +198,7 @@ class TestStudyGenerationJson:
         ]
         result = validate_section_id_coverage(_SAMPLE, checklist)
         assert result.missing_ids == {"mc_2"}
-        assert result.coverage_ratio == 0.5
+        assert result.found_ids == {"mc_1"}
 
     def test_validate_section_id_coverage_uses_topic_split(self):
         checklist = [
@@ -220,7 +220,13 @@ class TestStudyGenerationJson:
         doc = {"sections": [{"id": "ts_1", "heading": "Intro", "content": "x"}]}
         result = validate_section_id_coverage(doc, checklist, topic_split=topic_split)
         assert result.missing_ids == {"ts_2"}
-        assert result.coverage_ratio == 0.5
+        assert result.found_ids == {"ts_1"}
+
+    def test_validate_section_id_coverage_empty_blueprint(self):
+        doc = {"sections": [{"id": "ts_1", "heading": "Intro", "content": "x"}]}
+        result = validate_section_id_coverage(doc, [], topic_split=[])
+        assert result.missing_ids == set()
+        assert result.found_ids == {"ts_1"}
 
     def test_render_vague_improve_response(self):
         doc = {

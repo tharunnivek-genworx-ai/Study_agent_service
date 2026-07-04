@@ -38,7 +38,6 @@ class ClassifiedGenerationOutput:
 class SectionCoverageResult:
     found_ids: set[str]
     missing_ids: set[str]
-    coverage_ratio: float
 
 
 def is_reference_required_response(doc: dict[str, Any]) -> bool:
@@ -308,14 +307,9 @@ def validate_section_id_coverage(
         if section_id is not None and str(section_id).strip():
             found_ids.add(str(section_id).strip())
     missing_ids = required_ids - found_ids
-    if not required_ids:
-        coverage_ratio = 1.0
-    else:
-        coverage_ratio = len(required_ids - missing_ids) / len(required_ids)
     return SectionCoverageResult(
         found_ids=found_ids,
         missing_ids=missing_ids,
-        coverage_ratio=coverage_ratio,
     )
 
 

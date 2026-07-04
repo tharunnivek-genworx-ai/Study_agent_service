@@ -132,12 +132,16 @@ PART 2 — HOW FULL REGENERATION WORKS (CODE PATH)
       [F2] teaching_alignment fail + unmapped_count >= 2
       [F3] det_structure_coverage + >= 40% required sections missing (widespread)
       [F4] >= 40% of required mc_* checklist items failed OR missing
-      [F5] >= 4 distinct failed_section_ids
-      [F6] unmapped_count >= 3
+      [F5] >= 4 distinct failed_section_ids (includes det_* with section_id)
+      [F6] unmapped_count >= 3 — unmappable failures only (LLM checks with empty/
+           invalid section_id, must_cover without resolvable id); det_* block checks
+           route via failed_section_ids (F5), not unmapped_count
 
     SPECIAL (deterministic mode "none"):
       [F7] teaching_alignment is the SOLE failed category
            → full_regeneration even with empty failed_section_ids
+           (_map_failures_to_targets skips teaching_alignment — document-level,
+           no section_id; full regen via qc_feedback is the correct retry channel)
 
     LLM retry_recommendation.mode == "full_regeneration" does NOT upgrade
     section_patch unless one of F1-F6 fires (_reconcile_mode returns deterministic
@@ -190,7 +194,8 @@ CASE A — Teaching-alignment-only full regen [CRITICAL]
 TRIGGER:
   Only teaching_alignment failed (no section-level failures).
   _teaching_alignment_sole_failure → full_regeneration.
-  _map_failures_to_targets SKIPS teaching_alignment → failed_section_ids = [].
+  _map_failures_to_targets SKIPS teaching_alignment → failed_section_ids = []
+  (INTENTIONAL: document-level check; section_patch has no target section).
 
 PIPELINE:
   1. study_agent: LLM writes complete new document
