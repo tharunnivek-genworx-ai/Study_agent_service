@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -15,6 +16,12 @@ from src.api.control.study_agent.nodes.concept_checklist_node import (
     concept_checklist_node,
 )
 from src.api.control.study_agent.nodes.study_agent_node import study_agent_node
+from src.api.core.services.study_agent_services.study_material_service import (
+    _hydration_from_active_version,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.core.frozen_sets import (
+    build_section_hashes,
+)
 from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
     merge_section_patches,
 )
@@ -52,6 +59,7 @@ def _qc_checkpoint_after_section_patch() -> dict:
         "qc_reverify_section_ids": ["s2"],
         "qc_frozen_check_ids": ["c1"],
         "qc_frozen_section_keys": ["s1"],
+        "qc_section_content_hashes": build_section_hashes(document),
         "qc_section_failures": [
             {
                 "section_id": "s2",
@@ -185,3 +193,39 @@ def test_resume_section_patch_uses_checkpoint_failures_and_frozen_sections() -> 
     assert hydrated["qc_section_failures"][0]["section_id"] == "s2"
     assert any(section["id"] == "s1" for section in document["sections"])
     assert any(section["id"] == "s2" for section in document["sections"])
+
+
+def test_db_resume_hydration_prunes_frozen_after_manual_content_edit() -> None:
+    original_doc = {
+        "sections": [
+            {"id": "s1", "heading": "Variables", "content": "Passing section content."},
+            {"id": "s2", "heading": "Loops", "content": "Needs patch."},
+        ]
+    }
+    edited_doc = {
+        "sections": [
+            {"id": "s1", "heading": "Variables", "content": "Mentor edited s1."},
+            {"id": "s2", "heading": "Loops", "content": "Needs patch."},
+        ]
+    }
+    stored_hashes = build_section_hashes(original_doc)
+    active = SimpleNamespace(
+        content=json.dumps(edited_doc),
+        concept_plan={
+            "must_cover_checklist": [
+                {"id": "c1", "concept": "variables", "section_id": "s1"},
+                {"id": "c2", "concept": "loops", "section_id": "s2"},
+            ],
+        },
+        qc_frozen_check_ids=["c1", "c2"],
+        qc_frozen_section_keys=["s1"],
+        qc_section_content_hashes=stored_hashes,
+        qc_result={"overall_status": "fail", "checks": []},
+    )
+
+    hydration, _ = _hydration_from_active_version(active)
+
+    assert "c1" not in hydration.get("qc_frozen_check_ids", [])
+    assert hydration.get("qc_frozen_check_ids") == ["c2"]
+    assert "qc_frozen_section_keys" not in hydration
+    assert hydration["qc_section_content_hashes"] == stored_hashes

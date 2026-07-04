@@ -1,5 +1,16 @@
 # src/api/utils/study_agent_utils/qc/deterministic.py
-"""Deterministic QC extraction from JSON study documents — no LLM involved."""
+"""Deterministic QC extraction and checks — no LLM.
+
+Runs in ``quality_check_node`` phase 1 before Groq verification:
+
+  - ``extract_structure_from_document`` — sections + code artifacts (``code_1``, …)
+  - ``structure_check`` / ``structure_coverage_missing_ids`` — ``det_structure_coverage``
+  - ``block_placement_checks`` (separate module) — ``det_equation_in_content``, etc.
+  - ``attach_code_artifact_ids_from_document`` — map code QC checks to section ids
+
+Deterministic failures with ``section_id`` route to **section_patch** via
+``classify_retry_routing`` (not full regen unless escalation thresholds fire).
+"""
 
 from __future__ import annotations
 

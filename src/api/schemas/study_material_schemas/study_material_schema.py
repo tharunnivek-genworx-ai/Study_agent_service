@@ -352,6 +352,7 @@ class StudyMaterialVersionOut(BaseModel):
     qc_verification_mode: Literal["full", "targeted"] | None = None
     qc_frozen_check_ids: list[str] | None = None
     qc_frozen_section_keys: list[str] | None = None
+    qc_section_content_hashes: dict[str, str] | None = None
     next_llm_retry_at: datetime | None = None
     generation_outcome: ApiGenerationOutcome | None = None
     generation_outcome_detail: dict[str, Any] | None = None

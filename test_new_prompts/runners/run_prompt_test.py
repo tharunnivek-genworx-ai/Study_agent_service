@@ -77,6 +77,8 @@ def _apply_qc_to_state(
         pipeline_state["qc_frozen_check_ids"] = qc_result.frozen_check_ids
     if qc_result.frozen_section_ids is not None:
         pipeline_state["qc_frozen_section_keys"] = qc_result.frozen_section_ids
+    if qc_result.section_content_hashes is not None:
+        pipeline_state["qc_section_content_hashes"] = qc_result.section_content_hashes
 
 
 def _apply_retry_to_state(

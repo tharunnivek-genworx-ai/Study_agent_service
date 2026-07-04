@@ -1,5 +1,32 @@
 # src/api/control/study_agent/nodes/quality_check_node.py
-"""Quality-check node — JSON structure extraction + Groq Llama 70B QC verification."""
+"""LangGraph QC node — deterministic checks + LLM verification + retry routing.
+
+Pipeline position
+-----------------
+``study_agent`` → **quality_check** → (pass) END | (fail) ``study_agent`` retry
+
+Each invocation increments ``qc_attempt`` (max ``MAX_QC_ATTEMPTS``).
+
+Pass flow (two modes)
+---------------------
+**Full QC** (no ``fixed_sections`` in state):
+  1. Deterministic extraction: structure coverage + block placement (``det_*``)
+  2. ``resolve_frozen_for_full_qc`` — hash-gate frozen ids before LLM prompt
+  3. ``run_verification_pass`` — full-document Groq QC
+  4. ``build_final_qc_result`` — merge deterministic + LLM checks
+  5. ``classify_retry_routing`` — section_patch | insert | full_regen | none
+  6. ``refresh_frozen_lineage_after_qc`` — update frozen + section hashes
+
+**Targeted QC** (``fixed_sections`` set after section patch/insert):
+  1. Same deterministic checks on merged document
+  2. ``run_retry_verification_pass`` — only revised sections
+  3. ``merge_targeted_qc_checks`` — keep pass-1 checks for untouched sections
+  4. Same routing + frozen refresh (with prune for reverify section ids)
+
+Outputs (via ``base_qc_return`` + pass/fail fields):
+  - ``qc_result``, ``qc_feedback`` (text, full_regen only), routing fields
+  - ``qc_frozen_check_ids``, ``qc_frozen_section_keys``, ``qc_section_content_hashes``
+"""
 
 from __future__ import annotations
 
@@ -26,7 +53,8 @@ from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
     MAX_QC_ATTEMPTS,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.core.frozen_sets import (
-    accumulate_frozen_sets,
+    refresh_frozen_lineage_after_qc,
+    resolve_frozen_for_full_qc,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
     build_document_outline,
@@ -70,7 +98,13 @@ async def quality_check_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Run JSON structure extraction + Groq Llama 70B QC verification."""
+    """Evaluate generated study material and route failures to the study agent.
+
+    Guards: skips QC when generation did not produce a study document, on terminal
+    LLM failure, or when parsed document is missing.
+
+    See module docstring for full vs targeted pass details.
+    """
     current_attempt = state.get("qc_attempt") or 0
 
     outcome = state.get("generation_outcome")
@@ -125,8 +159,10 @@ async def quality_check_node(
         )
         return result
 
+    # --- Phase 1: deterministic QC (no LLM) ---
     structure = extract_structure_from_document(document)
     code_review_payloads = build_code_review_payloads(structure)
+    # Single coverage computation reused by structure_check and retry_routing.
     structure_missing_ids = structure_coverage_missing_ids(
         document,
         must_cover_checklist,
@@ -172,6 +208,7 @@ async def quality_check_node(
         },
     )
 
+    # --- Phase 2: LLM verification (full or targeted) ---
     fixed_sections = state.get("fixed_sections")
     is_targeted = bool(fixed_sections)
 
@@ -210,13 +247,21 @@ async def quality_check_node(
         )
         verification_mode = "targeted"
     else:
+        # Hash-gate: never pass raw state frozen ids to the LLM prompt.
+        frozen_check_ids, frozen_section_ids = resolve_frozen_for_full_qc(
+            frozen_check_ids=state.get("qc_frozen_check_ids"),
+            frozen_section_ids=state.get("qc_frozen_section_keys"),
+            stored_hashes=state.get("qc_section_content_hashes"),
+            document=document,
+            checklist=must_cover_checklist,
+        )
         verification, verification_meta = await run_verification_pass(
             topic_title=topic_title,
             teaching_instruction=teaching_instruction,
             generated_content=generated_content,
             must_cover_checklist=must_cover_checklist,
-            frozen_check_ids=state.get("qc_frozen_check_ids"),
-            frozen_section_ids=state.get("qc_frozen_section_keys"),
+            frozen_check_ids=frozen_check_ids,
+            frozen_section_ids=frozen_section_ids,
             topic_split=topic_split,
             domain=domain,
         )
@@ -271,6 +316,7 @@ async def quality_check_node(
 
     model_used = verification_meta.get("llm_model_used") or llm_settings.qc_llm_model
 
+    # --- Phase 3: merge checks, score, route, refresh frozen lineage ---
     if is_targeted and prior_qc_result is not None:
         merged_checks = merge_targeted_qc_checks(
             prior_qc_result,
@@ -341,14 +387,17 @@ async def quality_check_node(
         },
     )
 
-    frozen_check_ids: list[str] | None = None
-    frozen_section_ids: list[str] | None = None
-    if not is_targeted:
-        frozen_check_ids, frozen_section_ids = accumulate_frozen_sets(
+    frozen_check_ids, frozen_section_ids, section_content_hashes = (
+        refresh_frozen_lineage_after_qc(
             qc_result.get("checks", []),
-            state.get("qc_frozen_check_ids"),
-            state.get("qc_frozen_section_keys"),
+            existing_check_ids=state.get("qc_frozen_check_ids"),
+            existing_section_ids=state.get("qc_frozen_section_keys"),
+            document=document,
+            checklist=must_cover_checklist,
+            touched_section_ids=reverify_section_ids if is_targeted else None,
+            reverify_checklist_ids=missing_checklist_ids if is_targeted else None,
         )
+    )
 
     if passed:
         return {
@@ -366,6 +415,7 @@ async def quality_check_node(
                 verification_mode=verification_mode,
                 frozen_check_ids=frozen_check_ids,
                 frozen_section_ids=frozen_section_ids,
+                section_content_hashes=section_content_hashes,
                 fixed_sections=None,
                 routing_clear=True,
             ),
@@ -396,6 +446,7 @@ async def quality_check_node(
             verification_mode=verification_mode,
             frozen_check_ids=frozen_check_ids,
             frozen_section_ids=frozen_section_ids,
+            section_content_hashes=section_content_hashes,
             fixed_sections=None,
             routing=routing,
         ),

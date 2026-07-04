@@ -1,4 +1,20 @@
-"""Merge targeted QC verification checks into a prior full QC result."""
+"""Merge targeted QC verification checks into a prior full QC result.
+
+Pipeline role (pass 2 QC)
+-------------------------
+After ``study_agent`` patches sections, ``quality_check_node`` runs targeted
+LLM verification on revised sections only. ``merge_targeted_qc_checks`` combines:
+
+  - **Kept** checks from pass 1 for sections *outside* reverify scope
+  - **New** checks from the targeted verification pass
+
+Complements frozen-set lineage (id-level skip on full QC) and
+``targeted_merge`` eviction rules (check-level replace on reverify).
+
+``check_targets_reverify`` decides which prior checks are stale after a patch.
+Deterministic ``det_*`` checks are re-run on the full merged document each QC
+visit (not merged through this module).
+"""
 
 from __future__ import annotations
 

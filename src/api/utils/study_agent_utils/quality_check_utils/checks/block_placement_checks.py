@@ -1,4 +1,17 @@
-"""Deterministic document_coherence checks for code/formula block placement."""
+"""Deterministic document_coherence checks for code/formula block placement.
+
+Emits ``det_*`` checks (category ``document_coherence``) consumed by
+``build_final_qc_result`` and routed via ``classify_retry_routing``:
+
+  - ``det_equation_in_content`` — math in prose (section or subsection content)
+  - ``det_math_in_code_block``, ``det_pseudocode_in_code_block``, …
+
+Evidence for subsection hits uses ``_location_evidence``:
+``Section 'Heading', subsection 'Subheading': detail`` — parsed by
+``section_rework_prompt._subsection_remediation_targets`` for targeted fixes.
+
+Default routing: **section_patch** (not full regen) when only a few sections fail.
+"""
 
 from __future__ import annotations
 

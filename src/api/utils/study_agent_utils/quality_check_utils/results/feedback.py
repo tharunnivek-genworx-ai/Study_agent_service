@@ -1,4 +1,15 @@
-"""QC feedback formatting for generator retries."""
+"""QC feedback formatting for generator retries.
+
+Two feedback channels (by design):
+  - **section_patch / insert:** structured ``qc_section_failures`` →
+    ``section_rework_prompt`` (``<sections_to_fix>`` JSON). Not this module.
+  - **full_regeneration:** flat text from ``format_qc_feedback`` →
+    ``<quality_check_feedback>`` in ``generation_prompt``.
+
+``format_qc_feedback`` is also stored as ``qc_feedback`` in graph state on QC fail
+and re-derived from DB ``qc_result`` for improve/regenerate hydration. It is
+**not** logged as its own field in ``05_qc_result.json`` artifacts.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +17,18 @@ from typing import Any
 
 
 def format_qc_feedback(qc_result: dict[str, Any]) -> str:
-    """Build actionable feedback for the writer retry prompt."""
+    """Build flat text feedback for full-regeneration retry prompts.
+
+    Formats failed checks (severity, category, id, question, evidence, hint),
+    optional ``issues`` list, and ``corrective_instructions`` from the QC LLM.
+
+    Args:
+        qc_result: ``build_final_qc_result`` output (uses ``failed_checks`` or
+            derives from ``checks`` where ``passed`` is false).
+
+    Returns:
+        Multi-paragraph string for ``state["qc_feedback"]`` / ``<quality_check_feedback>``.
+    """
     parts: list[str] = []
 
     failed_checks: list[dict[str, Any]] = qc_result.get("failed_checks", [])

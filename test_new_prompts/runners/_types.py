@@ -51,6 +51,7 @@ class QCRunResult:
     verification_mode: str | None = None
     frozen_check_ids: list[str] | None = None
     frozen_section_ids: list[str] | None = None
+    section_content_hashes: dict[str, str] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 

@@ -1,4 +1,11 @@
-"""Resume entry routing for study material generation graphs."""
+"""Resume entry routing for study material generation graphs.
+
+Handles cross-request checkpoint resume and within-run routing after
+``study_agent`` and ``quality_check``.
+
+After QC fail with retry mode in ``SECTION_RETRY_MODES`` or ``full_regeneration``,
+``resolve_resume_next_node`` returns ``study_agent`` to continue the QC loop.
+"""
 
 from __future__ import annotations
 
