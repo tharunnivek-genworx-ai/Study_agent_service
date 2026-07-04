@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from src.api.utils.study_agent_utils.quality_check_utils.results.retry_routing import (
     _coerce_llm_recommendation_mode,
     _reconcile_mode,
@@ -174,20 +176,54 @@ class TestClassifyRetryRouting:
     def test_must_cover_maps_checklist_item_to_section_id(self):
         checklist = [
             {
-                "id": "mc_5",
+                "id": "mc_1",
+                "section_id": "ts_1",
+                "concept": "Intro",
+                "requirement": "Cover intro",
+                "priority": "required",
+            },
+            {
+                "id": "mc_2",
+                "section_id": "ts_2",
+                "concept": "Basics",
+                "requirement": "Cover basics",
+                "priority": "required",
+            },
+            {
+                "id": "mc_3",
                 "section_id": "ts_3",
                 "concept": "Examples",
                 "requirement": "Cover examples",
                 "priority": "required",
             },
+            {
+                "id": "mc_4",
+                "section_id": "ts_4",
+                "concept": "Advanced",
+                "requirement": "Cover advanced",
+                "priority": "required",
+            },
+            {
+                "id": "mc_5",
+                "section_id": "ts_5",
+                "concept": "Pitfalls",
+                "requirement": "Cover pitfalls",
+                "priority": "required",
+            },
         ]
-        document = _doc({"id": "ts_3", "heading": "Examples", "content": "thin"})
+        document = _doc(
+            {"id": "ts_1", "heading": "Intro", "content": "intro"},
+            {"id": "ts_2", "heading": "Basics", "content": "basics"},
+            {"id": "ts_3", "heading": "Examples", "content": "thin"},
+            {"id": "ts_4", "heading": "Advanced", "content": "advanced"},
+            {"id": "ts_5", "heading": "Pitfalls", "content": "pitfalls"},
+        )
         qc_result = {
             "checks": [
                 _check(
-                    id="mc_5",
+                    id="mc_3",
                     category="must_cover",
-                    checklist_id="mc_5",
+                    checklist_id="mc_3",
                     severity="critical",
                 )
             ]
@@ -258,6 +294,183 @@ class TestClassifyRetryRouting:
         assert result.mode == "full_regeneration"
         assert "required checklist sections missing or failed" in result.rationale
 
+    def test_topic_split_section_failures_trigger_full_regen_via_coverage_rule(self):
+        """ts_* failures must map to mc_* for the 40% required-coverage rule."""
+        checklist = [
+            {
+                "id": "mc_1",
+                "section_id": "ts_1",
+                "concept": "Limits",
+                "requirement": "Cover limits",
+                "priority": "required",
+            },
+            {
+                "id": "mc_2",
+                "section_id": "ts_2",
+                "concept": "Derivatives",
+                "requirement": "Cover derivatives",
+                "priority": "required",
+            },
+            {
+                "id": "mc_3",
+                "section_id": "ts_3",
+                "concept": "Power rule",
+                "requirement": "Derive power rule",
+                "priority": "required",
+            },
+            {
+                "id": "mc_4",
+                "section_id": "ts_4",
+                "concept": "Integrals",
+                "requirement": "Cover integrals",
+                "priority": "required",
+            },
+            {
+                "id": "mc_5",
+                "section_id": "ts_5",
+                "concept": "Optimization",
+                "requirement": "Cover optimization",
+                "priority": "required",
+            },
+            {
+                "id": "mc_6",
+                "section_id": "ts_6",
+                "concept": "Diff eq",
+                "requirement": "Cover differential equations",
+                "priority": "required",
+            },
+        ]
+        topic_split = [
+            {"id": f"ts_{i}", "heading": f"Section {i}"} for i in range(1, 7)
+        ]
+        document = _doc(
+            *[
+                {"id": f"ts_{i}", "heading": f"Section {i}", "content": "content"}
+                for i in range(1, 7)
+            ]
+        )
+        qc_result = {
+            "checks": [
+                _check(
+                    id="mc_1",
+                    category="must_cover",
+                    checklist_id="mc_1",
+                    passed=True,
+                    section_id="ts_1",
+                ),
+                _check(
+                    id="mc_2",
+                    category="must_cover",
+                    checklist_id="mc_2",
+                    passed=True,
+                    section_id="ts_2",
+                ),
+                _check(
+                    id="mc_3",
+                    category="must_cover",
+                    checklist_id="mc_3",
+                    passed=True,
+                    section_id="ts_3",
+                ),
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_1",
+                    evidence="Prose contains display-math patterns",
+                ),
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_2",
+                    evidence="Prose contains display-math patterns",
+                ),
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_3",
+                    evidence="Prose contains display-math patterns",
+                ),
+            ]
+        }
+        result = classify_retry_routing(
+            qc_result, document, checklist, topic_split=topic_split
+        )
+        assert result.mode == "full_regeneration"
+        assert "required checklist sections missing or failed" in result.rationale
+        assert result.failed_section_ids == ["ts_1", "ts_2", "ts_3"]
+
+    def test_topic_split_two_section_failures_stay_section_patch(self):
+        """Under 40% of required items affected → section_patch, not full regen."""
+        checklist = [
+            {
+                "id": "mc_1",
+                "section_id": "ts_1",
+                "concept": "Intro",
+                "requirement": "Cover intro",
+                "priority": "required",
+            },
+            {
+                "id": "mc_2",
+                "section_id": "ts_2",
+                "concept": "Basics",
+                "requirement": "Cover basics",
+                "priority": "required",
+            },
+            {
+                "id": "mc_3",
+                "section_id": "ts_3",
+                "concept": "Examples",
+                "requirement": "Cover examples",
+                "priority": "required",
+            },
+            {
+                "id": "mc_4",
+                "section_id": "ts_4",
+                "concept": "Advanced",
+                "requirement": "Cover advanced",
+                "priority": "required",
+            },
+            {
+                "id": "mc_5",
+                "section_id": "ts_5",
+                "concept": "Pitfalls",
+                "requirement": "Cover pitfalls",
+                "priority": "required",
+            },
+            {
+                "id": "mc_6",
+                "section_id": "ts_6",
+                "concept": "Summary",
+                "requirement": "Cover summary",
+                "priority": "required",
+            },
+        ]
+        document = _doc(
+            {"id": "ts_1", "heading": "Intro", "content": "intro"},
+            {"id": "ts_2", "heading": "Basics", "content": "basics"},
+            {"id": "ts_3", "heading": "Examples", "content": "examples"},
+            {"id": "ts_4", "heading": "Advanced", "content": "advanced"},
+            {"id": "ts_5", "heading": "Pitfalls", "content": "pitfalls"},
+            {"id": "ts_6", "heading": "Summary", "content": "summary"},
+        )
+        qc_result = {
+            "checks": [
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_1",
+                ),
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_2",
+                ),
+            ]
+        }
+        result = classify_retry_routing(qc_result, document, checklist)
+        assert result.mode == "section_patch"
+        assert result.failed_section_ids == ["ts_1", "ts_2"]
+
     def test_structure_coverage_widespread_triggers_full_regeneration(self):
         document = _doc({"id": "mc_1", "heading": "Intro", "content": "intro"})
         qc_result = {
@@ -274,6 +487,37 @@ class TestClassifyRetryRouting:
         result = classify_retry_routing(qc_result, document, _CHECKLIST)
         assert result.mode == "full_regeneration"
         assert "det_structure_coverage" in result.rationale
+
+    def test_structure_coverage_reuses_precomputed_missing_ids(self):
+        """Passing structure_missing_ids avoids redundant coverage validation."""
+        document = _doc({"id": "mc_1", "heading": "Intro", "content": "intro"})
+        qc_result = {
+            "checks": [
+                {
+                    "id": "det_structure_coverage",
+                    "category": "structure",
+                    "passed": False,
+                    "severity": "critical",
+                    "evidence": "Missing section ids: mc_2, mc_3, mc_4, mc_5",
+                }
+            ]
+        }
+        precomputed = {"mc_2", "mc_3", "mc_4", "mc_5"}
+        with patch(
+            "src.api.utils.study_agent_utils.quality_check_utils.results.retry_routing.validate_section_id_coverage"
+        ) as mock_validate:
+            result = classify_retry_routing(
+                qc_result,
+                document,
+                _CHECKLIST,
+                structure_missing_ids=precomputed,
+            )
+        mock_validate.assert_not_called()
+        assert result.mode == "full_regeneration"
+        assert (
+            "mc_6" in result.missing_checklist_ids
+            or "mc_2" in result.missing_checklist_ids
+        )
 
     def test_isolated_structure_missing_section_uses_section_insert(self):
         checklist = [

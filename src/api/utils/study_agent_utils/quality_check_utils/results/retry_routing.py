@@ -9,6 +9,9 @@ from src.api.schemas.qc_schemas import (
     RetryMode,
     RetryRoutingResult,
 )
+from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
+    checklist_section_id,
+)
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     expected_document_section_ids,
     normalize_checklist_id,
@@ -113,6 +116,38 @@ def _checklist_ids_for_missing_sections(
     return checklist_ids
 
 
+def _checklist_ids_for_failed_sections(
+    checklist: list[dict[str, Any]],
+    failed_section_ids: set[str],
+) -> set[str]:
+    """Map document section ids (e.g. ts_*) to checklist ids (e.g. mc_*)."""
+    if not failed_section_ids:
+        return set()
+    return {
+        str(item.get("id", "")).strip()
+        for item in checklist
+        if str(item.get("id", "")).strip()
+        and checklist_section_id(item) in failed_section_ids
+    }
+
+
+def _affected_required_checklist_ids(
+    *,
+    checklist: list[dict[str, Any]],
+    failed_section_ids: set[str],
+    missing_checklist_ids: set[str],
+) -> set[str]:
+    """Required checklist ids that are missing or tied to a failed section."""
+    required = _required_checklist_ids(checklist)
+    if not required:
+        return set()
+    affected = set(missing_checklist_ids)
+    affected |= _checklist_ids_for_failed_sections(checklist, failed_section_ids)
+    # Legacy pipelines use mc_* as both checklist id and document section id.
+    affected |= failed_section_ids
+    return affected & required
+
+
 def _missing_section_ids_from_structure(
     *,
     document: dict[str, Any],
@@ -125,12 +160,56 @@ def _missing_section_ids_from_structure(
     return set(coverage.missing_ids)
 
 
+def _resolve_structure_missing_ids(
+    *,
+    document: dict[str, Any],
+    checklist: list[dict[str, Any]],
+    topic_split: list[dict[str, Any]] | None = None,
+    structure_missing_ids: set[str] | frozenset[str] | None = None,
+) -> set[str]:
+    if structure_missing_ids is not None:
+        return set(structure_missing_ids)
+    return _missing_section_ids_from_structure(
+        document=document,
+        checklist=checklist,
+        topic_split=topic_split,
+    )
+
+
+def _enrich_missing_checklist_from_structure(
+    missing_checklist_ids: set[str],
+    structure_missing: set[str],
+    *,
+    checklist: list[dict[str, Any]],
+    topic_split: list[dict[str, Any]] | None = None,
+) -> None:
+    """Map missing document section ids to checklist or topic_split insert targets."""
+    for section_id in structure_missing:
+        mapped = _checklist_ids_for_missing_sections({section_id}, checklist)
+        if mapped:
+            missing_checklist_ids |= mapped
+        elif topic_split and any(
+            str(entry.get("id", "")).strip() == section_id
+            for entry in topic_split
+            if isinstance(entry, dict)
+        ):
+            missing_checklist_ids.add(section_id)
+
+
 def _map_failures_to_targets(
     failed: list[dict[str, Any]],
     *,
     document: dict[str, Any],
     checklist: list[dict[str, Any]],
-) -> tuple[set[str], set[str], dict[str, list[dict[str, str]]], int]:
+    topic_split: list[dict[str, Any]] | None = None,
+    structure_missing_ids: set[str] | frozenset[str] | None = None,
+) -> tuple[
+    set[str],
+    set[str],
+    dict[str, list[dict[str, str]]],
+    int,
+    set[str] | None,
+]:
     section_ids = _document_section_ids(document)
     failed_section_ids: set[str] = set()
     missing_checklist_ids: set[str] = set()
@@ -159,8 +238,10 @@ def _map_failures_to_targets(
             continue
 
         if category == "teaching_alignment":
+            # Document-level check — no section_id; F1/F2/F7 → full_regeneration.
             continue
 
+        # det_structure_coverage has no section_id; handled after the loop.
         if (
             category == "structure"
             and str(check.get("id", "")) == "det_structure_coverage"
@@ -176,11 +257,27 @@ def _map_failures_to_targets(
         else:
             unmapped_count += 1
 
+    structure_missing: set[str] | None = None
+    if _structure_coverage_failed(failed):
+        structure_missing = _resolve_structure_missing_ids(
+            document=document,
+            checklist=checklist,
+            topic_split=topic_split,
+            structure_missing_ids=structure_missing_ids,
+        )
+        _enrich_missing_checklist_from_structure(
+            missing_checklist_ids,
+            structure_missing,
+            checklist=checklist,
+            topic_split=topic_split,
+        )
+
     return (
         failed_section_ids,
         missing_checklist_ids,
         failures_by_section,
         unmapped_count,
+        structure_missing,
     )
 
 
@@ -205,29 +302,19 @@ def _teaching_alignment_critical_fail(failed: list[dict[str, Any]]) -> bool:
 
 
 def _structure_coverage_widespread(
-    failed: list[dict[str, Any]],
+    structure_missing: set[str],
     *,
-    document: dict[str, Any],
     checklist: list[dict[str, Any]],
     topic_split: list[dict[str, Any]] | None = None,
 ) -> bool:
-    for check in failed:
-        if str(check.get("id", "")) != "det_structure_coverage":
-            continue
-        if check.get("passed", True):
-            continue
-        coverage = validate_section_id_coverage(
-            document, checklist, topic_split=topic_split
-        )
-        missing_count = len(coverage.missing_ids)
-        if missing_count <= 1:
-            return False
-        required = expected_document_section_ids(checklist, topic_split)
-        if not required:
-            return True
-        gap_ratio = missing_count / len(required)
-        return gap_ratio >= _WIDESPREAD_STRUCTURE_GAP_THRESHOLD
-    return False
+    missing_count = len(structure_missing)
+    if missing_count <= 1:
+        return False
+    required = expected_document_section_ids(checklist, topic_split)
+    if not required:
+        return True
+    gap_ratio = missing_count / len(required)
+    return gap_ratio >= _WIDESPREAD_STRUCTURE_GAP_THRESHOLD
 
 
 def _should_force_full_regeneration(
@@ -235,10 +322,10 @@ def _should_force_full_regeneration(
     failed: list[dict[str, Any]],
     failed_section_ids: set[str],
     missing_checklist_ids: set[str],
-    document: dict[str, Any],
     checklist: list[dict[str, Any]],
     topic_split: list[dict[str, Any]] | None = None,
     unmapped_count: int,
+    structure_missing: set[str] | None = None,
 ) -> tuple[bool, str]:
     if _teaching_alignment_critical_fail(failed):
         return True, "teaching_alignment critical failure"
@@ -246,9 +333,8 @@ def _should_force_full_regeneration(
     if _teaching_alignment_failed(failed) and unmapped_count >= 2:
         return True, "teaching_alignment failure with widespread unmapped checks"
 
-    if _structure_coverage_widespread(
-        failed,
-        document=document,
+    if structure_missing is not None and _structure_coverage_widespread(
+        structure_missing,
         checklist=checklist,
         topic_split=topic_split,
     ):
@@ -256,8 +342,11 @@ def _should_force_full_regeneration(
 
     required = _required_checklist_ids(checklist)
     if required and not _is_structure_only_failure(failed):
-        affected_required = failed_section_ids | missing_checklist_ids
-        affected_required &= required
+        affected_required = _affected_required_checklist_ids(
+            checklist=checklist,
+            failed_section_ids=failed_section_ids,
+            missing_checklist_ids=missing_checklist_ids,
+        )
         ratio = len(affected_required) / len(required)
         if ratio >= _FULL_REGEN_COVERAGE_THRESHOLD:
             return (
@@ -268,6 +357,7 @@ def _should_force_full_regeneration(
     if len(failed_section_ids) >= _FULL_REGEN_FAILED_SECTION_THRESHOLD:
         return True, f"{len(failed_section_ids)} distinct failed section ids"
 
+    # F6: unmappable failures (LLM checks without valid section_id, etc.), not det_*.
     if unmapped_count >= 3:
         return True, f"{unmapped_count} unmapped failed checks"
 
@@ -370,6 +460,7 @@ def classify_retry_routing(
     checklist: list[dict[str, Any]] | None = None,
     *,
     topic_split: list[dict[str, Any]] | None = None,
+    structure_missing_ids: set[str] | frozenset[str] | None = None,
 ) -> RetryRoutingResult:
     """Map QC failures to a retry mode and per-section rework targets."""
     checklist = checklist or []
@@ -384,35 +475,28 @@ def classify_retry_routing(
             rationale="no failed checks",
         )
 
-    failed_section_ids, missing_checklist_ids, failures_by_section, unmapped_count = (
-        _map_failures_to_targets(failed, document=document, checklist=checklist)
+    (
+        failed_section_ids,
+        missing_checklist_ids,
+        failures_by_section,
+        unmapped_count,
+        structure_missing,
+    ) = _map_failures_to_targets(
+        failed,
+        document=document,
+        checklist=checklist,
+        topic_split=topic_split,
+        structure_missing_ids=structure_missing_ids,
     )
-
-    if _structure_coverage_failed(failed):
-        structure_missing = _missing_section_ids_from_structure(
-            document=document,
-            checklist=checklist,
-            topic_split=topic_split,
-        )
-        for section_id in structure_missing:
-            mapped = _checklist_ids_for_missing_sections({section_id}, checklist)
-            if mapped:
-                missing_checklist_ids |= mapped
-            elif topic_split and any(
-                str(entry.get("id", "")).strip() == section_id
-                for entry in topic_split
-                if isinstance(entry, dict)
-            ):
-                missing_checklist_ids.add(section_id)
 
     force_full_regen, force_reason = _should_force_full_regeneration(
         failed=failed,
         failed_section_ids=failed_section_ids,
         missing_checklist_ids=missing_checklist_ids,
-        document=document,
         checklist=checklist,
         topic_split=topic_split,
         unmapped_count=unmapped_count,
+        structure_missing=structure_missing,
     )
 
     deterministic = _deterministic_mode(
