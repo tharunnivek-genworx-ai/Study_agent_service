@@ -1,4 +1,18 @@
-"""Helpers for study agent graph nodes — parsing, logging, orchestration, and state."""
+"""Helpers for study agent graph nodes — parsing, logging, orchestration, and state.
+
+Pipeline role
+-------------
+Shared utilities used by ``study_agent_node`` and ``quality_check_node``:
+
+- **Prompt blocks:** topic_split, must_cover, domain, QC feedback (full regen)
+- **Section retry:** ``run_section_retry`` orchestrates patch → merge → insert
+- **QC state packaging:** ``base_qc_return``, ``routing_state``
+- **Targeted QC scope:** ``reverify_section_ids_for_targeted``, ``checklist_for_reverify``
+
+Retry modes (from ``classify_retry_routing``):
+  ``section_patch`` | ``section_insert`` | ``section_patch_then_insert`` |
+  ``full_regeneration`` | ``none``
+"""
 
 from __future__ import annotations
 
@@ -39,6 +53,10 @@ from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge
     insert_sections,
     merge_section_patches,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
+    build_study_retry_input_audit,
+    should_attach_study_retry_audit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +71,7 @@ BuildMessages = Callable[[StudyMaterialGraphState, dict[str, Any]], tuple[str, s
 
 
 def teaching_instruction(state: StudyMaterialGraphState) -> str:
+    """Effective teaching mandate for generator/QC prompts (resolver output or default)."""
     return state.get("effective_instruction") or DEFAULT_INSTRUCTION
 
 
@@ -72,10 +91,12 @@ def reference_text(state: StudyMaterialGraphState) -> str:
 
 
 def qc_retry_mode(state: StudyMaterialGraphState) -> str:
+    """Current retry mode from last QC fail; ``none`` when QC passed or not yet run."""
     return state.get("qc_retry_mode") or "none"
 
 
 def groq_api_keys_configured() -> bool:
+    """False when no Groq keys are available — nodes return early with error."""
     return bool(llm_settings.groq_api_keys())
 
 
@@ -174,7 +195,14 @@ def build_domain_block(state: StudyMaterialGraphState) -> str:
 
 
 def build_qc_feedback_block(state: StudyMaterialGraphState) -> str:
-    """Build QC retry prompt block for a full-document JSON rewrite."""
+    """Build ``<quality_check_feedback>`` block for **full_regeneration** only.
+
+    Section patch retries use structured ``qc_section_failures`` in
+    ``section_rework_prompt`` instead of this flat text block.
+
+    Includes: formatted ``qc_feedback`` and previous draft JSON.
+    Empty when ``qc_retry_mode`` is not ``full_regeneration`` or ``qc_attempt`` is 0.
+    """
     if qc_retry_mode(state) != "full_regeneration":
         return ""
 
@@ -192,13 +220,6 @@ def build_qc_feedback_block(state: StudyMaterialGraphState) -> str:
     if previous_doc:
         canonical = try_canonicalize_generation_json(previous_doc) or previous_doc
         parts.append(f"\n<previous_draft_json>\n{canonical}\n</previous_draft_json>")
-
-    if has_reference_material(state):
-        ref_text = reference_text(state)
-        if ref_text:
-            parts.append("\n<reference_material_for_correction>")
-            parts.append(ref_text)
-            parts.append("</reference_material_for_correction>")
 
     return "\n".join(parts)
 
@@ -219,12 +240,14 @@ def build_previous_failed_qc_feedback_block(state: StudyMaterialGraphState) -> s
 
 
 def format_reference_block(has_reference: bool, reference_text_value: str) -> str:
+    """Wrap reference text for generator user messages."""
     return generation_prompt.format_reference_user_block(
         reference_text_value, has_reference=has_reference
     )
 
 
 def normalize_generator_output(raw: str) -> str:
+    """Strip leading ``---`` and canonicalize study document JSON from LLM output."""
     cleaned = raw.strip()
     if cleaned.startswith("---"):
         cleaned = cleaned[3:].strip()
@@ -232,6 +255,7 @@ def normalize_generator_output(raw: str) -> str:
 
 
 def parse_current_document(state: StudyMaterialGraphState) -> dict[str, Any] | None:
+    """Parse ``generated_content`` from state into a document dict, or None."""
     raw = (state.get("generated_content") or "").strip()
     if not raw:
         return None
@@ -389,6 +413,11 @@ def log_study_output(
     if fixed_sections is not None:
         payload["fixed_sections"] = fixed_sections
         payload["qc_retry_mode"] = generation_type
+    if should_attach_study_retry_audit(state):
+        retry_audit = build_study_retry_input_audit(state)
+        payload["retry_audit"] = retry_audit
+        payload["triggered_by_qc_attempt"] = retry_audit["triggered_by_qc_attempt"]
+        payload["retry_feedback_channel"] = retry_audit["retry_feedback_channel"]
     log_agent_output(
         topic_title=state.get("node_title") or str(state.get("node_id")),
         run_id=run_id,
@@ -460,6 +489,24 @@ async def run_section_retry(
     build_patch_messages: BuildMessages,
     build_insert_messages: BuildMessages,
 ) -> dict[str, Any]:
+    """Orchestrate surgical QC retries: section patch, insert, or both.
+
+    Called from ``study_agent_node`` when ``qc_retry_mode`` is in
+    ``SECTION_RETRY_MODES``.
+
+    Flow:
+    1. **section_patch** (or first half of patch_then_insert): LLM rewrites failed
+       sections → ``merge_section_patches`` replaces whole section dicts by id.
+    2. **section_insert**: LLM writes missing sections → ``insert_sections``.
+    3. Sets ``fixed_sections`` for targeted QC on the next ``quality_check`` visit.
+
+    Note: patch replaces **entire** section JSON per id — not line-level edits.
+    Unfailed sections in the document are never sent to the LLM or merge step.
+
+    Returns:
+        Graph state update with ``generated_content``, ``fixed_sections``,
+        ``generation_parsed_document``, etc.
+    """
     document = parse_current_document(state)
     if not document:
         return {"error": "Cannot run section retry without a valid generated document."}
@@ -561,6 +608,14 @@ def routing_state(
     *,
     clear: bool = False,
 ) -> dict[str, Any]:
+    """Map ``RetryRoutingResult`` into graph state fields for the study agent.
+
+    On QC **pass** (``clear=True``): resets ``qc_retry_mode`` to ``none`` and
+    clears reverify/missing/failure bundles.
+
+    On QC **fail**: writes ``qc_retry_mode``, ``qc_reverify_section_ids``,
+    ``qc_missing_checklist_ids``, ``qc_section_failures`` for ``study_agent_node``.
+    """
     if clear:
         return {
             "qc_retry_mode": "none",
@@ -592,6 +647,7 @@ def checklist_for_reverify(
     section_ids: list[str],
     missing_checklist_ids: list[str],
 ) -> list[dict[str, Any]]:
+    """Filter must_cover checklist to items in targeted QC scope only."""
     target_ids = set(section_ids) | set(missing_checklist_ids)
     if not target_ids:
         return checklist
@@ -603,6 +659,11 @@ def checklist_for_reverify(
 
 
 def reverify_section_ids_for_targeted(state: StudyMaterialGraphState) -> list[str]:
+    """Section ids to re-verify on targeted QC pass 2.
+
+    Union of ``qc_reverify_section_ids`` (from routing) and ids from
+    ``fixed_sections`` (newly inserted sections must be verified too).
+    """
     section_ids = list(state.get("qc_reverify_section_ids") or [])
     fixed_sections = state.get("fixed_sections") or []
     for section in fixed_sections:
@@ -624,10 +685,23 @@ def base_qc_return(
     verification_mode: str,
     frozen_check_ids: list[str] | None = None,
     frozen_section_ids: list[str] | None = None,
+    section_content_hashes: dict[str, str] | None = None,
     fixed_sections: list[dict[str, Any]] | None = None,
     routing: RetryRoutingResult | None = None,
     routing_clear: bool = False,
 ) -> dict[str, Any]:
+    """Package shared QC state fields returned by ``quality_check_node``.
+
+    Does **not** include pass/fail-specific keys (``qc_passed``, ``qc_feedback``,
+    ``qc_failed_permanently``) — the node adds those.
+
+    Always spreads ``routing_state`` (clear on pass, routing on fail).
+    Frozen fields and ``qc_section_content_hashes`` are written when provided
+    (both full and targeted passes after P3/P4).
+
+    ``fixed_sections`` is always cleared here (``None``) so patch output from
+    study_agent is consumed once; study_agent sets it on retry.
+    """
     payload: dict[str, Any] = {
         "generated_content": generated_content,
         "qc_result": qc_result,
@@ -643,6 +717,8 @@ def base_qc_return(
         payload["qc_frozen_check_ids"] = frozen_check_ids
     if frozen_section_ids is not None:
         payload["qc_frozen_section_keys"] = frozen_section_ids
+    if section_content_hashes is not None:
+        payload["qc_section_content_hashes"] = section_content_hashes
     return payload
 
 

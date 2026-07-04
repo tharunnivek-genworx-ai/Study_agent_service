@@ -1,5 +1,15 @@
 # src/api/utils/study_agent_utils/qc/scoring.py
-"""Pure-Python QC status derivation — no LLM involved."""
+"""Pure-Python QC status and score derivation — no LLM.
+
+``quality_check_node`` uses:
+  - ``derive_overall_status`` → pass | warn | fail
+  - ``derive_scores`` / ``public_scores`` → dimension scores 1–10
+  - ``is_qc_deliverable`` → whether graph may END despite ``warn`` status
+  - ``extract_failed_checks`` → input to ``classify_retry_routing``
+
+Score buckets: ``section_depth`` bundles must_cover + document_coherence (includes
+deterministic ``det_*`` checks with category document_coherence).
+"""
 
 from __future__ import annotations
 

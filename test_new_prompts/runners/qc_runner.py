@@ -27,13 +27,17 @@ from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
     MAX_QC_ATTEMPTS,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.core.frozen_sets import (
-    accumulate_frozen_sets,
+    refresh_frozen_lineage_after_qc,
+    resolve_frozen_for_full_qc,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
     build_document_outline,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.document.targeted_merge import (
     merge_targeted_qc_checks,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
+    build_retry_routing_snapshot,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
     format_qc_feedback,
@@ -201,6 +205,13 @@ async def run_qc_attempt(
         )
         verification_mode = "targeted"
     else:
+        frozen_check_ids, frozen_section_ids = resolve_frozen_for_full_qc(
+            frozen_check_ids=pipeline_state.get("qc_frozen_check_ids"),
+            frozen_section_ids=pipeline_state.get("qc_frozen_section_keys"),
+            stored_hashes=pipeline_state.get("qc_section_content_hashes"),
+            document=document,
+            checklist=must_cover_checklist,
+        )
         system_prompt = qc_verification_prompt.build_system_prompt(
             domain=domain or None
         )
@@ -209,8 +220,8 @@ async def run_qc_attempt(
             teaching_instruction=inputs.effective_instruction,
             generated_content=canonical_content,
             must_cover_checklist=must_cover_checklist,
-            frozen_check_ids=pipeline_state.get("qc_frozen_check_ids"),
-            frozen_section_ids=pipeline_state.get("qc_frozen_section_keys"),
+            frozen_check_ids=frozen_check_ids,
+            frozen_section_ids=frozen_section_ids,
             topic_split=topic_split,
             domain=domain,
             max_doc_chars=llm_settings.qc_document_max_chars,
@@ -230,8 +241,8 @@ async def run_qc_attempt(
                 "teaching_instruction": inputs.effective_instruction,
                 "generated_content": canonical_content,
                 "must_cover_checklist": must_cover_checklist,
-                "frozen_check_ids": pipeline_state.get("qc_frozen_check_ids"),
-                "frozen_section_ids": pipeline_state.get("qc_frozen_section_keys"),
+                "frozen_check_ids": frozen_check_ids,
+                "frozen_section_ids": frozen_section_ids,
                 "topic_split": topic_split,
                 "domain": domain,
                 "max_doc_chars": llm_settings.qc_document_max_chars,
@@ -323,13 +334,7 @@ async def run_qc_attempt(
     )
     write_json(
         output_dir / "retry_routing.json",
-        {
-            "mode": routing.mode,
-            "failed_section_ids": routing.failed_section_ids,
-            "missing_checklist_ids": routing.missing_checklist_ids,
-            "section_failures": routing.section_failures,
-            "rationale": routing.rationale,
-        },
+        build_retry_routing_snapshot(routing),
     )
 
     passed = is_qc_deliverable(
@@ -342,14 +347,17 @@ async def run_qc_attempt(
     permanently_failed = attempt >= MAX_QC_ATTEMPTS and not passed
     feedback = "" if passed else format_qc_feedback(qc_result)
 
-    frozen_check_ids: list[str] | None = None
-    frozen_section_ids: list[str] | None = None
-    if not is_targeted:
-        frozen_check_ids, frozen_section_ids = accumulate_frozen_sets(
+    frozen_check_ids, frozen_section_ids, section_content_hashes = (
+        refresh_frozen_lineage_after_qc(
             qc_result.get("checks", []),
-            pipeline_state.get("qc_frozen_check_ids"),
-            pipeline_state.get("qc_frozen_section_keys"),
+            existing_check_ids=pipeline_state.get("qc_frozen_check_ids"),
+            existing_section_ids=pipeline_state.get("qc_frozen_section_keys"),
+            document=document,
+            checklist=must_cover_checklist,
+            touched_section_ids=reverify_section_ids if is_targeted else None,
+            reverify_checklist_ids=missing_checklist_ids if is_targeted else None,
         )
+    )
 
     failed_count = len(qc_result.get("failed_checks") or [])
     check_count = len(qc_result.get("checks") or [])
@@ -366,6 +374,7 @@ async def run_qc_attempt(
             "checks_failed": failed_count,
             "frozen_check_ids": frozen_check_ids,
             "frozen_section_ids": frozen_section_ids,
+            "section_content_hashes": section_content_hashes,
         }
     )
     write_json(output_dir / "metadata.json", metadata)
@@ -394,5 +403,6 @@ async def run_qc_attempt(
         verification_mode=verification_mode,
         frozen_check_ids=frozen_check_ids,
         frozen_section_ids=frozen_section_ids,
+        section_content_hashes=section_content_hashes,
         metadata=metadata,
     )

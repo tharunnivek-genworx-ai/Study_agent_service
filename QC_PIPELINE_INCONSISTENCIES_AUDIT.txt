@@ -3,8 +3,11 @@ STUDY AGENT QC PIPELINE — INCONSISTENCIES & LOGICAL ISSUES AUDIT
 ================================================================================
 Generated from end-to-end chat analysis (retry routing, frozen sets, QC feedback,
 section patch, deterministic checks, subsection remediation, full regen).
-Date: 2026-07-01
+Date: 2026-07-01 | Status pass: 2026-07-04 (P3/P4 content lineage + routing fixes)
 Scope: study_agent_service QC → retry → study_generator loop
+
+Legend: [FIXED] code change | [FIXED — INTENTIONAL] by design, documented |
+[OPEN] not addressed | [BY DESIGN] accepted tradeoff
 
 This document lists design tensions, redundancies, missing guarantees, and
 logical gaps identified while tracing the pipeline. Items are grouped by area.
@@ -81,22 +84,32 @@ fragility | [LOW] documentation/observability gap
 2. FROZEN SETS vs TARGETED MERGE (frozen_sets.py, targeted_merge.py)
 ================================================================================
 
-2.1 [MED] Frozen must_cover does not protect patched sections on pass 2
+2.1 [MED] Frozen must_cover does not protect patched sections on pass 2 [OPEN — BY DESIGN]
     qc_frozen_check_ids omits passed mc_* from FULL QC prompt only.
     On targeted QC (pass 2), targeted_merge EVICTS must_cover for any section in
     reverify_section_ids — even if mc_N was frozen after passing pass 1.
     "Frozen" implies "don't re-check" but patched sections are always re-checked.
-    Naming/mental model mismatch.
+    Naming/mental model mismatch. P3/P4 fixes stale *full QC skips* after content
+    change; targeted re-verify of patched sections remains intentional.
 
 
-2.2 [LOW] No frozen list for document_coherence / teaching_alignment
+2.2 [LOW] No frozen list for document_coherence / teaching_alignment [BY DESIGN]
     By design, but means full QC always re-runs document_coherence LLM check and
     all content_accuracy claims. Only must_cover and code get prompt optimization.
 
 2.3 [MED] accumulate_frozen_sets skipped on targeted QC pass
-    frozen state from pass 1 persists unchanged on pass 2 (None passed to
-    base_qc_return). Correct for preserving pass-1 freezes, but if pass 2 passes
-    new must_cover items, they are NOT added to frozen sets until another full pass.
+    [FIXED 2026-07-04] refresh_frozen_lineage_after_qc runs on every QC exit (full
+    and targeted): prune_frozen_for_sections on targeted, accumulate, rebuild
+    qc_section_content_hashes. quality_check_node + test qc_runner both use shared
+    helpers (resolve_frozen_for_full_qc / refresh_frozen_lineage_after_qc).
+
+2.4 [HIGH] Frozen ids trusted after content rewrite (regen / patch / resume)
+    [FIXED 2026-07-04 — P3/P4] Section content lineage: qc_section_content_hashes
+    (JSONB qcsectioncontenthashes) stores SHA-256 baseline per section id at QC
+    exit. effective_frozen_sets / resolve_frozen_for_full_qc gates full QC entry;
+    study_material_service resume hydration re-validates frozen against active.content.
+    NULL legacy hashes → empty effective frozen (safe full QC). Resolves stale-skip
+    cases in FULL_REGEN_FROZEN_SETS Cases A,B,C,D,G,H,I,K. See frozen_sets.py.
 
 ================================================================================
 3. QC FEEDBACK & ARTIFACT LOGGING
@@ -204,8 +217,11 @@ fragility | [LOW] documentation/observability gap
     section_depth score alongside LLM must_cover — can be confusing in artifacts.
 
 6.2 [LOW] det_structure_coverage handled differently from other det_* in routing
-    Skipped in mapper; enriched into missing_checklist_ids separately.
-    Other det_* checks use generic section_id → failed_section_ids path.
+    [FIXED 2026-07-03 — INTENTIONAL] Skipped in generic mapper loop because it has
+    no section_id; resolved via _resolve_structure_missing_ids +
+    _enrich_missing_checklist_from_structure inside _map_failures_to_targets (1.2).
+    Other det_* use section_id → failed_section_ids. Different target type
+    (missing_checklist_ids / section_insert), not a bug.
 
 6.3 [MED] Deterministic failures default to section_patch, not full_regen
     det_equation_in_content on 3 sections → section_patch (threshold is 4+).
@@ -223,7 +239,9 @@ fragility | [LOW] documentation/observability gap
 7.1 [MED] ts_* (topic_split) vs mc_* (checklist) dual id system
     topic_split drives section ids (ts_1, ts_2); checklist items have mc_* with
     section_id pointing to ts_*. Routing uses both sets in different rules.
-    Full-regen 40% rule intersects with mc_* only — ts_* failures don't count.
+    [FIXED 2026-07-03 for F4] Full-regen 40% rule now maps ts_* failed_section_ids
+    to mc_* via _checklist_ids_for_failed_sections before ratio (audit 1.3).
+    Dual id model remains; other rules (F5 failed_section_ids count) use ts_* directly.
 
 7.2 [MED] must_cover fail with empty section_id
     Benzene example: mc_4 failed with section_id "" → goes to missing_checklist_ids
@@ -231,9 +249,9 @@ fragility | [LOW] documentation/observability gap
     Ambiguous when checklist item exists but section mapping is missing.
 
 7.3 [LOW] fixed_sections cleared by base_qc_return on every QC exit
-    QC node always passes fixed_sections=None in base_qc_return. study_agent sets
-    fixed_sections; QC reads them on next entry for targeted pass. Correct cycle
-    but easy to misread — fixed_sections is not QC output.
+    [FIXED — INTENTIONAL / DOCUMENTED] QC node always passes fixed_sections=None in
+    base_qc_return. study_agent sets fixed_sections; QC reads them on next entry for
+    targeted pass. Correct cycle — fixed_sections is study_agent output, not QC output.
 
 ================================================================================
 8. FULL REGENERATION vs SECTION PATCH
@@ -290,11 +308,14 @@ fragility | [LOW] documentation/observability gap
 
 11.1 Add subsection_heading to QcCheckItem schema and deterministic checks
 11.2 [FIXED 2026-07-03] Pass structure_missing into _structure_coverage_widespread (dedupe)
-11.3 Log qc_feedback and qc_section_failures in qc_result artifact
+11.3 [FIXED 2026-07-04] Log qc_feedback and qc_section_failures in qc_result artifact
+     via build_qc_result_log_payload / build_qc_retry_context (qc_retry_audit.py).
+     Study generator artifacts include retry_audit cross-link fields.
 11.4 section_rework verbatim rules for subsections not in subsections_to_fix
 11.5 Mechanical subsection merge instead of full section replace for det_* failures
 11.6 Branch section_rework prompt on failure category (deterministic vs depth vs accuracy)
-11.7 Include ts_* in full-regen affected ratio or use failed_section_ids count only
+11.7 [FIXED 2026-07-03] Include ts_* in full-regen affected ratio — see 1.3 / 7.1
+     (_checklist_ids_for_failed_sections maps ts_* → mc_* before F4 40% rule)
 11.8 Freeze content_accuracy passes by section_id (optional, for full QC cost)
 
 ================================================================================
@@ -316,6 +337,38 @@ Benzene run_20260625_161039:
 Integrals run_20260628_231755:
   - det_equation_in_content WITH subsection in evidence
   - subsection remediation blocks would activate
+
+================================================================================
+13. DOCUMENTATION & FIX SUMMARY (2026-07-04)
+================================================================================
+
+FIXED IN CODE (verified in repo):
+  §1  Routing: 1.1–1.7 (dedupe, structure mapper, F4 ts→mc, coverage_ratio removed,
+      reconcile policy, F6 scope, teaching_alignment document-level)
+  §2  Frozen: 2.3 targeted refresh; 2.4 P3/P4 content hashes + hash gate + DB/resume
+  §6  6.2 det_structure_coverage routing (intentional split)
+  §7  7.1 F4 ts→mc mapping
+  §11 11.2 structure_missing dedupe; 11.7 F4 ts→mc
+
+STILL OPEN (not in scope of recent fixes):
+  §2  2.1 frozen/targeted naming mismatch (by design)
+  §3  3.1–3.5 QC feedback / artifact logging gaps
+  §4  4.1–4.5 section patch scope / preservation
+  §5  5.1–5.6 subsection handling
+  §6  6.1, 6.3, 6.4 category/naming/threshold notes
+  §7  7.2 empty section_id routing ambiguity
+  §8  8.1–8.3 full regen vs patch design tensions
+  §9  9.1–9.3 targeted QC consistency
+  §10 10.1–10.3 observability gaps
+  §11 11.1, 11.3–11.6, 11.8 prompt/schema improvements
+
+Pipeline modules include expanded docstrings covering retry routing, frozen lineage
+(P3/P4), full vs targeted QC, feedback channels, merge semantics, deterministic checks.
+
+See: frozen_sets.py, quality_check_node.py, node_helpers.py, study_agent_node.py,
+retry_routing.py, document_merge.py, targeted_merge.py, section_rework_prompt.py,
+FULL_REGEN_FROZEN_SETS_EDGE_CASES.txt, Identity_service migration
+d0e1f2a3b4c5_add_qc_section_content_hashes.py.
 
 ================================================================================
 END OF AUDIT

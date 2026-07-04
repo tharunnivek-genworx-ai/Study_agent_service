@@ -1,5 +1,27 @@
 # src/api/utils/study_agent_utils/qc/retry_routing.py
-"""Classify QC failures into section-level retry routing modes."""
+"""Map QC failures to study-agent retry mode and per-section rework targets.
+
+Pipeline position
+-----------------
+Called at end of ``quality_check_node`` after ``build_final_qc_result``.
+
+Outputs ``RetryRoutingResult`` consumed by ``routing_state`` → graph fields:
+  - ``qc_retry_mode``: section_patch | section_insert | patch_then_insert |
+    full_regeneration | none
+  - ``qc_reverify_section_ids``: document section ids to patch
+  - ``qc_missing_checklist_ids``: checklist/topic_split ids needing insert
+  - ``qc_section_failures``: bundles for ``section_rework_prompt`` (not flat qc_feedback)
+
+Routing rules (simplified):
+  - ``must_cover`` fail + section exists → patch; no section → insert
+  - ``det_*`` / ``content_accuracy`` / etc. with ``section_id`` → patch
+  - ``det_structure_coverage`` → insert targets (handled outside generic mapper)
+  - ``teaching_alignment`` → may force full_regeneration (no section_id)
+  - ≥4 failed sections or ≥40% required checklist affected → full_regeneration
+
+Deterministic ``det_equation_in_content`` failures default to **section_patch**
+(not full regen) unless escalation thresholds fire.
+"""
 
 from __future__ import annotations
 
@@ -210,6 +232,19 @@ def _map_failures_to_targets(
     int,
     set[str] | None,
 ]:
+    """Map each failed check to patch targets, insert targets, or unmapped.
+
+    Category handling:
+      - ``must_cover``: resolve ``mc_*`` → section id; patch if section exists
+        else ``missing_checklist_ids``
+      - ``teaching_alignment``: skipped here (document-level; full regen rules)
+      - ``det_structure_coverage``: skipped here; enriched after loop
+      - All others with ``section_id`` (``det_*``, ``content_accuracy``, …): patch
+
+    Returns:
+        ``(failed_section_ids, missing_checklist_ids, failures_by_section,
+        unmapped_count, structure_missing)``
+    """
     section_ids = _document_section_ids(document)
     failed_section_ids: set[str] = set()
     missing_checklist_ids: set[str] = set()
@@ -327,6 +362,12 @@ def _should_force_full_regeneration(
     unmapped_count: int,
     structure_missing: set[str] | None = None,
 ) -> tuple[bool, str]:
+    """Escalate from section_patch to full_regeneration when failures are widespread.
+
+    Triggers include: critical teaching_alignment, widespread structure gaps,
+    ≥40% required checklist items affected, ≥4 distinct failed section ids,
+    or ≥3 unmapped checks (LLM checks without valid section_id).
+    """
     if _teaching_alignment_critical_fail(failed):
         return True, "teaching_alignment critical failure"
 
@@ -369,6 +410,13 @@ def _deterministic_mode(
     failed_section_ids: set[str],
     missing_checklist_ids: set[str],
 ) -> RetryMode:
+    """Choose retry mode from patch vs insert targets (before LLM reconcile).
+
+    - failed sections only → ``section_patch``
+    - missing sections only → ``section_insert``
+    - both → ``section_patch_then_insert``
+    - neither → ``none``
+    """
     has_failed = bool(failed_section_ids)
     has_missing = bool(missing_checklist_ids)
     if not has_failed and not has_missing:
@@ -440,6 +488,12 @@ def _build_section_failures(
     failures_by_section: dict[str, list[dict[str, str]]],
     sections: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """Build ``qc_section_failures`` bundles for ``section_rework_prompt``.
+
+    Each bundle: ``section_id``, ``heading``, ``current_section_json``, ``failures``
+    where each failure has ``category``, ``evidence``, ``corrective_hint`` only
+    (no question/severity — those stay in ``qc_result`` artifacts).
+    """
     bundles: list[dict[str, Any]] = []
     for section_id in failed_section_ids:
         section = sections.get(section_id, {})
@@ -462,7 +516,20 @@ def classify_retry_routing(
     topic_split: list[dict[str, Any]] | None = None,
     structure_missing_ids: set[str] | frozenset[str] | None = None,
 ) -> RetryRoutingResult:
-    """Map QC failures to a retry mode and per-section rework targets."""
+    """Map QC failures to retry mode and per-section rework targets.
+
+    Args:
+        qc_result: Output of ``build_final_qc_result`` (checks + failed_checks).
+        document: Parsed study document under evaluation.
+        checklist: ``must_cover_checklist`` for id normalization and insert mapping.
+        topic_split: Blueprint section ids (``ts_*``) for structure enrichment.
+        structure_missing_ids: Precomputed missing section ids from QC node
+            (avoids redundant ``validate_section_id_coverage`` when provided).
+
+    Returns:
+        ``RetryRoutingResult`` with mode, failed/missing ids, ``section_failures``
+        bundles (category + evidence + corrective_hint per section), and rationale.
+    """
     checklist = checklist or []
     failed = _failed_checks(qc_result)
 

@@ -1,4 +1,18 @@
-"""Merge structure + verification checks into a final QC result."""
+"""Merge structure + verification checks into a final QC result.
+
+Pipeline role
+-------------
+Called once per ``quality_check_node`` visit after LLM verification (full or
+targeted). Combines:
+
+  1. **Deterministic checks** — ``det_structure_coverage``, ``det_equation_in_content``,
+     etc. from ``structure_checks``
+  2. **LLM prose checks** — must_cover, content_accuracy, teaching_alignment, ...
+  3. **LLM code checks** — code_quality, stack_fidelity (with section_id attachment)
+
+Then derives ``overall_status``, dimension ``scores``, ``failed_checks``, and
+passes through LLM ``retry_recommendation`` for ``classify_retry_routing``.
+"""
 
 from __future__ import annotations
 
@@ -80,7 +94,22 @@ def build_final_qc_result(
     checklist: list[dict[str, Any]],
     model: str | None,
 ) -> dict[str, Any]:
-    """Merge structure + verification checks and derive status/scores."""
+    """Merge deterministic + LLM checks and derive QC report fields.
+
+    Normalizes must_cover checklist/section ids, attaches code artifact section
+    ids, deduplicates document-level teaching_alignment/document_coherence checks,
+    and computes scores via ``derive_scores`` / ``derive_overall_status``.
+
+    Args:
+        verification: Raw LLM verification JSON (or targeted pass output).
+        structure_checks: Deterministic checks from QC node phase 1.
+        document: Parsed study document (for code block → section mapping).
+        checklist: must_cover checklist for id normalization.
+        model: QC LLM model id for metadata.
+
+    Returns:
+        Dict written to ``state["qc_result"]`` and ``05_qc_result.json`` artifact.
+    """
     prose_checks, code_checks = split_verification_checks(verification)
     prose_checks = normalize_checklist_ids(prose_checks, checklist)
     prose_checks = normalize_must_cover_section_ids(prose_checks, checklist)

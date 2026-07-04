@@ -92,6 +92,7 @@ class StudyMaterialVersion(Base):
     qc_verification_mode = Column("qcverificationmode", String(20), nullable=True)
     qc_frozen_check_ids = Column("qcfrozencheckids", JSONB, nullable=True)
     qc_frozen_section_keys = Column("qcfrozensectionkeys", JSONB, nullable=True)
+    qc_section_content_hashes = Column("qcsectioncontenthashes", JSONB, nullable=True)
     next_llm_retry_at = Column(
         "nextllmretryat", TIMESTAMP(timezone=True), nullable=True
     )

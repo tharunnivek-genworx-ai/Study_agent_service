@@ -1,5 +1,18 @@
 # src/api/control/study_agent/graph/graph.py
-"""LangGraph definition for study material generation."""
+"""LangGraph definition for study material generation.
+
+Graph flow (happy path):
+
+    entry_router → resolver → [llamaparse] → concept_checklist
+        → study_agent ⇄ quality_check → END
+QC retry loop:
+    quality_check (fail) → study_agent (patch|insert|full_regen) → quality_check
+
+Resume: ``entry_router`` uses ``resolve_resume_next_node`` to skip completed nodes.
+
+See ``resume_router.route_after_study_agent`` and ``_route_after_quality_check``
+for conditional edge logic.
+"""
 
 from __future__ import annotations
 

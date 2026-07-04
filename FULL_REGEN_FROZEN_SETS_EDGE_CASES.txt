@@ -59,12 +59,13 @@ Full regen selective preserve (study_agent_node.py + document_merge.py):
   Sections IN rewrite set  → take from new LLM output
   Sections NOT in rewrite  → keep bytes from previous_document
 
-Core invariant frozen sets ASSUME but do NOT enforce:
-  "If an id is frozen, the underlying section/checklist content is unchanged
-   since it last passed QC."
+Core invariant frozen sets enforce (P3/P4, 2026-07-04):
+  A frozen id is valid iff hash(section) == qc_section_content_hashes[section_id]
+  for the section mapped to that checklist/section id. effective_frozen_sets gates
+  full QC entry and resume hydration; refresh_frozen_lineage_after_qc updates
+  baselines on every QC exit (full and targeted).
 
-There is NO content hash, NO invalidation on rewrite, NO merge of prior passed
-checks into full QC qc_result. When the invariant breaks, behavior is wrong.
+Legacy rows with NULL qc_section_content_hashes → empty effective frozen (safe full QC).
 
 ================================================================================
 PART 1 — HOW FROZEN SETS ARE BUILT AND CONSUMED (CODE PATH)
@@ -113,14 +114,13 @@ PART 1 — HOW FROZEN SETS ARE BUILT AND CONSUMED (CODE PATH)
       you infer from frozen_* state fields.
 
 1.4 State persistence (base_qc_return in node_helpers.py)
-    frozen ids written to state only when accumulate_frozen_sets returned
-    non-None (full QC only).
-    On targeted QC fail, frozen fields omitted from return → LangGraph keeps
-    prior values in state.
+    frozen ids + qc_section_content_hashes written on every QC exit via
+    refresh_frozen_lineage_after_qc (full and targeted).
 
-    DB hydration (study_material_service.py ~379):
-      qc_frozen_check_ids and qc_frozen_section_keys restored on resume.
-      No section content hashes — cannot validate on resume.
+    DB hydration (study_material_service.py):
+      qc_frozen_check_ids, qc_frozen_section_keys, qc_section_content_hashes
+      restored on resume. effective_frozen_sets prunes stale ids when content
+      drifted; NULL legacy hashes → no frozen hydration (safe full QC).
 
 ================================================================================
 PART 2 — HOW FULL REGENERATION WORKS (CODE PATH)
@@ -188,7 +188,7 @@ PART 3 — EDGE CASE CATALOG (FROZEN + FULL REGEN)
 ================================================================================
 
 ------------------------------------------------------------------------------
-CASE A — Teaching-alignment-only full regen [CRITICAL]
+CASE A — Teaching-alignment-only full regen [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -203,10 +203,13 @@ PIPELINE:
   3. Entire previous document replaced by LLM output
   4. Next QC: FULL mode with qc_frozen_* from attempt 1 STILL IN STATE
 
-FAILURE:
+FAILURE (was):
   Frozen checklist ids and frozen section ids refer to content from the OLD
   document. New document may differ everywhere. QC prompt SKIPS re-verification
   of frozen items on content that no longer exists.
+
+FIX: effective_frozen_sets hash gate drops all stale ids when whole-doc replace
+changes section bytes; refresh_frozen_lineage_after_qc rebuilds baselines on QC exit.
 
 EXAMPLE:
   Attempt 1: s1,s2,s3 all pass must_cover and code → frozen mc_1,mc_2,mc_3 + s1,s2
@@ -219,7 +222,7 @@ FILES: retry_routing.py (161-162, 300-322), study_agent_node.py (327-332),
        quality_check_node.py (219-220), frozen_sets.py
 
 ------------------------------------------------------------------------------
-CASE B — Mixed failure in same section [CRITICAL]
+CASE B — Mixed failure in same section [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -232,7 +235,7 @@ FULL REGEN PATH:
   frozen mc_2 still in state (must_cover passed on OLD s2)
   frozen s2 may also be in qc_frozen_section_keys if code passed on OLD s2
 
-FAILURE:
+FAILURE (was):
   Next full QC skips mc_2 checklist evaluation and s2 code checks while s2
   body is new text.
 
@@ -250,7 +253,7 @@ FILES: frozen_sets.py (must_cover vs CODE_CATEGORIES split),
        retry_routing.py (_map_failures_to_targets)
 
 ------------------------------------------------------------------------------
-CASE C — Patch then full regen preserve chain [HIGH]
+CASE C — Patch then full regen preserve chain [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -271,11 +274,14 @@ FAILURE:
 
   accumulate_frozen_sets never ran after patch pass to refresh state.
 
+FIX: refresh_frozen_lineage_after_qc runs on targeted QC exit; hash gate
+invalidates checklist ids when patched section bytes change.
+
 FILES: quality_check_node.py (346-351 skip on targeted),
        study_agent_node.py (merge preserve)
 
 ------------------------------------------------------------------------------
-CASE D — Selective full regen (happy path) [OK if invariant holds]
+CASE D — Selective full regen (happy path) [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -290,9 +296,12 @@ CONDITION FOR CORRECTNESS:
   Frozen ids must ONLY cover sections/checklist items NOT in rewrite set.
   TODAY: no code removes frozen entries for rewritten section ids.
 
-FAILURE if:
+FAILURE if (was):
   mc_2 tied to s2, s2 in rewrite set, mc_2 still frozen from attempt 1 pass
   → same as Case B.
+
+FIX: hash mismatch on rewritten sections drops stale frozen ids; preserved
+merge sections keep matching hashes and remain frozen.
 
 FILES: document_merge.py, frozen_sets.py (no pruning)
 
@@ -339,7 +348,7 @@ FAILURE:
 FILES: qc_verification_prompt.py (325-330)
 
 ------------------------------------------------------------------------------
-CASE G — Frozen must_cover vs targeted reverify contradiction [MED]
+CASE G — Frozen must_cover vs targeted reverify contradiction [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -351,16 +360,19 @@ PIPELINE:
   merge_targeted_qc_checks EVICTS prior mc_2 pass (check_targets_reverify)
   frozen qc_frozen_check_ids still contains mc_2 in graph state
 
-FAILURE:
+FAILURE (was):
   Mental model clash: "frozen" means skip on full QC, but patched sections
   always re-verified on targeted QC regardless of freeze.
   State field qc_frozen_check_ids stale relative to targeted merge outcome.
+
+FIX: targeted QC exit runs prune_frozen_for_sections + refresh_frozen_lineage_after_qc;
+hash gate on next full QC drops any remaining stale ids.
 
 FILES: targeted_merge.py (check_targets_reverify),
        frozen_sets.py, quality_check_node.py
 
 ------------------------------------------------------------------------------
-CASE H — accumulate_frozen_sets never shrinks [MED]
+CASE H — accumulate_frozen_sets never shrinks [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -372,13 +384,16 @@ PIPELINE:
   accumulate_frozen_sets only ADDS passed ids; never removes stale entries.
   No pruning against qc_reverify_section_ids or rewrite_section_ids.
 
-FAILURE:
+FAILURE (was):
   Frozen set monotonically grows; stale ids persist across regen cycles.
+
+FIX: prune_frozen_for_sections on targeted exit + effective_frozen_sets hash gate
+on full QC entry and resume; refresh rebuilds baselines after every QC pass.
 
 FILES: frozen_sets.py (lines 18-34)
 
 ------------------------------------------------------------------------------
-CASE I — Resume from DB with frozen ids [HIGH]
+CASE I — Resume from DB with frozen ids [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 TRIGGER:
@@ -390,33 +405,45 @@ PIPELINE:
   If generated_content changed between checkpoint and resume (or manual edit),
   frozen ids point at unverified content.
 
-FAILURE:
+FAILURE (was):
   Cross-request stale frozen state with no validation gate.
+
+FIX: qc_section_content_hashes persisted; _hydration_from_active_version uses
+effective_frozen_sets against active.content; NULL legacy hashes → empty frozen.
 
 FILES: study_material_service.py (~379-382), study_material_versions DB columns
 
 ------------------------------------------------------------------------------
-CASE J — Full regen 40% rule vs ts_* section ids [MED]
+CASE J — Full regen 40% rule vs ts_* section ids [MED] [FIXED 2026-07-03]
 ------------------------------------------------------------------------------
 
 TRIGGER:
   topic_split uses ts_1, ts_2, ts_3; checklist uses mc_* with section_id → ts_*
   Multiple ts_* sections fail deterministic checks; all mc_* pass.
 
-PIPELINE:
+PRIOR BUG:
   failed_section_ids = {ts_1, ts_2, ts_3}
   affected_required = (failed_section_ids | missing) & required_mc_ids
-  If mc ids don't overlap ts ids in the intersection, 40% rule may NOT fire.
-  May get section_patch (3 sections) instead of full_regeneration.
+  Intersection was EMPTY (ts_* ≠ mc_*) → F4 (40% rule) did not fire → section_patch
+  instead of full_regeneration when many sections failed.
 
-FAILURE:
-  Not a frozen-set bug directly, but affects when full regen + merge + frozen
-  path activates vs section patch path (which uses targeted QC, no frozen update).
+FIX (retry_routing.py):
+  _affected_required_checklist_ids() maps failed ts_* → mc_* via
+  _checklist_ids_for_failed_sections() + checklist_section_id() before the 40%
+  ratio. Legacy mc_*-as-section-id pipelines still work via union with
+  failed_section_ids. Test: test_topic_split_section_failures_trigger_full_regen_via_coverage_rule.
 
-FILES: retry_routing.py (257-266), QC_PIPELINE_INCONSISTENCIES_AUDIT 1.3, 7.1
+REMAINING (by design, not bug):
+  Under 40% affected (e.g. 2/6 required sections) → section_patch still correct.
+  Dual id model (ts_* vs mc_*) remains; only F4 mapping was broken.
+  Section_patch path frozen refresh → see P3/P4 (Cases C/G), not this routing fix.
+
+FILES: retry_routing.py (_checklist_ids_for_failed_sections,
+       _affected_required_checklist_ids, _should_force_full_regeneration F4),
+       QC_PIPELINE_INCONSISTENCIES_AUDIT 1.3 [FIXED], 7.1 (F4 portion fixed)
 
 ------------------------------------------------------------------------------
-CASE K — Empty rewrite + frozen after widespread prior pass [CRITICAL variant]
+CASE K — Empty rewrite + frozen after widespread prior pass [FIXED 2026-07-04]
 ------------------------------------------------------------------------------
 
 Same as Case A but can also occur if:
@@ -500,8 +527,8 @@ frozen sets grown when:
 PART 6 — ROOT CAUSES (WHY THESE FAILURES EXIST)
 ================================================================================
 
-RC1  Frozen ids are ACCUMULATED state, not DERIVED from content lineage.
-     No hash of section JSON; no invalidation on rewrite/patch/regen.
+RC1  [RESOLVED P3/P4] Frozen ids now tied to section content hashes;
+     effective_frozen_sets invalidates on rewrite/patch/regen; resume validates.
 
 RC2  Full QC uses PROMPT SKIPPING instead of MERGE (unlike targeted QC).
      Skipped checks disappear from qc_result; no mechanical guarantee.
@@ -512,23 +539,21 @@ RC3  Full regen has SPLIT semantics: LLM asked for whole doc; merge preserves
 RC4  Targeted and full paths don't share one "verification scope" model.
      targeted_merge has stale eviction; frozen_sets has no equivalent.
 
-RC5  teaching_alignment routes to full_regeneration with empty rewrite set,
-     producing whole-doc replace while frozen state carries over.
+RC5  [RESOLVED P3/P4] teaching_alignment full_regen with empty rewrite set
+     no longer carries stale frozen ids — all section hashes change on replace.
 
-RC6  accumulate_frozen_sets only unions; never prunes on qc_reverify_section_ids.
+RC6  [RESOLVED P3/P4] refresh_frozen_lineage_after_qc prunes on targeted exit
+     and rebuilds hashes; effective_frozen_sets prunes on full QC entry/resume.
 
 ================================================================================
-PART 7 — RECOMMENDED FIX DIRECTION (NOT IMPLEMENTED)
+PART 7 — FIX STATUS (2026-07-04)
 ================================================================================
 
-For implementers — see prior chat for full design. Minimal fix order:
-
-  P0  Clear ALL frozen ids when full_regen runs without merge (Case A, K)
-  P1  prune_frozen_sets(rewrite_section_ids, fixed_section_ids, checklist)
-      before run_verification_pass
-  P2  merge_incremental_qc_checks on full path (like targeted_merge)
-  P3  qc_section_content_hashes + touched_section_ids from study_agent
-  P4  Persist hashes; validate on resume
+  P0  [SUPERSEDED] Clear ALL frozen ids on empty rewrite — covered by hash gate
+  P1  [SUPERSEDED] prune by rewrite_section_ids — covered by hash mismatch
+  P2  merge_incremental_qc_checks on full path (like targeted_merge) — NOT DONE
+  P3  [IMPLEMENTED] qc_section_content_hashes + effective_frozen_sets gate
+  P4  [IMPLEMENTED] Persist hashes; validate on resume via effective_frozen_sets
 
 ================================================================================
 PART 8 — KEY FILE REFERENCE

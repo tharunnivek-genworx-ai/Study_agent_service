@@ -1,5 +1,20 @@
 # src/api/control/study_agent/nodes/study_agent_node.py
-"""Generate, regenerate, or improve study material using Groq Llama 70B."""
+"""LangGraph study generator node — create, retry, improve, or regenerate material.
+
+Pipeline position
+-----------------
+``concept_checklist`` → **study_agent** → ``quality_check``
+
+Retry branches (``qc_retry_mode`` from last QC fail):
+  - ``section_patch*`` → ``run_section_retry`` + ``section_rework_prompt``
+  - ``full_regeneration`` → ``generation_prompt`` + ``<quality_check_feedback>``
+  - ``none`` + mode ``generate`` → initial full document generation
+  - mode ``improve`` / ``regenerate`` → mentor-driven prompts (separate from QC loop)
+
+After full regen, ``merge_full_regeneration_preserving_passing`` may splice passing
+sections from the previous draft (sections not in ``qc_reverify_section_ids``).
+Section content hashes (P3/P4) invalidate stale frozen skips when bytes change.
+"""
 
 from __future__ import annotations
 
@@ -36,7 +51,14 @@ logger = logging.getLogger(__name__)
 
 
 def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
-    """Return system prompt and user message for a JSON study document response."""
+    """Build system + user prompts for full-document generation paths.
+
+    Uses ``generation_prompt`` when ``qc_retry_mode == full_regeneration`` or
+    ``generation_mode == generate``. Otherwise improve/regenerate mentor prompts.
+
+    QC feedback: only ``build_qc_feedback_block`` (flat text) for full_regen;
+    section patch uses ``_build_section_patch_messages`` instead.
+    """
     retry_mode = helpers.qc_retry_mode(state)
     mode = state.get("generation_mode") or "generate"
     teaching_instruction = helpers.teaching_instruction(state)
@@ -117,6 +139,11 @@ def _build_section_patch_messages(
     state: StudyMaterialGraphState,
     document: dict[str, Any],
 ) -> tuple[str, str]:
+    """Prompts for ``section_patch`` — rewrites failed sections only.
+
+    Pulls ``qc_section_failures`` (structured bundles from ``classify_retry_routing``)
+    into ``section_rework_prompt`` with ``<sections_to_fix>`` JSON.
+    """
     has_reference = helpers.has_reference_material(state)
     reference_block = section_rework_prompt.format_reference_block(
         helpers.reference_text(state),
@@ -152,6 +179,11 @@ def _build_section_insert_messages(
     state: StudyMaterialGraphState,
     document: dict[str, Any],
 ) -> tuple[str, str]:
+    """Prompts for ``section_insert`` — writes missing checklist/topic_split sections.
+
+    Targets ``qc_missing_checklist_ids`` from routing (structure gaps or must_cover
+    items with no matching document section).
+    """
     missing_ids = set(state.get("qc_missing_checklist_ids") or [])
     checklist = state.get("must_cover_checklist") or []
     topic_split = state.get("topic_split") or []
@@ -263,6 +295,12 @@ async def study_agent_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
+    """Generate or revise study material JSON via Groq.
+
+    Dispatches to ``run_section_retry`` for surgical QC retries, else full
+    document generation/improve/regenerate. Classifies output via
+    ``classify_generation_output`` (study_document | reference_required | malformed).
+    """
     if not helpers.groq_api_keys_configured():
         return {"error": "No GROQ API keys are configured."}
 

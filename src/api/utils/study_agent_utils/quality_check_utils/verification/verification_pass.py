@@ -1,4 +1,13 @@
-"""Unified Groq Llama 70B QC verification pass over prose and code categories."""
+"""Unified Groq QC verification passes (full document vs targeted retry).
+
+Wrappers around ``run_llm_verification_pass`` with study-specific prompts:
+
+  - ``run_verification_pass`` — pass 1 full QC; receives hash-gated frozen ids
+  - ``run_retry_verification_pass`` — pass 2 targeted QC on ``fixed_sections`` only
+
+Frozen checklist/section ids are filtered upstream in ``quality_check_node`` via
+``resolve_frozen_for_full_qc`` before calling full verification.
+"""
 
 from __future__ import annotations
 

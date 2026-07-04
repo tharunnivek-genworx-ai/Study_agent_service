@@ -35,6 +35,7 @@ def make_pipeline_state(
         "qc_result": None,
         "qc_frozen_check_ids": [],
         "qc_frozen_section_keys": [],
+        "qc_section_content_hashes": {},
         "fixed_sections": None,
     }
     state.update(extra)

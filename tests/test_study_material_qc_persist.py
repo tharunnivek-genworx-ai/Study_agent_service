@@ -24,6 +24,9 @@ from src.api.core.services.study_agent_services.study_material_service import (
 from src.api.data.repositories.study_agent_repositories.study_material_repository import (
     StudyMaterialRepository,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.core.frozen_sets import (
+    build_section_hashes,
+)
 
 
 def test_resolve_qc_result_persists_on_qc_pass() -> None:
@@ -115,15 +118,25 @@ def test_build_concept_plan_from_graph() -> None:
 
 
 def test_hydration_from_active_version_uses_concept_plan() -> None:
+    document = {
+        "sections": [
+            {"id": "intro", "heading": "Intro", "content": "Intro content."},
+        ]
+    }
+    section_hashes = build_section_hashes(document)
     active = SimpleNamespace(
+        content=json.dumps(document),
         concept_plan={
             "domain": "STEM",
             "topic_split": [{"section_id": "intro"}],
-            "must_cover_checklist": [{"id": "c1", "concept": "variables"}],
+            "must_cover_checklist": [
+                {"id": "c1", "concept": "variables", "section_id": "intro"}
+            ],
         },
         checklist_llm_model_used="llama-3.3-70b-versatile",
         qc_frozen_check_ids=["c1"],
         qc_frozen_section_keys=["intro"],
+        qc_section_content_hashes=section_hashes,
         qc_result={
             "overall_status": "warn",
             "checks": [
@@ -143,11 +156,67 @@ def test_hydration_from_active_version_uses_concept_plan() -> None:
     hydration, failed_feedback = _hydration_from_active_version(active)
 
     assert hydration["domain"] == "STEM"
-    assert hydration["must_cover_checklist"] == [{"id": "c1", "concept": "variables"}]
+    assert hydration["must_cover_checklist"] == [
+        {"id": "c1", "concept": "variables", "section_id": "intro"}
+    ]
     assert hydration["qc_frozen_check_ids"] == ["c1"]
     assert hydration["qc_frozen_section_keys"] == ["intro"]
+    assert hydration["qc_section_content_hashes"] == section_hashes
     assert failed_feedback is not None
     assert "content_accuracy" in failed_feedback
+
+
+def test_hydration_prunes_stale_frozen_when_content_drifted() -> None:
+    original_doc = {
+        "sections": [
+            {"id": "intro", "heading": "Intro", "content": "Original intro."},
+            {"id": "loops", "heading": "Loops", "content": "Original loops."},
+        ]
+    }
+    drifted_doc = {
+        "sections": [
+            {"id": "intro", "heading": "Intro", "content": "Original intro."},
+            {"id": "loops", "heading": "Loops", "content": "Rewritten loops."},
+        ]
+    }
+    stored_hashes = build_section_hashes(original_doc)
+    active = SimpleNamespace(
+        content=json.dumps(drifted_doc),
+        concept_plan={
+            "must_cover_checklist": [
+                {"id": "c1", "section_id": "intro", "concept": "variables"},
+                {"id": "c2", "section_id": "loops", "concept": "loops"},
+            ],
+        },
+        qc_frozen_check_ids=["c1", "c2"],
+        qc_frozen_section_keys=["intro", "loops"],
+        qc_section_content_hashes=stored_hashes,
+        qc_result=None,
+    )
+
+    hydration, _ = _hydration_from_active_version(active)
+
+    assert hydration["qc_frozen_check_ids"] == ["c1"]
+    assert hydration["qc_frozen_section_keys"] == ["intro"]
+    assert hydration["qc_section_content_hashes"] == stored_hashes
+
+
+def test_hydration_skips_raw_frozen_when_hashes_missing() -> None:
+    active = SimpleNamespace(
+        content='{"sections": [{"id": "intro", "heading": "Intro", "content": "x"}]}',
+        concept_plan={
+            "must_cover_checklist": [{"id": "c1", "section_id": "intro"}],
+        },
+        qc_frozen_check_ids=["c1"],
+        qc_frozen_section_keys=["intro"],
+        qc_section_content_hashes=None,
+        qc_result=None,
+    )
+
+    hydration, _ = _hydration_from_active_version(active)
+
+    assert "qc_frozen_check_ids" not in hydration
+    assert "qc_frozen_section_keys" not in hydration
 
 
 @pytest.mark.asyncio
@@ -168,6 +237,7 @@ async def test_create_version_persists_qc_generation_fields() -> None:
         "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
     }
     qc_result = {"overall_status": "pass", "scores": {"content_accuracy": 9}}
+    section_hashes = {"ts_1": "abc123hash"}
 
     version = await repo.create_version(
         node_id=node_id,
@@ -191,6 +261,7 @@ async def test_create_version_persists_qc_generation_fields() -> None:
         qc_verification_mode="targeted",
         qc_frozen_check_ids=["c1"],
         qc_frozen_section_keys=["ts_1"],
+        qc_section_content_hashes=section_hashes,
         qc_result=qc_result,
         next_llm_retry_at=retry_at,
         commit=False,
@@ -206,6 +277,7 @@ async def test_create_version_persists_qc_generation_fields() -> None:
     assert added.qc_verification_mode == "targeted"
     assert added.qc_frozen_check_ids == ["c1"]
     assert added.qc_frozen_section_keys == ["ts_1"]
+    assert added.qc_section_content_hashes == section_hashes
     assert added.qc_result == qc_result
     assert added.next_llm_retry_at == retry_at
     assert version.qc_passed is True
@@ -288,6 +360,7 @@ def test_study_material_version_out_attaches_action_required() -> None:
         qc_verification_mode=None,
         qc_frozen_check_ids=None,
         qc_frozen_section_keys=None,
+        qc_section_content_hashes=None,
         next_llm_retry_at=None,
         generation_outcome="reference_required",
         generation_outcome_detail={

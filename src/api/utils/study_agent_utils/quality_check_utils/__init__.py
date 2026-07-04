@@ -46,6 +46,10 @@ from src.api.utils.study_agent_utils.quality_check_utils.infra.artifact_logging 
 from src.api.utils.study_agent_utils.quality_check_utils.infra.infra_failure import (
     build_infra_failure_return,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
+    build_qc_result_log_payload,
+    build_retry_routing_snapshot,
+)
 from src.api.utils.study_agent_utils.quality_check_utils.parsing.json_parse import (
     parse_llm_json_object,
     parse_qc_verification_response,
@@ -98,6 +102,8 @@ __all__ = [
     "build_final_qc_result",
     "build_infra_failure_return",
     "build_qc_guard_return",
+    "build_qc_result_log_payload",
+    "build_retry_routing_snapshot",
     "check_targets_reverify",
     "classify_retry_routing",
     "derive_overall_status",

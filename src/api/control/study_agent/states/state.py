@@ -63,6 +63,9 @@ class StudyMaterialGraphState(TypedDict, total=False):
     qc_frozen_section_keys: list[
         str
     ]  # Section ids whose code blocks already passed QC — skip code checks on full retry
+    qc_section_content_hashes: dict[
+        str, str
+    ]  # Section id → content hash baseline for frozen lineage validation
     fixed_sections: (
         list[dict[str, Any]] | None
     )  # Patched/inserted sections for targeted QC retry

@@ -1,5 +1,18 @@
-# src/api/control/study_agent/prompts/section_rework_prompt.py
-"""Section rework prompts — rewrite only the sections that failed QC."""
+# src/api/control/study_agent/prompts/section/section_rework_prompt.py
+"""Section rework prompts for QC ``section_patch`` retries.
+
+Unlike full regen (``generation_prompt`` + flat ``qc_feedback``), patch retries use
+structured ``qc_section_failures`` embedded as ``<sections_to_fix>`` JSON with:
+  - ``current_section_json`` (from ``extract_sections_by_ids``)
+  - ``failures``: category, evidence, corrective_hint per check
+  - optional ``subsections_to_fix`` when deterministic evidence names a subsection
+
+There is no separate deterministic-only prompt branch; all failure types share
+this prompt. Subsection targeting uses regex on evidence text
+(``subsection 'Heading'``) from ``det_equation_in_content`` etc.
+
+Output: ``{"sections": [...]}`` — whole section dicts merged by id (not line-level).
+"""
 
 from __future__ import annotations
 
@@ -118,7 +131,12 @@ def _subsection_headings_from_evidence(evidence: str) -> list[str]:
 def _subsection_remediation_targets(
     section_failures: list[dict],
 ) -> dict[str, list[str]]:
-    """Map section_id -> subsection headings named in failure evidence."""
+    """Map section_id → subsection headings parsed from failure evidence strings.
+
+    Parses deterministic ``_location_evidence`` format:
+    ``Section 'X', subsection 'Y': detail`` via ``_subsection_headings_from_evidence``.
+    LLM evidence may mention subsections in other phrasing — not guaranteed to match.
+    """
     targets: dict[str, list[str]] = {}
     for bundle in section_failures:
         if not isinstance(bundle, dict):
@@ -163,6 +181,12 @@ def build_sections_to_fix_block(
     *,
     document: dict,
 ) -> str:
+    """Render ``<sections_to_fix>`` JSON for the section-rework user prompt.
+
+    For each failure bundle, embeds full ``current_section_json`` from the live
+    document, pared-down ``failures`` list, and optional ``subsections_to_fix``
+    when equation-in-prose failures name a subsection heading.
+    """
     from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
         extract_sections_by_ids,
     )

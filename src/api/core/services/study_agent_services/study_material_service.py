@@ -138,6 +138,7 @@ from src.api.utils.study_agent_utils.generation.generation_outcome_resolver impo
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     build_action_required,
     content_for_persistence,
+    parse_generation_document,
 )
 from src.api.utils.study_agent_utils.media import (
     build_study_material_pdf_filename,
@@ -145,6 +146,9 @@ from src.api.utils.study_agent_utils.media import (
 )
 from src.api.utils.study_agent_utils.mentor.mentor_student_visibility import (
     build_mentor_student_visibility,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.core.frozen_sets import (
+    effective_frozen_sets,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
     format_qc_feedback,
@@ -393,10 +397,31 @@ def _hydration_from_active_version(
         if checklist:
             hydration["must_cover_checklist"] = checklist
 
-    if active.qc_frozen_check_ids:
-        hydration["qc_frozen_check_ids"] = active.qc_frozen_check_ids
-    if active.qc_frozen_section_keys:
-        hydration["qc_frozen_section_keys"] = active.qc_frozen_section_keys
+    stored_hashes = active.qc_section_content_hashes
+    if isinstance(stored_hashes, dict) and stored_hashes:
+        hydration["qc_section_content_hashes"] = stored_hashes
+
+    checklist_for_frozen = hydration.get("must_cover_checklist")
+    if (
+        isinstance(stored_hashes, dict)
+        and stored_hashes
+        and (active.qc_frozen_check_ids or active.qc_frozen_section_keys)
+    ):
+        document = parse_generation_document(active.content or "")
+        if document is not None:
+            pruned_check_ids, pruned_section_ids = effective_frozen_sets(
+                frozen_check_ids=active.qc_frozen_check_ids,
+                frozen_section_ids=active.qc_frozen_section_keys,
+                stored_hashes=stored_hashes,
+                document=document,
+                checklist=checklist_for_frozen
+                if isinstance(checklist_for_frozen, list)
+                else None,
+            )
+            if pruned_check_ids:
+                hydration["qc_frozen_check_ids"] = pruned_check_ids
+            if pruned_section_ids:
+                hydration["qc_frozen_section_keys"] = pruned_section_ids
 
     failed_qc_feedback: str | None = None
     if isinstance(active.qc_result, dict):
@@ -702,6 +727,7 @@ class StudyMaterialService:
             qc_verification_mode=graph_result.get("qc_verification_mode"),
             qc_frozen_check_ids=graph_result.get("qc_frozen_check_ids"),
             qc_frozen_section_keys=graph_result.get("qc_frozen_section_keys"),
+            qc_section_content_hashes=graph_result.get("qc_section_content_hashes"),
             next_llm_retry_at=next_llm_retry_at,
             generation_outcome=api_generation_outcome,
             generation_outcome_detail=outcome_detail,

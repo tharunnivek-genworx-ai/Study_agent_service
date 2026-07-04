@@ -1,5 +1,17 @@
 # src/api/utils/study_agent_utils/qc/document_merge.py
-"""Merge section patches and insert missing sections into study documents."""
+"""Merge study document sections after QC-driven generator retries.
+
+Used by ``run_section_retry`` (patch/insert) and ``study_agent_node`` (full regen
+preserve-passing merge). All merges are **section-level** — entire section dicts
+are replaced or inserted; there is no line-level or subsection-level merge.
+
+Key functions:
+  - ``merge_section_patches``: swap failed sections with LLM patch output
+  - ``insert_sections``: add missing blueprint/checklist sections
+  - ``extract_sections_by_ids``: pull section JSON for ``<sections_to_fix>`` prompts
+  - ``merge_full_regeneration_preserving_passing``: splice new + old sections after full regen
+  - ``build_document_outline``: compact id/heading list for rework prompts
+"""
 
 from __future__ import annotations
 
@@ -37,7 +49,20 @@ def _section_id(section: dict[str, Any]) -> str:
 def merge_section_patches(
     document: dict[str, Any], patches: list[dict[str, Any]]
 ) -> MergePatchesResult:
-    """Replace sections in *document* whose ``id`` matches a patch section."""
+    """Replace whole sections in *document* whose ``id`` matches a patch section.
+
+    Each patch from the section-rework LLM replaces the entire section dict at
+    that index (content, formula_blocks, subsections, etc.). Valid content in
+    other sections is untouched. Valid subsections *within* a patched section
+    are not mechanically preserved — only LLM instruction-following.
+
+    Args:
+        document: Current full study document.
+        patches: Section dicts from ``run_section_retry`` LLM output.
+
+    Returns:
+        ``MergePatchesResult`` with merged document and any patch ids not found.
+    """
     merged = copy.deepcopy(document)
     sections: list[dict[str, Any]] = list(merged.get("sections") or [])
     index_by_id = {
@@ -131,7 +156,14 @@ def insert_sections(
 def extract_sections_by_ids(
     document: dict[str, Any], ids: list[str]
 ) -> list[dict[str, Any]]:
-    """Return section dicts whose ``id`` is in *ids*, preserving *ids* order."""
+    """Return deep copies of sections whose ``id`` is in *ids*, in *ids* order.
+
+    Used by ``section_rework_prompt.build_sections_to_fix_block`` to embed
+    ``current_section_json`` for each failed section. Order follows the
+    ``section_failures`` bundle order, not document order.
+
+    Unknown ids are skipped silently (no error).
+    """
     wanted = {str(section_id).strip() for section_id in ids if str(section_id).strip()}
     if not wanted:
         return []
@@ -199,7 +231,21 @@ def merge_full_regeneration_preserving_passing(
     rewrite_section_ids: set[str] | frozenset[str],
     topic_split: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Keep passing sections from *previous_document*; take rewrites from *new_document*."""
+    """After full regen LLM output, keep passing sections from the previous draft.
+
+    For each section id in blueprint order:
+    - id in ``rewrite_section_ids`` → take from *new_document* (QC-failed sections)
+    - else → prefer *previous_document* (passing sections preserved)
+
+    Section bytes change only for rewrite ids — P3 hash gate drops stale frozen
+    skips for changed sections while keeping frozen ids for preserved sections.
+
+    Args:
+        new_document: Full document JSON from full-regeneration LLM.
+        previous_document: Document before regen (failed QC draft).
+        rewrite_section_ids: ``qc_reverify_section_ids`` from routing.
+        topic_split: Optional ordering blueprint for merged section list.
+    """
     rewrite_ids = {
         str(section_id).strip()
         for section_id in rewrite_section_ids
