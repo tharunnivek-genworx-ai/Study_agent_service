@@ -36,6 +36,9 @@ from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge
 from src.api.utils.study_agent_utils.quality_check_utils.document.targeted_merge import (
     merge_targeted_qc_checks,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
+    build_retry_routing_snapshot,
+)
 from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
     format_qc_feedback,
 )
@@ -331,13 +334,7 @@ async def run_qc_attempt(
     )
     write_json(
         output_dir / "retry_routing.json",
-        {
-            "mode": routing.mode,
-            "failed_section_ids": routing.failed_section_ids,
-            "missing_checklist_ids": routing.missing_checklist_ids,
-            "section_failures": routing.section_failures,
-            "rationale": routing.rationale,
-        },
+        build_retry_routing_snapshot(routing),
     )
 
     passed = is_qc_deliverable(

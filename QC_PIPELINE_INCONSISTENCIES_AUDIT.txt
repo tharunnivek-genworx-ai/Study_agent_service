@@ -308,7 +308,9 @@ fragility | [LOW] documentation/observability gap
 
 11.1 Add subsection_heading to QcCheckItem schema and deterministic checks
 11.2 [FIXED 2026-07-03] Pass structure_missing into _structure_coverage_widespread (dedupe)
-11.3 Log qc_feedback and qc_section_failures in qc_result artifact
+11.3 [FIXED 2026-07-04] Log qc_feedback and qc_section_failures in qc_result artifact
+     via build_qc_result_log_payload / build_qc_retry_context (qc_retry_audit.py).
+     Study generator artifacts include retry_audit cross-link fields.
 11.4 section_rework verbatim rules for subsections not in subsections_to_fix
 11.5 Mechanical subsection merge instead of full section replace for det_* failures
 11.6 Branch section_rework prompt on failure category (deterministic vs depth vs accuracy)

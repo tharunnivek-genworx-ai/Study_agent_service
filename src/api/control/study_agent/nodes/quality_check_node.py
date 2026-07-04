@@ -70,6 +70,9 @@ from src.api.utils.study_agent_utils.quality_check_utils.infra.infra_failure imp
     build_infra_failure_return,
     resolve_qc_infra_error_type,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
+    build_qc_result_log_payload,
+)
 from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
     format_qc_feedback,
 )
@@ -149,13 +152,17 @@ async def quality_check_node(
             state,
             agent="qc_result",
             pipeline_attempt=attempt,
-            payload={
-                "qc_passed": False,
-                "fail_open": False,
-                "qc_inconclusive": True,
-                "verification_mode": None,
-                "qc_result": result["qc_result"],
-            },
+            payload=build_qc_result_log_payload(
+                qc_result=result["qc_result"],
+                routing=None,
+                passed=False,
+                qc_attempt=new_attempt,
+                pipeline_attempt=attempt,
+                qc_passed=False,
+                fail_open=False,
+                qc_inconclusive=True,
+                verification_mode=None,
+            ),
         )
         return result
 
@@ -304,13 +311,17 @@ async def quality_check_node(
             state,
             agent="qc_result",
             pipeline_attempt=attempt,
-            payload={
-                "qc_passed": False,
-                "fail_open": False,
-                "qc_inconclusive": True,
-                "verification_mode": verification_mode,
-                "qc_result": result["qc_result"],
-            },
+            payload=build_qc_result_log_payload(
+                qc_result=result["qc_result"],
+                routing=None,
+                passed=False,
+                qc_attempt=new_attempt,
+                pipeline_attempt=attempt,
+                qc_passed=False,
+                fail_open=False,
+                qc_inconclusive=True,
+                verification_mode=verification_mode,
+            ),
         )
         return result
 
@@ -377,14 +388,18 @@ async def quality_check_node(
         state,
         agent="qc_result",
         pipeline_attempt=attempt,
-        payload={
-            "qc_passed": passed,
-            "fail_open": False,
-            "overall_status": overall_status,
-            "verification_mode": verification_mode,
-            "qc_retry_mode": routing.mode,
-            "qc_result": qc_result,
-        },
+        payload=build_qc_result_log_payload(
+            qc_result=qc_result,
+            routing=routing,
+            passed=passed,
+            qc_attempt=new_attempt,
+            pipeline_attempt=attempt,
+            qc_passed=passed,
+            fail_open=False,
+            overall_status=overall_status,
+            verification_mode=verification_mode,
+            qc_retry_mode=routing.mode,
+        ),
     )
 
     frozen_check_ids, frozen_section_ids, section_content_hashes = (

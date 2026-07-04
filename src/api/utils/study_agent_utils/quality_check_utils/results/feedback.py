@@ -7,8 +7,8 @@ Two feedback channels (by design):
     ``<quality_check_feedback>`` in ``generation_prompt``.
 
 ``format_qc_feedback`` is also stored as ``qc_feedback`` in graph state on QC fail
-and re-derived from DB ``qc_result`` for improve/regenerate hydration. It is
-**not** logged as its own field in ``05_qc_result.json`` artifacts.
+and re-derived from DB ``qc_result`` for improve/regenerate hydration. Both are
+logged in ``05_qc_result.json`` via ``build_qc_retry_context`` (audit trail).
 """
 
 from __future__ import annotations

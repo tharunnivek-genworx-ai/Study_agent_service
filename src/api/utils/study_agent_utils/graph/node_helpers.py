@@ -53,6 +53,10 @@ from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge
     insert_sections,
     merge_section_patches,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
+    build_study_retry_input_audit,
+    should_attach_study_retry_audit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +200,7 @@ def build_qc_feedback_block(state: StudyMaterialGraphState) -> str:
     Section patch retries use structured ``qc_section_failures`` in
     ``section_rework_prompt`` instead of this flat text block.
 
-    Includes: formatted ``qc_feedback``, previous draft JSON, optional reference.
+    Includes: formatted ``qc_feedback`` and previous draft JSON.
     Empty when ``qc_retry_mode`` is not ``full_regeneration`` or ``qc_attempt`` is 0.
     """
     if qc_retry_mode(state) != "full_regeneration":
@@ -216,13 +220,6 @@ def build_qc_feedback_block(state: StudyMaterialGraphState) -> str:
     if previous_doc:
         canonical = try_canonicalize_generation_json(previous_doc) or previous_doc
         parts.append(f"\n<previous_draft_json>\n{canonical}\n</previous_draft_json>")
-
-    if has_reference_material(state):
-        ref_text = reference_text(state)
-        if ref_text:
-            parts.append("\n<reference_material_for_correction>")
-            parts.append(ref_text)
-            parts.append("</reference_material_for_correction>")
 
     return "\n".join(parts)
 
@@ -416,6 +413,11 @@ def log_study_output(
     if fixed_sections is not None:
         payload["fixed_sections"] = fixed_sections
         payload["qc_retry_mode"] = generation_type
+    if should_attach_study_retry_audit(state):
+        retry_audit = build_study_retry_input_audit(state)
+        payload["retry_audit"] = retry_audit
+        payload["triggered_by_qc_attempt"] = retry_audit["triggered_by_qc_attempt"]
+        payload["retry_feedback_channel"] = retry_audit["retry_feedback_channel"]
     log_agent_output(
         topic_title=state.get("node_title") or str(state.get("node_id")),
         run_id=run_id,
