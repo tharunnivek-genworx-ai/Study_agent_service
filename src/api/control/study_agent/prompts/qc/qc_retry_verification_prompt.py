@@ -30,6 +30,11 @@ QC_RETRY_STEM_DERIVATION_BLOCK = """\
   which verb its checklist item uses (derive, prove, calculate, apply, determine, solve, trace, step-by-step). This
   applies even when the code_block belongs to a section you were NOT asked to re-verify by name — see GLOBAL SCAN
   below. Never apply this STEM standard to a Programming item, even if its text uses the same words.
+- STEM CHAIN RULE: a revised STEM section whose checklist item demands derive/prove/step-by-step must contain at
+  least 4 chained formula_block entries, and every entry must be recomputed and confirmed to follow validly from
+  the one before it — a step that does not follow, even one producing a coincidentally correct final answer, fails
+  the check and must be quoted in "issues". A "fix" that adds a second, unverified derivation method alongside the
+  first is a new failure, not a correction — verify any newly introduced method just as strictly as the original.
 """
 QC_RETRY_PROGRAMMING_RULES_BLOCK = """\
 - Programming: trace code execution; verify no undefined symbols; verify every API call is real for the stated language/version; check for duplicate method/function names in the same scope. A Programming item's runnable code block is itself the correct evidence — it is never penalised for "not being a derivation."
@@ -61,6 +66,10 @@ CHECK CATEGORIES
    PASS only when:
    - Every component of the depth_gate is substantively satisfied with specific quoted evidence from the revised content.
    - For a STEM item whose requirement involves derive/prove/calculate: the revised section contains sequential algebraic or logical steps in formula_blocks. A final formula plus explanation does not pass. Python/scipy/sympy code does not pass. (This standard applies only to STEM items — for a Programming item, a runnable code block plus a correct behavioural explanation is the right and sufficient evidence, even if its requirement text contains the same words.)
+   EVIDENCE FORMAT: write the evidence field as a numbered list mirroring the depth_gate's own components — "[1]
+   <component>: <quoted text or MISSING> [2] ...". A component whose evidence is a formula, substitution, or numeric
+   step must be the literal formula_block text, not a paraphrase or nearby prose. passed=true requires zero MISSING
+   components.
    FAIL when:
    - Root cause of the prior failure remains even if phrasing changed.
    - Depth_gate component is missing.
@@ -71,18 +80,24 @@ CHECK CATEGORIES
    Leave corrective_hint empty when passed=true.
 """
 QC_CONTENT_ACCURACY_BLOCK = """\
-② content_accuracy — one check per claim in revised sections you can evaluate with certainty
-   REQUIRED PROCEDURE: state the correct fact from your own knowledge first, then compare to the revised content. "X is indeed Y" restating the document is not evidence.
+② content_accuracy — one check per claim in revised sections you can evaluate with certainty, PLUS mandatory
+   coverage of every formula_block in the revised sections (STEM/Mixed only) — id them formula_1, formula_2, ...
+   in document order; do not skip a formula_block because it is unfamiliar or hard to verify, emit it with
+   passed=false and "cannot independently verify" instead.
+   REQUIRED PROCEDURE: evidence must be written as "Correct value (from your own knowledge, independent of the
+   document): <...>. Document states: <...>." — "X is indeed Y" restating the document is never valid evidence.
    Re-scan the entire revised section — do not limit to the prior failure text.
    Trace code, verify equations and reactions in formula_blocks, check named facts.
-   severity: "critical". Emit only checks you can evaluate with certainty.
+   severity: "critical".
 """
 QC_DOCUMENT_COHERENCE_BLOCK = """\
 ③ document_coherence — one check per <document_outline> mismatch or schema violation, PLUS the checks already
    emitted by GLOBAL SCAN above (do not duplicate a GLOBAL SCAN finding here — it already counts)
    FAIL when revised sections don't match ids/headings in <document_outline>; revised code references undefined
    symbols; any code_block or formula_block in a revised section has an empty "explanation" field; a code_block
-   contains non-code content; a code_block/formula_block appears in a section whose domain does not call for one.
+   contains non-code content; a code_block/formula_block appears in a section whose domain does not call for one;
+   or a revised section now duplicates the construction, derivation, or worked example of another section in the
+   document (including an untouched one) without the plan explicitly calling for two independent methods.
    severity: "critical".
 """
 QC_CODE_QUALITY_BLOCK = """\

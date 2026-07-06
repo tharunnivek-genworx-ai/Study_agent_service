@@ -35,11 +35,20 @@ STEP 2 — EVALUATE CHECKS
 QC_MUST_COVER_INTRO = """\
 ① must_cover — one check per checklist item
    question: "Does the document satisfy '<requirement>' for '<concept>' to the depth_gate standard?"
-   MANDATORY PROCEDURE — execute every sub-step before deciding:
-   a. Re-read the depth_gate. Write out every component it demands as a separate list. Do not skip this enumeration.
-   b. Find the linked section (section_id). Read its full content and every code_block / formula_block.
-   c. For each demanded component: quote the specific text that satisfies it, or state explicitly that it is absent.
-   d. Pass only if EVERY component is present with specific quoted evidence.
+   MANDATORY PROCEDURE — execute every sub-step, and the evidence field must visibly show this work:
+   a. Split the depth_gate into its individual components (typically 3-5: e.g. starting point, each intermediate
+      step, variable definitions, final result, explanation of meaning). Number them.
+   b. Find the linked section (section_id). Read its full content and every code_block / formula_block in it.
+   c. For each numbered component, locate the exact text that satisfies it. If the component describes a formula,
+      equation, substitution, or numeric step, the located evidence MUST be the literal formula_block text itself
+      (e.g. "c = √(3² + 4²)") — a prose sentence that merely names the same numbers or variables without showing
+      the actual equation or substitution does NOT satisfy that component, no matter how naturally it reads.
+   d. Write the evidence field as a numbered list mirroring (a), in this exact shape:
+      "[1] <component>: <quoted satisfying text, or the word MISSING> [2] <component>: <quoted satisfying text, or
+      MISSING> ..." Never write a single unstructured sentence as evidence for a must_cover check — this numbered
+      breakdown is mandatory on both pass and fail.
+   e. passed=true is allowed only when NONE of the numbered components are marked MISSING. One MISSING component
+      forces passed=false even when every other component is well satisfied.
 """
 QC_STEM_DERIVATION_MUST_COVER_BLOCK = """\
    STEM RULE — applies to every must_cover item whose own domain is STEM (for Mixed documents: only to items whose
@@ -48,12 +57,17 @@ QC_STEM_DERIVATION_MUST_COVER_BLOCK = """\
      in that section forces passed=false — unconditionally, regardless of whether the depth_gate says "derive,"
      "prove," "calculate," "apply," "determine," or "solve." There is no STEM verb that makes code an acceptable
      substitute for formula_blocks.
-   - When the depth_gate further demands derivation, proof, or step-by-step calculation: the section must contain
-     formula_blocks with sequential algebraic or logical steps, each following from the previous. A final formula
-     plus a one-sentence explanation does not pass; a starting equation and final result with no intermediate steps
-     does not pass; a prose description of "how" the derivation works with no formula_block steps does not pass.
-   Never apply any part of this rule to a Programming or Conceptual item, even if its text contains the same words —
-   evaluate those under their own procedures below.
+   - When the depth_gate demands derivation, proof, or step-by-step calculation: count the formula_block entries in
+     the linked section that form the actual reasoning chain (excluding a final restated result on its own). Fewer
+     than 4 chained entries is automatic failure for a "derive"/"prove" item — a starting statement and an ending
+     result with nothing shown in between is not a derivation, no matter how confident or well-written the prose
+     around it is.
+   - Independently recompute every step in the chain from the one immediately before it. A step that does not
+     follow validly from its predecessor forces passed=false and the specific invalid step must be quoted verbatim
+     in "issues" — even if the document's final stated answer happens to be numerically correct.
+   - A depth_gate phrase referring to a diagram, figure, or visual construction is satisfied only if the document
+     expresses the equivalent relationship as an explicit formula_block equation — a prose description of what a
+     diagram would show, with no corresponding equation, does not satisfy that component (mark it MISSING).
 """
 QC_MUST_COVER_HARD_DISQUALIFIERS = """\
    HARD DISQUALIFIERS — any single one forces passed=false:
@@ -71,14 +85,22 @@ QC_MUST_COVER_HARD_DISQUALIFIERS = """\
    On fail: quote the specific text (or its absence) that reveals the gap.
 """
 QC_CONTENT_ACCURACY_INTRO = """\
-② content_accuracy — one check per claim you can evaluate with certainty
+② content_accuracy — one check per verifiable claim, with mandatory full coverage for STEM/Mixed documents
    question: "Is the claim '<exact or near-verbatim excerpt>' accurate for <subject>?"
-   REQUIRED EVIDENCE PROCEDURE — execute before deciding on any check:
-   1. In your own words, state what the correct fact, formula, value, reaction, or result is (from your own knowledge — independent of the document).
-   2. Compare that independently-recalled correct answer against the document's claim.
-   3. Pass only if they match.
-   The pattern "X is indeed Y" or "this is correct" — restating the document's claim — is NOT evidence and must not appear as the evidence field on a pass. You must state the correct answer from your own knowledge first. If you cannot independently recall or derive the correct answer: do NOT pass. Set passed=false and note the claim is unverifiable.
-   Named statistics, percentages, retention rates, or performance metrics attributed to specific organisations must be identifiable as publicly documented and widely known figures. "X company's onboarding achieved Y% retention improvement" is not a verifiable fact unless you can identify the source publication. Vague attribution to a real company name is not verification — flag as unverifiable.
+   COVERAGE REQUIREMENT (STEM/Mixed only): emit one content_accuracy check for EVERY formula_block in the document,
+   identified as formula_1, formula_2, ... in document order — not only the ones that are easiest to confirm.
+   Skipping a formula_block because it looks unfamiliar or "probably fine" is itself a failure of this pass. If you
+   cannot independently verify a specific formula_block via the procedure below, emit the check anyway with
+   passed=false and evidence "cannot independently verify this step" — an omitted hard-to-verify claim is the exact
+   failure mode this pass exists to catch, and is worse than a false negative.
+   REQUIRED EVIDENCE FORMAT — write the evidence field as exactly two labeled parts:
+     "Correct value (from your own knowledge, independent of the document): <...>. Document states: <...>."
+   A single merged sentence such as "X is indeed Y" or "this is correct" is not a valid evidence format and must
+   never be used, even when passed=true — if you cannot state the correct value independently before looking at
+   what the document says, you cannot pass the check.
+   Named statistics, percentages, retention rates, or performance metrics attributed to specific organisations must
+   be identifiable as publicly documented and widely known figures. Vague attribution to a real company name is not
+   verification — flag as unverifiable.
 """
 QC_STEM_VERIFICATION_BLOCK = """\
    STEM VERIFICATION — for every formula_block and worked example:
@@ -122,7 +144,12 @@ QC_CONTENT_ACCURACY_CLOSING = """\
 QC_TEACHING_ALIGNMENT_BLOCK = """\
 ③ teaching_alignment — exactly one check
    question: "Does the document address everything the teaching instruction specifies?"
-   FAIL if any named concept, example type, depth requirement, or constraint from the instruction is absent or clearly under-served.
+   FAIL if any named concept, example type, depth requirement, or constraint from the instruction is absent or
+   clearly under-served.
+   CONSISTENCY RULE: if the teaching instruction's core request (e.g. "show a step-by-step derivation") corresponds
+   to one or more must_cover items and any of those items has passed=false above, teaching_alignment must not
+   pass=true for that same requirement — a document is not "aligned" with an instruction whose corresponding
+   checklist evidence was just found insufficient in this same pass.
    severity: "major". evidence REQUIRED on pass.
 """
 QC_DOCUMENT_COHERENCE_BLOCK = """\
@@ -132,12 +159,19 @@ QC_DOCUMENT_COHERENCE_BLOCK = """\
    - A concept named in one section is never explained or demonstrated in any other section.
    - A code block uses a symbol not defined or imported within that block.
    - Two sections state contradictory facts about the same concept.
+   - Two sections (or a section and a subsection) present substantially the same construction, derivation, worked
+     example, or argument to establish the same result, without the teaching instruction or must_cover_checklist
+     explicitly calling for two independent methods — restating the same reasoning under a new heading is
+     redundancy, not additional coverage.
    - Any code_block or formula_block has an empty or heading-restating "explanation" field.
-   - A code_block contains non-code content (an equation, reaction, or plain prose dressed up as "code") — that content belongs in a formula_block or prose instead.
+   - A code_block contains non-code content (an equation, reaction, or plain prose dressed up as "code") — that
+     content belongs in a formula_block or prose instead.
    - A code_block appears anywhere in a STEM-classified section. This applies to every STEM section unconditionally
-     — not only ones whose checklist item demands derivation. The STEM schema has no code_blocks field; its presence
-     is itself the failure, independent of correctness or which verb the linked requirement uses.
-   - A code_block or formula_block appears in a section whose domain does not call for one and the teaching instruction does not explicitly require it (programming code_blocks in purely Conceptual sections; formula_blocks in purely narrative sections).
+     — not only ones whose checklist item demands derivation. The STEM schema has no code_blocks field; its
+     presence is itself the failure, independent of correctness or which verb the linked requirement uses.
+   - A code_block or formula_block appears in a section whose domain does not call for one and the teaching
+     instruction does not explicitly require it (programming code_blocks in purely Conceptual sections; formula
+     blocks in purely narrative sections).
    - The document's own introduction or outline promises content the body never delivers.
    severity: "critical". evidence REQUIRED on both pass and fail.
 """
@@ -186,6 +220,8 @@ ANTI-INFLATION RULES — absolute, no exceptions
 - NEVER set corrective_hint when passed=true; use "".
 - NEVER set retry_recommendation.mode to "none" while any check has passed=false.
 - NEVER treat length, detail density, or formatting quality as evidence of correctness.
+- NEVER set hallucination_risk to "none" if any must_cover evidence contains a MISSING component, or if any
+  emitted check has passed=false.
 HALLUCINATION RISK
   "none"   — Every specific verifiable claim was positively confirmed using the 3-step procedure (stated correct answer from own knowledge, then confirmed document matches). No circular "X is indeed Y" reasoning was used for any check. No unverifiable statistics or invented API names were accepted.
   "low"    — One minor imprecision; not materially misleading. Correctable with a light edit.

@@ -8,7 +8,21 @@ from src.api.control.study_agent.prompts.generation.output_schemas import (
 )
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 
-STEM_ACCURACY_BLOCK = "STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. Constants must carry correct values and units. Equations and reactions belong in formula_blocks only — this schema has no code_blocks field, for any STEM section, regardless of whether the feedback or checklist item uses derive/prove/calculate/apply/determine. Never use Python, sympy, scipy, or any computational library as a substitute for formula_block steps — code shows computation, it does not demonstrate the reasoning chain. Do not add coding examples for computation in a STEM section under any circumstances."
+STEM_ACCURACY_BLOCK = (
+    "STEM: Equations must be correct and dimensionally consistent. Worked examples must trace to correct answers. "
+    "Constants must carry correct values and units. Equations and reactions belong in formula_blocks only — this "
+    "schema has no code_blocks field, for any STEM section, regardless of whether the feedback or checklist item "
+    "uses derive/prove/calculate/apply/determine. Never use Python, sympy, scipy, or any computational library as "
+    "a substitute for formula_block steps — code shows computation, it does not demonstrate the reasoning chain. "
+    "Do not add coding examples for computation in a STEM section under any circumstances. "
+    "A derive/prove/step-by-step section must contain at least 4 chained formula_block entries — a start, at "
+    "least two distinct intermediate steps, and a final result; recompute every step from the one before it "
+    "before finalizing, and delete any step that does not follow validly, even if the final answer is correct. "
+    "Do not introduce a new or 'alternative' derivation method as part of a fix unless you can execute every one "
+    "of its steps correctly — an unverified alternative method introduced during a fix is a new failure, not an "
+    "improvement. If two sections in the document establish the same result, they must use genuinely different "
+    "methods or examples, never the same construction restated."
+)
 PROGRAMMING_ACCURACY_BLOCK = 'Programming: Code must be syntactically valid. No undefined symbols. Never define the same method or function name twice in the same scope without explicitly explaining the consequence. Every code_block must have a non-empty "explanation" field. Verify every API or function name is real for the stated language/version — do not invent plausible-sounding API calls.'
 CONCEPTUAL_ACCURACY_BLOCK = "Conceptual: Named facts (dates, people, events, laws, organisations) must be accurate per mainstream record. Arguments must be structured as claim → evidence → reasoning — do not add conclusions without stated support. New examples introduced by the edit must be specific and named: identify a real actor, describe the context, and state the verifiable outcome; vague sector-level references ('many organisations', 'in the tech industry') are not examples. When feedback asks for a case study, comparison, or causal explanation, name a real organisation or event and trace the mechanism — never use anonymous placeholders or 'X caused Y' without the causal chain. Do not introduce code_blocks or formula_blocks into a Conceptual section unless the feedback explicitly requires a technical or quantitative addition. Do not attribute statistics or performance metrics to named organisations unless those figures are publicly documented and widely known."
 _DOMAIN_ACCURACY_HEADER = (
