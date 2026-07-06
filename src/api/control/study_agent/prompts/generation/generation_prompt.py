@@ -13,12 +13,15 @@ from src.api.utils.study_agent_utils.generation.must_cover_checklist_format impo
 
 STEM_DOMAIN_RULES_BLOCK = """\
 STEM (mathematics, physics, chemistry, biology, engineering, statistics):
-- NO CODE, EVER: the STEM output schema has no code_blocks field. This is unconditional — it does not depend on which verb the linked checklist item uses (calculate, apply, determine, solve, derive, prove, trace, step-by-step all fall under this). Every equation, chemical reaction, derivation, or numeric substitution belongs in a formula_block, never in executable code, regardless of whether the requirement reads as a "derivation" or an "application."
-- Each algebraic or logical step belongs in its own formula_block entry, in order, so the reasoning chain is visible — whether the task is deriving a result from first principles or substituting values into an established formula.
-- State every equation in standard notation. Define every variable and its unit on first use. Constants must carry their correct value and unit every time they appear.
-- COMPLETE SECTION STANDARD: (1) a formal statement of the concept or law with its defining conditions; (2) derivation or proof from first principles where the concept's evidence family calls for it; (3) a fully worked numerical or algebraic example tracing from stated inputs through every intermediate step to the correct final answer; (4) the assumptions and boundary conditions under which the concept holds or breaks down. A formula plus one sentence of context does not meet this standard.
-- Never state a reaction, mechanism, or formula you cannot independently verify as real chemistry, physics, or mathematics — a confident but fabricated reaction or constant is a serious failure."""
-
+- Every equation, chemical reaction, or derivation step belongs in a formula_block, not a code_block or inline text.
+- State every equation in standard notation. Define every variable and its unit on first use.
+- COMPLETE SECTION STANDARD: A well-formed STEM section delivers: (1) a formal statement of the concept or law with all defining conditions; (2) derivation or proof from first principles where the concept permits it — each algebraic or logical step in its own formula_block entry so the reasoning chain is visible; (3) a fully worked numerical or algebraic example tracing from stated inputs through every intermediate step to the correct final answer; (4) the assumptions and boundary conditions under which the concept holds or breaks down. A section that states a formula and gives one sentence of context has not met this standard.
+- Worked examples must show every calculation or derivation step, not just the final answer.
+- State all assumptions and constraints explicitly (e.g. "assuming ideal gas behaviour", "for small angles").
+- Physical and mathematical constants must carry their correct value and unit every time they appear.
+- Do not skip algebraic or logical steps in derivations — each step must follow from the previous one. Each intermediate step belongs in its own formula_block entry so the reasoning chain is visible.
+- Never state a reaction, mechanism, or formula that you cannot independently verify as real chemistry, physics, or mathematics. A confident, well-formatted but fabricated reaction or constant is a serious failure — if you are not certain a reaction or value is real, do not include it.
+- DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. The STEM output schema has no code_blocks field — never emit executable code for equation work."""
 PROGRAMMING_DOMAIN_RULES_BLOCK = """\
 Programming (code, algorithms, data structures, APIs, frameworks):
 - Code must be syntactically valid and produce the correct result on the demonstrated path.
