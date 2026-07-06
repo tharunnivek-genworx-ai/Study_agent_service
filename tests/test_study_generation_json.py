@@ -148,6 +148,52 @@ class TestStudyGenerationJson:
         assert "lim x→a f(x) = L" in md
         assert "```math" not in md.lower()
 
+    def test_render_mathematical_notation_and_paren_delimiters(self):
+        doc = {
+            "sections": [
+                {
+                    "id": "ts_3",
+                    "heading": "Derivation of the Power Rule",
+                    "content": "Starting from the definition.",
+                    "formula_blocks": [
+                        {
+                            "notation": "Mathematical",
+                            "formula": (
+                                "\\( f'(x) = \\lim_{h \\to 0} "
+                                "\\frac{(x + h)^n - x^n}{h} \\)"
+                            ),
+                            "explanation": "Derivative of x^n via the limit definition.",
+                        }
+                    ],
+                }
+            ]
+        }
+        md = render_sections_to_markdown(doc)
+        assert "$$" in md
+        assert r"\(" not in md
+        assert "\\lim_{h \\to 0}" in md
+        assert "```" not in md
+
+    def test_render_plain_text_formula_with_equation_as_display_math(self):
+        doc = {
+            "sections": [
+                {
+                    "id": "ts_3",
+                    "heading": "Power Rule",
+                    "formula_blocks": [
+                        {
+                            "notation": "plain-text",
+                            "formula": "if f(x) = x^n, then f'(x) = nx^(n-1)",
+                            "explanation": "Power rule statement.",
+                        }
+                    ],
+                }
+            ]
+        }
+        md = render_sections_to_markdown(doc)
+        assert "$$" in md
+        assert "nx^(n-1)" in md
+
     def test_render_strips_nested_code_fences_from_llm_output(self):
         doc = {
             "sections": [

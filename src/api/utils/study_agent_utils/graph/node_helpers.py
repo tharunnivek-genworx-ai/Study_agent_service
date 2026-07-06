@@ -51,6 +51,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
 )
 from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
     insert_sections,
+    merge_section_field_patches,
     merge_section_patches,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
@@ -520,34 +521,72 @@ async def run_section_retry(
 
     try:
         if retry_mode in ("section_patch", "section_patch_then_insert"):
-            system_prompt, user_message = build_patch_messages(state, merged_doc)
-            (
-                patch_sections,
-                patch_snapshot,
-                patch_result,
-                patch_model,
-                patch_tokens,
-            ) = await call_and_parse_sections(
-                state,
-                call_llm=call_llm,
-                system_prompt=system_prompt,
-                user_message=user_message,
-                generation_type="section_patch",
-            )
-            fixed_sections.extend(patch_sections)
-            prompt_snapshots.append(patch_snapshot)
-            last_result = patch_result
-            llm_model_used = patch_model
-            if patch_tokens is not None:
-                total_token_usage = (total_token_usage or 0) + patch_tokens
-
-            merge_result = merge_section_patches(merged_doc, patch_sections)
-            merged_doc = merge_result.document
-            if merge_result.unmatched_patch_ids:
-                logger.warning(
-                    "Unmatched section patch ids: %s",
-                    ", ".join(merge_result.unmatched_patch_ids),
+            failure_class = state.get("qc_failure_class")
+            patch_jobs: list[tuple[list[dict[str, Any]], str, bool]] = []
+            if failure_class == "mixed":
+                placement_failures = list(
+                    state.get("qc_placement_section_failures") or []
                 )
+                substance_failures = list(
+                    state.get("qc_substance_section_failures") or []
+                )
+                if placement_failures:
+                    patch_jobs.append((placement_failures, "placement_only", True))
+                if substance_failures:
+                    patch_jobs.append((substance_failures, "substance", False))
+            else:
+                use_field_merge = failure_class == "placement_only"
+                patch_jobs.append(
+                    (
+                        list(state.get("qc_section_failures") or []),
+                        str(failure_class or "substance"),
+                        use_field_merge,
+                    )
+                )
+
+            for section_failures, job_failure_class, use_field_merge in patch_jobs:
+                if not section_failures:
+                    continue
+                patch_state = dict(state)
+                patch_state["qc_section_failures"] = section_failures
+                patch_state["qc_failure_class"] = job_failure_class
+                system_prompt, user_message = build_patch_messages(
+                    patch_state,
+                    merged_doc,
+                )
+                (
+                    patch_sections,
+                    patch_snapshot,
+                    patch_result,
+                    patch_model,
+                    patch_tokens,
+                ) = await call_and_parse_sections(
+                    patch_state,
+                    call_llm=call_llm,
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    generation_type="section_patch",
+                )
+                fixed_sections.extend(patch_sections)
+                prompt_snapshots.append(patch_snapshot)
+                last_result = patch_result
+                llm_model_used = patch_model
+                if patch_tokens is not None:
+                    total_token_usage = (total_token_usage or 0) + patch_tokens
+
+                if use_field_merge:
+                    merge_result = merge_section_field_patches(
+                        merged_doc,
+                        patch_sections,
+                    )
+                else:
+                    merge_result = merge_section_patches(merged_doc, patch_sections)
+                merged_doc = merge_result.document
+                if merge_result.unmatched_patch_ids:
+                    logger.warning(
+                        "Unmatched section patch ids: %s",
+                        ", ".join(merge_result.unmatched_patch_ids),
+                    )
 
         if retry_mode in ("section_insert", "section_patch_then_insert"):
             system_prompt, user_message = build_insert_messages(state, merged_doc)
@@ -607,6 +646,7 @@ def routing_state(
     routing: RetryRoutingResult | None = None,
     *,
     clear: bool = False,
+    qc_relocation_plans: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Map ``RetryRoutingResult`` into graph state fields for the study agent.
 
@@ -622,6 +662,10 @@ def routing_state(
             "qc_reverify_section_ids": [],
             "qc_missing_checklist_ids": [],
             "qc_section_failures": [],
+            "qc_failure_class": None,
+            "qc_relocation_plans": None,
+            "qc_placement_section_failures": None,
+            "qc_substance_section_failures": None,
         }
     assert routing is not None
     return {
@@ -629,6 +673,10 @@ def routing_state(
         "qc_reverify_section_ids": routing.failed_section_ids,
         "qc_missing_checklist_ids": routing.missing_checklist_ids,
         "qc_section_failures": routing.section_failures,
+        "qc_failure_class": routing.failure_class,
+        "qc_relocation_plans": qc_relocation_plans,
+        "qc_placement_section_failures": routing.placement_section_failures,
+        "qc_substance_section_failures": routing.substance_section_failures,
     }
 
 
@@ -689,6 +737,7 @@ def base_qc_return(
     fixed_sections: list[dict[str, Any]] | None = None,
     routing: RetryRoutingResult | None = None,
     routing_clear: bool = False,
+    qc_relocation_plans: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Package shared QC state fields returned by ``quality_check_node``.
 
@@ -711,7 +760,11 @@ def base_qc_return(
         "qc_llm_models_used": models_used,
         "qc_verification_mode": verification_mode,
         "fixed_sections": fixed_sections,
-        **routing_state(routing, clear=routing_clear),
+        **routing_state(
+            routing,
+            clear=routing_clear,
+            qc_relocation_plans=qc_relocation_plans,
+        ),
     }
     if frozen_check_ids is not None:
         payload["qc_frozen_check_ids"] = frozen_check_ids

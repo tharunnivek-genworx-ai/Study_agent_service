@@ -70,7 +70,7 @@ class StudyMaterialGraphState(TypedDict, total=False):
         list[dict[str, Any]] | None
     )  # Patched/inserted sections for targeted QC retry
     qc_verification_mode: (
-        Literal["full", "targeted"] | None
+        Literal["full", "targeted", "deterministic_only"] | None
     )  # Last QC LLM verification mode
     qc_retry_mode: Literal[
         "section_patch",
@@ -84,6 +84,14 @@ class StudyMaterialGraphState(TypedDict, total=False):
     qc_section_failures: list[
         dict[str, Any]
     ]  # Per-section failure bundle for rework prompt
+    qc_failure_class: (
+        Literal["placement_only", "substance", "mixed", "none"] | None
+    )  # Failure taxonomy from classify_retry_routing
+    qc_relocation_plans: (
+        list[dict[str, Any]] | None
+    )  # Low-confidence plans for LLM fallback
+    qc_placement_section_failures: list[dict[str, Any]] | None
+    qc_substance_section_failures: list[dict[str, Any]] | None
     artifact_run_id: (
         str | None
     )  # IST stamp grouping per-agent artifacts for one graph run

@@ -25,6 +25,7 @@ from src.api.control.study_agent.prompts.generation import (
 )
 from src.api.control.study_agent.prompts.qc import qc_verification_prompt
 from src.api.control.study_agent.prompts.section import (
+    section_block_relocate_prompt,
     section_insert_prompt,
     section_rework_prompt,
 )
@@ -108,6 +109,16 @@ def _build_section_rework_prompt(
     *, has_reference: bool, domain: str | None = None
 ) -> str:
     builder = section_rework_prompt.build_system_prompt
+    try:
+        return builder(has_reference=has_reference, domain=domain)
+    except TypeError:
+        return builder(has_reference=has_reference)
+
+
+def _build_section_block_relocate_prompt(
+    *, has_reference: bool, domain: str | None = None
+) -> str:
+    builder = section_block_relocate_prompt.build_system_prompt
     try:
         return builder(has_reference=has_reference, domain=domain)
     except TypeError:
@@ -324,6 +335,32 @@ class TestSectionReworkPromptSnapshots:
             _build_section_rework_prompt(has_reference=has_reference, domain=""),
             snapshot,
         )
+
+
+class TestSectionBlockRelocatePromptSnapshots:
+    @pytest.mark.parametrize("has_reference", [True, False])
+    def test_build_system_prompt_empty_domain(self, has_reference: bool) -> None:
+        snapshot = (
+            "section_block_relocate_system_prompt_has_reference.txt"
+            if has_reference
+            else "section_block_relocate_system_prompt_no_reference.txt"
+        )
+        assert_prompt_bytes_equal(
+            _build_section_block_relocate_prompt(
+                has_reference=has_reference,
+                domain="",
+            ),
+            snapshot,
+        )
+
+    def test_stem_domain_excludes_code_blocks_schema(self) -> None:
+        system = _build_section_block_relocate_prompt(
+            has_reference=False,
+            domain="STEM",
+        )
+        assert '"formula_blocks":' in system
+        assert '"code_blocks":' not in system
+        assert "SUBSTANCE RULES" not in system
 
 
 class TestQuizPromptSnapshots:

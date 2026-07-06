@@ -101,6 +101,22 @@ class TestBlockPlacementChecks:
         checks = block_placement_checks(doc, domain="STEM", checklist=[])
         assert "det_equation_in_content" in _check_ids(checks)
 
+    def test_derivative_notation_without_equation_passes_tier2(self):
+        doc = {
+            "sections": [
+                {
+                    "id": "ts_2",
+                    "heading": "Derivatives",
+                    "content": (
+                        "The derivative of a function f(x) is denoted as f'(x) "
+                        "and measures instantaneous rate of change."
+                    ),
+                }
+            ]
+        }
+        checks = block_placement_checks(doc, domain="STEM", checklist=[])
+        assert "det_equation_in_content" not in _check_ids(checks)
+
     def test_code_in_formula_block_fails(self):
         doc = {
             "sections": [

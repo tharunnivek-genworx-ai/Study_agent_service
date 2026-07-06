@@ -427,20 +427,20 @@ PRIOR BUG:
   Intersection was EMPTY (ts_* ≠ mc_*) → F4 (40% rule) did not fire → section_patch
   instead of full_regeneration when many sections failed.
 
-FIX (retry_routing.py):
-  _affected_required_checklist_ids() maps failed ts_* → mc_* via
-  _checklist_ids_for_failed_sections() + checklist_section_id() before the 40%
-  ratio. Legacy mc_*-as-section-id pipelines still work via union with
-  failed_section_ids. Test: test_topic_split_section_failures_trigger_full_regen_via_coverage_rule.
+FIX (retry_routing.py, 2026-07-06):
+  _affected_required_checklist_ids() uses failed_must_cover_checklist_ids() so only
+  checklist items with failed must_cover checks count toward the 40% F4 ratio.
+  is_placement_only_failure() blocks full_regeneration when all failures are det_*.
+  Legacy _checklist_ids_for_failed_sections() removed.
 
 REMAINING (by design, not bug):
   Under 40% affected (e.g. 2/6 required sections) → section_patch still correct.
-  Dual id model (ts_* vs mc_*) remains; only F4 mapping was broken.
+  Dual id model (ts_* vs mc_*) remains; F4 now keys off actual must_cover failures.
   Section_patch path frozen refresh → see P3/P4 (Cases C/G), not this routing fix.
 
-FILES: retry_routing.py (_checklist_ids_for_failed_sections,
+FILES: retry_routing.py (failed_must_cover_checklist_ids, is_placement_only_failure,
        _affected_required_checklist_ids, _should_force_full_regeneration F4),
-       QC_PIPELINE_INCONSISTENCIES_AUDIT 1.3 [FIXED], 7.1 (F4 portion fixed)
+       core/failure_class.py, QC_PIPELINE_INCONSISTENCIES_AUDIT 7.1
 
 ------------------------------------------------------------------------------
 CASE K — Empty rewrite + frozen after widespread prior pass [FIXED 2026-07-04]

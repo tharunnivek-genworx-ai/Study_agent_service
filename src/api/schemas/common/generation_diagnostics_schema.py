@@ -157,7 +157,7 @@ class GenerationDiagnosticsOut(BaseModel):
         default=None, alias="checklistLlmModelUsed"
     )
     qc_extraction: dict[str, Any] | None = Field(default=None, alias="qcExtraction")
-    verification_mode: Literal["full", "targeted"] | None = Field(
+    verification_mode: Literal["full", "targeted", "deterministic_only"] | None = Field(
         default=None, alias="verificationMode"
     )
     fixed_sections: list[dict[str, Any]] | None = Field(

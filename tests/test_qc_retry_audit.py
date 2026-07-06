@@ -8,6 +8,7 @@ from src.api.utils.study_agent_utils.graph import node_helpers as helpers
 from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
     build_qc_result_log_payload,
     build_qc_retry_context,
+    build_retry_routing_snapshot,
     build_study_retry_input_audit,
     retry_feedback_channel,
     should_attach_study_retry_audit,
@@ -36,6 +37,7 @@ def _routing(*, mode: str = "section_patch") -> RetryRoutingResult:
         missing_checklist_ids=[],
         section_failures=[{"section_id": "ts_1", "failures": []}],
         rationale=f"deterministic routing: {mode}",
+        failure_class="placement_only",
     )
 
 
@@ -100,6 +102,12 @@ class TestBuildQcRetryContext:
         assert ctx["next_study_pipeline_attempt"] is None
 
 
+class TestBuildRetryRoutingSnapshot:
+    def test_includes_failure_class(self) -> None:
+        snapshot = build_retry_routing_snapshot(_routing())
+        assert snapshot["failure_class"] == "placement_only"
+
+
 class TestBuildQcResultLogPayload:
     def test_merges_base_fields(self) -> None:
         payload = build_qc_result_log_payload(
@@ -118,6 +126,25 @@ class TestBuildQcResultLogPayload:
         assert payload["retry_feedback_channel"] == "structured_section_failures"
         assert "qc_result" in payload
         assert "retry_routing" in payload
+
+    def test_verification_strategy_audit_fields(self) -> None:
+        payload = build_qc_result_log_payload(
+            qc_result=_qc_result(),
+            routing=_routing(),
+            passed=False,
+            qc_attempt=2,
+            pipeline_attempt=2,
+            verification_mode="deterministic_only",
+            failure_class="placement_only",
+            llm_qc_skipped=True,
+            verification_strategy_reason="placement-only; hashes stable",
+        )
+        assert payload["failure_class"] == "placement_only"
+        assert payload["llm_qc_skipped"] is True
+        assert (
+            payload["verification_strategy_reason"] == "placement-only; hashes stable"
+        )
+        assert payload["verification_mode"] == "deterministic_only"
 
 
 class TestBuildStudyRetryInputAudit:

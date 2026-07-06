@@ -38,6 +38,6 @@ class TestSectionInsertPrompt:
         system = section_insert_prompt.build_system_prompt(
             has_reference=False, domain="STEM"
         )
-        assert "formula_blocks only (the STEM schema has no code_blocks)" in system
+        assert "formula_blocks only — this schema has no code_blocks field" in system
         assert "Programming: show complete runnable examples" not in system
         assert "Conceptual: use specific named cases" not in system

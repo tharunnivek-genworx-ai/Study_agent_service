@@ -14,9 +14,6 @@ from src.api.utils.study_agent_utils.generation.study_generation_json import (
     parse_generation_document,
 )
 from src.api.utils.study_agent_utils.graph import node_helpers as helpers
-from src.api.utils.study_agent_utils.quality_check_utils.checks.block_placement_checks import (
-    block_placement_checks,
-)
 from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic import (
     build_code_review_payloads,
     extract_structure,
@@ -26,6 +23,9 @@ from src.api.utils.study_agent_utils.quality_check_utils.checks.deterministic im
 from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
     MAX_QC_ATTEMPTS,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.core.failure_class import (
+    classify_failure_class,
+)
 from src.api.utils.study_agent_utils.quality_check_utils.core.frozen_sets import (
     refresh_frozen_lineage_after_qc,
     resolve_frozen_for_full_qc,
@@ -34,10 +34,14 @@ from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge
     build_document_outline,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.document.targeted_merge import (
+    build_carried_forward_verification,
     merge_targeted_qc_checks,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
     build_retry_routing_snapshot,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.remediation import (
+    run_placement_remediation_phase,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
     format_qc_feedback,
@@ -53,6 +57,11 @@ from src.api.utils.study_agent_utils.quality_check_utils.results.scoring import 
 )
 from src.api.utils.study_agent_utils.quality_check_utils.verification.llm_verification import (
     run_llm_verification_pass,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.verification.qc_verification_strategy import (
+    checks_safe_to_carry_forward,
+    decide_qc_verification,
+    prior_llm_checks,
 )
 from test_new_prompts.runners._prompt_loader import load_prompt_module
 from test_new_prompts.runners._run_output import write_json, write_text
@@ -132,15 +141,18 @@ async def run_qc_attempt(
         topic_split=topic_split,
         structure_missing_ids=structure_missing_ids,
     )
-    structure_checks: list[dict[str, Any]] = []
-    if optional_structure_check:
-        structure_checks.append(optional_structure_check)
-    block_placement_failures = block_placement_checks(
+
+    remediation = run_placement_remediation_phase(
         document,
         domain=domain,
         checklist=must_cover_checklist,
+        optional_structure_check=optional_structure_check,
+        generated_content=canonical_content,
     )
-    structure_checks.extend(block_placement_failures)
+    document = remediation.document
+    canonical_content = remediation.generated_content
+    block_placement_failures = remediation.block_placement_failures
+    structure_checks = remediation.structure_checks
 
     extraction_snapshot = {
         "sections": [s.get("heading", "") for s in structure.sections],
@@ -148,18 +160,76 @@ async def run_qc_attempt(
         "structure_check": optional_structure_check,
         "block_placement_checks": block_placement_failures,
     }
+    if remediation.remediation_report is not None:
+        extraction_snapshot["remediation"] = remediation.remediation_report.to_dict()
     write_json(output_dir / "extraction_snapshot.json", extraction_snapshot)
 
     qc_verification_prompt = load_prompt_module("qc_verification_prompt")
     qc_retry_prompt = load_prompt_module("qc_retry_verification_prompt")
 
-    if is_targeted:
-        prior_qc_result = pipeline_state.get("qc_result") or {}
-        reverify_section_ids = helpers.reverify_section_ids_for_targeted(pipeline_state)  # type: ignore[arg-type]
-        missing_checklist_ids = list(
-            pipeline_state.get("qc_missing_checklist_ids") or []
+    current_qc_attempt = pipeline_state.get("qc_attempt") or 0
+    prior_qc_result = pipeline_state.get("qc_result")
+    prior_hashes = pipeline_state.get("qc_section_content_hashes") or {}
+    phase1_failures = [c for c in structure_checks if not c.get("passed", True)]
+    phase1_failure_class = classify_failure_class(phase1_failures)
+
+    verification_decision = decide_qc_verification(
+        qc_attempt=current_qc_attempt,
+        prior_qc_result=prior_qc_result,
+        phase1_failures=phase1_failures,
+        is_targeted=is_targeted,
+        document=document,
+        prior_hashes=prior_hashes,
+        state_reverify_section_ids=pipeline_state.get("qc_reverify_section_ids"),
+    )
+    verification_mode = verification_decision.mode
+    llm_qc_skipped = False
+    reverify_section_ids: list[str] = []
+    missing_checklist_ids: list[str] = []
+
+    if verification_mode == "deterministic_only":
+        assert prior_qc_result is not None
+        carried_checks = checks_safe_to_carry_forward(
+            prior_llm_checks(prior_qc_result),
+            prior_hashes,
+            document,
         )
-        section_failures = list(pipeline_state.get("qc_section_failures") or [])
+        verification = build_carried_forward_verification(
+            prior_qc_result,
+            carried_checks,
+        )
+        verification_meta = {
+            "llm_ok": True,
+            "llm_skipped": True,
+            "verification_strategy_reason": verification_decision.reason,
+            "phase1_failure_class": phase1_failure_class,
+        }
+        llm_qc_skipped = True
+    elif verification_mode == "targeted":
+        assert prior_qc_result is not None
+        if is_targeted:
+            reverify_section_ids = helpers.reverify_section_ids_for_targeted(
+                pipeline_state
+            )  # type: ignore[arg-type]
+            missing_checklist_ids = list(
+                pipeline_state.get("qc_missing_checklist_ids") or []
+            )
+            section_failures = list(pipeline_state.get("qc_section_failures") or [])
+            revised_sections = fixed_sections
+        else:
+            reverify_section_ids = list(verification_decision.reverify_section_ids)
+            missing_checklist_ids = list(
+                pipeline_state.get("qc_missing_checklist_ids") or []
+            )
+            section_failures = list(pipeline_state.get("qc_section_failures") or [])
+            reverify_set = set(reverify_section_ids)
+            revised_sections = [
+                section
+                for section in (document.get("sections") or [])
+                if isinstance(section, dict)
+                and str(section.get("id", "")).strip() in reverify_set
+            ]
+
         scoped_checklist = helpers.checklist_for_reverify(
             must_cover_checklist,
             section_ids=reverify_section_ids,
@@ -176,7 +246,7 @@ async def run_qc_attempt(
         retry_user = qc_retry_prompt.build_user_message(
             teaching_instruction=inputs.effective_instruction,
             document_outline=build_document_outline(document),
-            revised_sections=fixed_sections,
+            revised_sections=revised_sections,
             section_failures=section_failures,
             must_cover_checklist=scoped_checklist,
             topic_split=scoped_topic_split,
@@ -195,7 +265,7 @@ async def run_qc_attempt(
             user_message_kwargs={
                 "teaching_instruction": inputs.effective_instruction,
                 "document_outline": build_document_outline(document),
-                "revised_sections": fixed_sections,
+                "revised_sections": revised_sections,
                 "section_failures": section_failures,
                 "must_cover_checklist": scoped_checklist,
                 "topic_split": scoped_topic_split,
@@ -203,7 +273,8 @@ async def run_qc_attempt(
             },
             pass_label="QC targeted verification",
         )
-        verification_mode = "targeted"
+        verification_meta["verification_strategy_reason"] = verification_decision.reason
+        verification_meta["phase1_failure_class"] = phase1_failure_class
     else:
         frozen_check_ids, frozen_section_ids = resolve_frozen_for_full_qc(
             frozen_check_ids=pipeline_state.get("qc_frozen_check_ids"),
@@ -249,7 +320,8 @@ async def run_qc_attempt(
             },
             pass_label="QC verification",
         )
-        verification_mode = "full"
+        verification_meta["verification_strategy_reason"] = verification_decision.reason
+        verification_meta["phase1_failure_class"] = phase1_failure_class
         prior_qc_result = None
         reverify_section_ids = []
         missing_checklist_ids = []
@@ -259,6 +331,9 @@ async def run_qc_attempt(
         "stage": "qc",
         "attempt": attempt,
         "verification_mode": verification_mode,
+        "llm_qc_skipped": llm_qc_skipped,
+        "phase1_failure_class": phase1_failure_class,
+        "verification_strategy_reason": verification_decision.reason,
         "topic": inputs.topic,
         "domain": domain,
         "started_at": started_at.isoformat(),
@@ -300,7 +375,12 @@ async def run_qc_attempt(
             error=metadata["error"],
         )
 
-    if is_targeted and prior_qc_result is not None:
+    needs_targeted_merge = (
+        verification_mode == "targeted"
+        and prior_qc_result is not None
+        and not llm_qc_skipped
+    )
+    if needs_targeted_merge:
         merged_checks = merge_targeted_qc_checks(
             prior_qc_result,
             verification,
@@ -354,8 +434,10 @@ async def run_qc_attempt(
             existing_section_ids=pipeline_state.get("qc_frozen_section_keys"),
             document=document,
             checklist=must_cover_checklist,
-            touched_section_ids=reverify_section_ids if is_targeted else None,
-            reverify_checklist_ids=missing_checklist_ids if is_targeted else None,
+            touched_section_ids=reverify_section_ids if needs_targeted_merge else None,
+            reverify_checklist_ids=missing_checklist_ids
+            if needs_targeted_merge
+            else None,
         )
     )
 

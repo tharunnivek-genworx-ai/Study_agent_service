@@ -22,6 +22,10 @@ from typing import Any
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     _is_math_like_language,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.remediation.placement_patterns import (
+    has_high_confidence_equation_in_content,
+    looks_like_programming_code_in_formula,
+)
 
 _PROGRAMMING_LANGUAGES = frozenset(
     {
@@ -89,28 +93,10 @@ def _checklist_requires_formula_work(
     return False
 
 
-_EQUATION_IN_CONTENT_PATTERNS = (
-    re.compile(r"\\lim\b"),
-    re.compile(r"\\frac\b"),
-    re.compile(r"\\int\b"),
-    re.compile(r"\$\$"),
-    re.compile(r"f'\s*\("),
-    re.compile(r"lim_\{"),
-    re.compile(r"→|←|⇒"),
-    re.compile(r"\\to\b"),
-)
-
 _PSEUDOCODE_PATTERNS = (
     re.compile(r"\)\s+then\b", re.IGNORECASE),
     re.compile(r"\bendif\b", re.IGNORECASE),
     re.compile(r"\bif\b.+\bthen\b", re.IGNORECASE),
-)
-
-_CODE_IN_FORMULA_PATTERNS = (
-    re.compile(r"\bdef\s+\w+\s*\("),
-    re.compile(r"\bclass\s+\w+"),
-    re.compile(r"\bimport\s+\w+"),
-    re.compile(r"\bfunction\s+\w+"),
 )
 
 
@@ -131,9 +117,10 @@ def block_placement_checks(
         section_heading = str(section.get("heading", "")).strip()
 
         for location, subsection_heading in _content_locations(section):
-            if domain_key in ("STEM", "Mixed") and _looks_like_equation_in_content(
-                location
-            ):
+            if domain_key in (
+                "STEM",
+                "Mixed",
+            ) and has_high_confidence_equation_in_content(location):
                 checks.append(
                     _failed_check(
                         check_id="det_equation_in_content",
@@ -473,10 +460,6 @@ def _section_has_code_blocks(section: dict[str, Any]) -> bool:
     return False
 
 
-def _looks_like_equation_in_content(text: str) -> bool:
-    return any(pattern.search(text) for pattern in _EQUATION_IN_CONTENT_PATTERNS)
-
-
 def _looks_like_pseudocode(code: str) -> bool:
     if any(pattern.search(code) for pattern in _PSEUDOCODE_PATTERNS):
         return True
@@ -488,7 +471,7 @@ def _looks_like_pseudocode(code: str) -> bool:
 
 
 def _looks_like_programming_code(formula: str) -> bool:
-    return any(pattern.search(formula) for pattern in _CODE_IN_FORMULA_PATTERNS)
+    return looks_like_programming_code_in_formula(formula)
 
 
 def _location_evidence(

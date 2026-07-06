@@ -349,7 +349,9 @@ class StudyMaterialVersionOut(BaseModel):
     generation_run_id: str | None = None
     concept_plan: dict[str, Any] | None = None
     checklist_llm_model_used: str | None = None
-    qc_verification_mode: Literal["full", "targeted"] | None = None
+    qc_verification_mode: Literal["full", "targeted", "deterministic_only"] | None = (
+        None
+    )
     qc_frozen_check_ids: list[str] | None = None
     qc_frozen_section_keys: list[str] | None = None
     qc_section_content_hashes: dict[str, str] | None = None

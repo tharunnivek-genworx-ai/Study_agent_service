@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -32,6 +33,7 @@ from src.api.control.study_agent.prompts.generation import (
     regeneration_prompt,
 )
 from src.api.control.study_agent.prompts.section import (
+    section_block_relocate_prompt,
     section_insert_prompt,
     section_rework_prompt,
 )
@@ -135,6 +137,10 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
     )
 
 
+def _uses_placement_relocate_prompt(state: StudyMaterialGraphState) -> bool:
+    return state.get("qc_failure_class") == "placement_only"
+
+
 def _build_section_patch_messages(
     state: StudyMaterialGraphState,
     document: dict[str, Any],
@@ -142,15 +148,44 @@ def _build_section_patch_messages(
     """Prompts for ``section_patch`` — rewrites failed sections only.
 
     Pulls ``qc_section_failures`` (structured bundles from ``classify_retry_routing``)
-    into ``section_rework_prompt`` with ``<sections_to_fix>`` JSON.
+    into ``section_rework_prompt`` with ``<sections_to_fix>`` JSON, or into
+    ``section_block_relocate_prompt`` when placement-only failures have low-confidence
+    relocation plans for LLM fallback.
     """
     has_reference = helpers.has_reference_material(state)
+    section_failures = state.get("qc_section_failures") or []
+    patch_section_ids = helpers.section_ids_from_failures(section_failures)
+    if _uses_placement_relocate_prompt(state):
+        reference_block = section_block_relocate_prompt.format_reference_block(
+            helpers.reference_text(state),
+            has_reference=has_reference,
+        )
+        user_message = section_block_relocate_prompt.build_user_message(
+            topic_title=state.get("node_title", ""),
+            teaching_instruction=helpers.teaching_instruction(state),
+            document_outline=build_document_outline(document),
+            section_failures=section_failures,
+            document=document,
+            relocation_plans=state.get("qc_relocation_plans") or [],
+            domain=state.get("domain") or "",
+            topic_split_block=helpers.build_scoped_topic_split_block(
+                state,
+                section_ids=patch_section_ids,
+            ),
+            reference_block=reference_block,
+        )
+        return (
+            section_block_relocate_prompt.build_system_prompt(
+                has_reference=has_reference,
+                domain=state.get("domain"),
+            ),
+            user_message,
+        )
+
     reference_block = section_rework_prompt.format_reference_block(
         helpers.reference_text(state),
         has_reference=has_reference,
     )
-    section_failures = state.get("qc_section_failures") or []
-    patch_section_ids = helpers.section_ids_from_failures(section_failures)
     user_message = section_rework_prompt.build_user_message(
         topic_title=state.get("node_title", ""),
         teaching_instruction=helpers.teaching_instruction(state),
@@ -244,23 +279,28 @@ async def _call_study_generator(
     system_prompt: str,
     user_message: str,
     revision: bool = False,
+    temperature: float | None = None,
 ) -> Any:
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_message),
     ]
-    if revision:
-        temperature = llm_settings.study_revision_temperature
+    if temperature is not None:
+        temp = temperature
+        top_p = llm_settings.study_revision_top_p
+        do_sample = llm_settings.study_revision_do_sample
+    elif revision:
+        temp = llm_settings.study_revision_temperature
         top_p = llm_settings.study_revision_top_p
         do_sample = llm_settings.study_revision_do_sample
     else:
-        temperature = llm_settings.study_generation_temperature
+        temp = llm_settings.study_generation_temperature
         top_p = llm_settings.study_generation_top_p
         do_sample = llm_settings.study_generation_do_sample
     return await call_groq_with_rotation(
         messages=messages,
         model=llm_settings.llm_model,
-        temperature=temperature,
+        temperature=temp,
         top_p=top_p,
         do_sample=do_sample,
         timeout=120,
@@ -280,15 +320,31 @@ def _uses_revision_sampling(
 
 
 async def _call_study_revision_llm(
+    state: StudyMaterialGraphState,
     *,
     system_prompt: str,
     user_message: str,
 ) -> Any:
+    placement_relocate = _uses_placement_relocate_prompt(state)
     return await _call_study_generator(
         system_prompt=system_prompt,
         user_message=user_message,
         revision=True,
+        temperature=0.1 if placement_relocate else None,
     )
+
+
+def _make_section_patch_llm_call(
+    state: StudyMaterialGraphState,
+) -> Callable[..., Any]:
+    async def _call(*, system_prompt: str, user_message: str) -> Any:
+        return await _call_study_revision_llm(
+            state,
+            system_prompt=system_prompt,
+            user_message=user_message,
+        )
+
+    return _call
 
 
 async def study_agent_node(
@@ -316,7 +372,7 @@ async def study_agent_node(
         return await helpers.run_section_retry(
             state,
             retry_mode,
-            call_llm=_call_study_revision_llm,
+            call_llm=_make_section_patch_llm_call(state),
             build_patch_messages=_build_section_patch_messages,
             build_insert_messages=_build_section_insert_messages,
         )

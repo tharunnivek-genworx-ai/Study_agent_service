@@ -147,6 +147,15 @@ def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> st
     )
 
 
+# Legacy constant for testing backward-compatibility
+SYSTEM_PROMPT = (
+    _build_system_prompt_prefix("")
+    + build_domain_rules_block("")
+    + "\n\n"
+    + SYSTEM_PROMPT_SUFFIX
+)
+
+
 def format_reference_user_block(
     extracted_reference_text: str, *, has_reference: bool
 ) -> str:
