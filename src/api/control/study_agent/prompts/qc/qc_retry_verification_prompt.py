@@ -26,7 +26,15 @@ QC_RETRY_STEM_RULES_BLOCK = """\
 - STEM: trace worked examples, verify constants, check every equation and reaction in a formula_block. A reaction or formula that is plausible-sounding but not independently verifiable as real chemistry/physics/math is a failure, not a pass. Apply the 3-step evidence procedure: state the correct fact from your own knowledge first, then compare to the revised content.
 """
 QC_RETRY_STEM_DERIVATION_BLOCK = """\
-- STEM DERIVATION: When the prior failure or checklist item is itself a STEM item and involves derive/prove/calculate/step-by-step, verify the revised section contains sequential algebraic or logical steps in formula_blocks. Python, sympy, scipy, or any computational code inside a code_block does NOT satisfy a derivation requirement — this is always a failure if the depth_gate demanded sequential mathematical steps. Never apply this STEM derivation standard to a Programming item, even if its requirement or depth_gate text uses the same words.
+- STEM CODE RULE: any STEM-classified section that contains a code_block fails — unconditionally, regardless of
+  which verb its checklist item uses (derive, prove, calculate, apply, determine, solve, trace, step-by-step). This
+  applies even when the code_block belongs to a section you were NOT asked to re-verify by name — see GLOBAL SCAN
+  below. Never apply this STEM standard to a Programming item, even if its text uses the same words.
+- STEM CHAIN RULE: a revised STEM section whose checklist item demands derive/prove/step-by-step must contain at
+  least 4 chained formula_block entries, and every entry must be recomputed and confirmed to follow validly from
+  the one before it — a step that does not follow, even one producing a coincidentally correct final answer, fails
+  the check and must be quoted in "issues". A "fix" that adds a second, unverified derivation method alongside the
+  first is a new failure, not a correction — verify any newly introduced method just as strictly as the original.
 """
 QC_RETRY_PROGRAMMING_RULES_BLOCK = """\
 - Programming: trace code execution; verify no undefined symbols; verify every API call is real for the stated language/version; check for duplicate method/function names in the same scope. A Programming item's runnable code block is itself the correct evidence — it is never penalised for "not being a derivation."
@@ -34,14 +42,34 @@ QC_RETRY_PROGRAMMING_RULES_BLOCK = """\
 QC_RETRY_CONCEPTUAL_RULES_BLOCK = """\
 - Conceptual: apply the 3-step procedure — state the correct fact from your own knowledge first, then compare to the revised content; do not use "X is indeed Y" as evidence. Verify named facts (dates, people, events, laws, organisations) are accurate per mainstream record. Verify causal claims are directionally accurate and mechanistically sound, not just plausible. When the prior failure cited a missing named example: confirm the revised section names a specific actor, describes the context, and states a verifiable outcome — a sector-level generalisation ("many companies", "government agencies") is still a failure even after revision. When the prior failure cited an unverifiable statistic: confirm it is now either removed, replaced with a qualitative description, or traceable to a publicly documented source. A code_block or formula_block appearing in a Conceptual section is itself a failure regardless of content correctness.\
 """
+QC_GLOBAL_SCAN_BLOCK = """\
+GLOBAL SCAN — run before scoring any other category, every retry pass, with no exceptions
+<revised_sections_json> may contain sections beyond the ones the patch targeted (extraction re-scans the full
+document on every pass). For every section present in <revised_sections_json>, regardless of whether it appears in
+<previously_failed>:
+- If its domain is STEM and it contains any code_block: emit a document_coherence check with passed=false,
+  severity="critical", section_id set to that section, and evidence quoting the offending code. This check fires
+  even when that section was never targeted by this retry and was not the source of the prior failure being
+  re-verified — a structural violation does not get a pass just because nobody patched it this round.
+- If a must_cover item is linked to that same section, also emit a must_cover check with passed=false for it,
+  checklist_id set to the linked item, explaining that a STEM section may not contain code regardless of what the
+  prior pass concluded about that item.
+Do this for every qualifying section before moving to the scoped categories below — a stale pass from a prior round
+is never carried forward silently; it must be re-asserted as failed here if the violation still exists.
+"""
+
 QC_MUST_COVER_BLOCK = """\
-CHECK CATEGORIES (emit only for revised sections)
-① must_cover — one check per scoped checklist item tied to a revised section
+CHECK CATEGORIES
+① must_cover — one check per scoped checklist item tied to a revised section, PLUS any check emitted by GLOBAL SCAN above
    Emit one must_cover check per scoped checklist item using its exact checklist_id.
    The id field MUST equal the checklist_id exactly. The question field MUST directly address whether the original depth_gate is now met — do NOT substitute with a generic "Is the root cause of the prior failure fixed?" question. Write the question as: "Does the revised [section_id] now satisfy '[depth_gate requirement]'?"
    PASS only when:
    - Every component of the depth_gate is substantively satisfied with specific quoted evidence from the revised content.
    - For a STEM item whose requirement involves derive/prove/calculate: the revised section contains sequential algebraic or logical steps in formula_blocks. A final formula plus explanation does not pass. Python/scipy/sympy code does not pass. (This standard applies only to STEM items — for a Programming item, a runnable code block plus a correct behavioural explanation is the right and sufficient evidence, even if its requirement text contains the same words.)
+   EVIDENCE FORMAT: write the evidence field as a numbered list mirroring the depth_gate's own components — "[1]
+   <component>: <quoted text or MISSING> [2] ...". A component whose evidence is a formula, substitution, or numeric
+   step must be the literal formula_block text, not a paraphrase or nearby prose. passed=true requires zero MISSING
+   components.
    FAIL when:
    - Root cause of the prior failure remains even if phrasing changed.
    - Depth_gate component is missing.
@@ -52,15 +80,24 @@ CHECK CATEGORIES (emit only for revised sections)
    Leave corrective_hint empty when passed=true.
 """
 QC_CONTENT_ACCURACY_BLOCK = """\
-② content_accuracy — one check per claim in revised sections you can evaluate with certainty
-   REQUIRED PROCEDURE: state the correct fact from your own knowledge first, then compare to the revised content. "X is indeed Y" restating the document is not evidence.
+② content_accuracy — one check per claim in revised sections you can evaluate with certainty, PLUS mandatory
+   coverage of every formula_block in the revised sections (STEM/Mixed only) — id them formula_1, formula_2, ...
+   in document order; do not skip a formula_block because it is unfamiliar or hard to verify, emit it with
+   passed=false and "cannot independently verify" instead.
+   REQUIRED PROCEDURE: evidence must be written as "Correct value (from your own knowledge, independent of the
+   document): <...>. Document states: <...>." — "X is indeed Y" restating the document is never valid evidence.
    Re-scan the entire revised section — do not limit to the prior failure text.
    Trace code, verify equations and reactions in formula_blocks, check named facts.
-   severity: "critical". Emit only checks you can evaluate with certainty.
+   severity: "critical".
 """
 QC_DOCUMENT_COHERENCE_BLOCK = """\
-③ document_coherence — exactly one check
-   FAIL when revised sections don't match ids/headings in <document_outline>; revised code references undefined symbols; any code_block or formula_block in a revised section has an empty "explanation" field; a code_block contains non-code content (equations, reactions, prose-only material); a code_block appears in a STEM section where the must_cover requirement demands derivation (Python does not satisfy a mathematical derivation); a code_block/formula_block appears in a section whose domain does not call for one.
+③ document_coherence — one check per <document_outline> mismatch or schema violation, PLUS the checks already
+   emitted by GLOBAL SCAN above (do not duplicate a GLOBAL SCAN finding here — it already counts)
+   FAIL when revised sections don't match ids/headings in <document_outline>; revised code references undefined
+   symbols; any code_block or formula_block in a revised section has an empty "explanation" field; a code_block
+   contains non-code content; a code_block/formula_block appears in a section whose domain does not call for one;
+   or a revised section now duplicates the construction, derivation, or worked example of another section in the
+   document (including an untouched one) without the plan explicitly calling for two independent methods.
    severity: "critical".
 """
 QC_CODE_QUALITY_BLOCK = """\
@@ -126,6 +163,7 @@ def _build_evaluation_standard_block(domain: str | None) -> str:
         parts.append(QC_RETRY_PROGRAMMING_RULES_BLOCK)
     if "Conceptual" in included:
         parts.append(QC_RETRY_CONCEPTUAL_RULES_BLOCK)
+    parts.append(QC_GLOBAL_SCAN_BLOCK)
     return "".join(parts)
 
 
@@ -147,7 +185,6 @@ def build_system_prompt(domain: str | None = None) -> str:
     )
 
 
-SYSTEM_PROMPT = build_system_prompt(domain="")
 REPROMPT_SYSTEM = (
     "Your previous response was not valid JSON. "
     "Return ONLY the JSON object. Start with { and end with }. No markdown, no commentary."
@@ -249,9 +286,11 @@ def build_user_message(
         revised_json = revised_json[:max_section_chars] + "\n[sections truncated]"
     parts.append(f"\n<revised_sections_json>\n{revised_json}\n</revised_sections_json>")
     parts.append(
-        "\nRe-verify the revised sections. Confirm prior failures are root-cause-fixed — not just rephrased. "
+        "\nRun GLOBAL SCAN across every section in <revised_sections_json> before scoring scoped checklist items, "
+        "even sections not named in <previously_failed>. "
+        "Re-verify the revised sections. Confirm prior failures are root-cause-fixed — not just rephrased. "
         "For must_cover: use the checklist_id as the check id; write the question to address whether the depth_gate is now met. "
-        "For derive/prove/calculate requirements on STEM items only: confirm sequential algebraic steps exist in formula_blocks — a formula statement or Python/scipy code is not a derivation. Never apply this standard to a Programming or Conceptual item. "
+        "For STEM items: any code_block in a STEM section is always a failure — unconditionally. "
         "For code: trace the actual output; verify every API call is real for the stated language. "
         "For STEM: apply the 3-step procedure — state the correct fact from your own knowledge first, then compare. Do not use 'X is indeed Y' as evidence. "
         "Quote specific evidence for every passing must_cover check. "

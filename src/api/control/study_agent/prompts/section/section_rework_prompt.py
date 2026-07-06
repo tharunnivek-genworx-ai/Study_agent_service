@@ -35,8 +35,9 @@ _SUBSECTION_EVIDENCE_PATTERN = re.compile(
     r"subsection\s+['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
-STEM_ACCURACY_BLOCK = """- STEM: equations and reactions belong in formula_blocks and must be correct and dimensionally consistent; worked examples must trace step-by-step to the correct answer; constants must carry correct values and units. Never state a reaction or formula you cannot verify as real. For chemistry: verify the reactants, mechanism, and products are correct for the described reaction type — a correctly formatted but mechanistically wrong reaction is a factual error.
-- STEM DERIVATION RULE: When the section's linked checklist item demands derivation, proof, or step-by-step calculation, write sequential algebraic or logical steps in formula_blocks — one step per entry, each following from the previous. Do NOT provide Python, sympy, scipy, numpy, or any other computational library code as the derivation. The retry QC will fail the section again if code substitutes for formula_block steps."""
+STEM_ACCURACY_BLOCK = """\
+- STEM: equations and reactions belong in formula_blocks and must be correct and dimensionally consistent; worked examples must trace step-by-step to the correct answer; constants must carry correct values and units. Never state a reaction or formula you cannot verify as real. For chemistry: verify the reactants, mechanism, and products are correct for the described reaction type — a correctly formatted but mechanistically wrong reaction is a factual error.
+- NO CODE, EVER: this section's output schema has no code_blocks field. If a prior failure cited Python, sympy, scipy, numpy, or any computational code as a substitute for derivation steps, remove the code_block entirely and replace it with sequential formula_block entries — one step per entry, each following from the previous. This applies regardless of whether the linked checklist item's requirement says "derive," "prove," "calculate," or "apply" — there is no STEM verb for which code is an acceptable answer. Retry QC will fail the section again if any code remains."""
 PROGRAMMING_ACCURACY_BLOCK = '- Programming: code must be syntactically valid and run correctly on the demonstrated path; no undefined symbols; verify every API call is real for the stated language/version; every code_block must have a non-empty "explanation" field.'
 CONCEPTUAL_ACCURACY_BLOCK = """- Conceptual: named facts (dates, people, events, laws, organisations) must be accurate per mainstream record. When fixing thin coverage: add a specific named real-world case — identify the actor, describe the context, and state the verifiable outcome; a sector-level generalisation without a named entity is not an acceptable fix. When fixing a missing causal chain: trace precondition → trigger → mechanism → outcome explicitly; 'X caused Y' without mechanism is not a causal chain. When fixing a missing comparison: name both sides and provide a real named case for each. Do not introduce code_blocks or formula_blocks — all content, including quantitative context, must appear as specific named real-world scenarios in prose. Do not attribute statistics or performance metrics to named organisations unless publicly documented and widely known."""
 _ACCURACY_RULES_HEADER = """\
@@ -109,9 +110,6 @@ def _build_base_system(domain: str | None) -> str:
         + _SUBSTANCE_RULES_BLOCK
         + _FINAL_CHECK_BLOCK
     )
-
-
-_BASE_SYSTEM = _build_base_system("")
 
 
 def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:

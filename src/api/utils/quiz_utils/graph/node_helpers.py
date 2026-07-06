@@ -122,7 +122,7 @@ async def call_and_parse_questions(
             }
         ) from exc
 
-    parsed, hints_stale_ids = normalize_parsed_items(items, state)
+    parsed, hints_stale_ids = normalize_parsed_items(items)
     return (
         parsed,
         result,

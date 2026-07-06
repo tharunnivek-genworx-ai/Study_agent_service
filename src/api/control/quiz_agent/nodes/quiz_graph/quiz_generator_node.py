@@ -114,7 +114,7 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
     raw = result.content or ""
     try:
         items = parse_json_array(raw)
-        parsed, hints_stale_ids = normalize_parsed_items(items, state)
+        parsed, hints_stale_ids = normalize_parsed_items(items)
     except Exception as exc:  # noqa: BLE001
         error_return = {
             "error": f"Malformed quiz output: {exc}",

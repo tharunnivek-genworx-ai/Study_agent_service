@@ -72,7 +72,3 @@ Then, for every must_cover item, verify in order:
 If any item fails a check, rewrite it from its family's skeleton before producing the JSON. Do not output until every item passes all checks above.
 
 {JSON_OUTPUT_SCHEMA}"""
-
-
-# Default export for callers that do not pass has_reference (no reference step).
-GENERATION_SYSTEM_PROMPT = build_generation_system_prompt(has_reference=False)

@@ -23,9 +23,9 @@ Classify the topic into exactly one of:
   Programming  — code, algorithms, data structures, APIs, frameworks, protocols; correctness depends on syntax and runtime behaviour.
   Conceptual   — history, philosophy, law, ethics, social sciences, literature, business/management; correctness depends on named facts and logical reasoning.
   Mixed        — the topic spans more than one of the above.
-Output exactly one word for the "domain" field: STEM, Programming, Conceptual, or Mixed. Never copy the option template string as-is.
-Classify by what the topic itself fundamentally IS, not by how rigorous its explanation needs to be. A programming topic (an API, a hook, a data structure, a protocol) stays Programming even when explaining it well requires careful reasoning about state, control flow, or timing — that is still "syntax and runtime behaviour," never a mathematical derivation. Reserve STEM for topics whose correctness genuinely rests on an equation, proof, or physical/empirical fact.
-If the topic is Mixed, this top-level label is only used for routing later pipeline steps. Every individual checklist item still gets its OWN evidence family decided independently — see the must_cover_checklist rules below. Decide each item's family from what that specific item is about, never from the document's overall label."""
+Output exactly one word: STEM, Programming, Conceptual, or Mixed.
+Classify by what the topic itself fundamentally IS, not by how rigorous its explanation needs to be. A programming topic stays Programming even when explaining it well requires careful reasoning about state, control flow, or timing — that is still "syntax and runtime behaviour," never a mathematical derivation. Reserve STEM for topics whose correctness genuinely rests on an equation, proof, or physical/empirical fact.
+If the topic is Mixed, this top-level label only routes later pipeline steps. Every checklist item still gets its own evidence family decided independently — see below. Decide each item's family from what that item is about, never from the document's overall label."""
 
 EVIDENCE_FAMILY_BLOCK = """\
 Every must_cover_checklist item belongs to exactly ONE of the three evidence families below. Decide the family for each item individually, based on what that specific item is actually about — never from the document's overall "domain" label, and never from surface vocabulary in the topic, teaching_instruction, or your own draft wording. Words like "implement," "apply," "method," "technique," "process," "procedure," or "system" occur naturally in STEM and Conceptual writing and do NOT, by themselves, indicate Family B.
@@ -50,15 +50,36 @@ A1/A2 DEPTH TEST — every item that reaches FAMILY A by the test above still sp
 
 For each family/mode, copy its requirement and depth_gate skeleton and fill in only the bracketed parts — do not invent a new sentence structure, and do not blend wording from a different family's or mode's skeleton.
 
-FAMILY A1 — MATHEMATICAL DERIVATION
-Use ONLY for the concepts in the entire document where the point is to build a result from first principles.
+FAMILY A1 — MATHEMATICAL / LOGICAL DERIVATION
+Use ONLY for the concepts in the entire document where the point is to build a result from first principles —
+whether the starting point is a named equation or law (algebraic derivation) or a foundational definition,
+axiom, or construction (geometric, logical, or limit-based derivation).
 requirement skeleton:
-  "<Derive/Prove/Show that> <target>, starting from <named equation or law>, showing <the required steps> until <the final result>."
+  "<Derive/Prove/Show that> <target>, starting from <named equation, law, or foundational construction>, showing <the required steps> until <the final result>."
 depth_gate skeleton (fill only the brackets, keep the rest of the sentence exactly as written):
-  "Derivation begins from [named starting equation or law]; each algebraic or logical step is shown explicitly in formula notation; all variables defined with units; correct final result [state the result] reached and stated."
-Worked example:
+  "Derivation begins from [named starting equation, law, or construction]; the chain contains at least [pick a
+  concrete number, 4 or higher, appropriate to how many genuine steps this specific result actually takes] sequential
+  steps, each expressed as its own formula_block entry that follows mechanically from the one before it; all
+  variables or terms are defined (with units, where physical) on first use; correct final result [state the result]
+  reached and stated."
+
+SCHEMA COMPATIBILITY — READ BEFORE WRITING ANY A1 DEPTH_GATE:
+The study-material schema for STEM sections has ONLY formula_blocks (equations in LaTeX or plain-text) — there is
+no diagram, figure, image, or visual-construction field anywhere downstream. Never write a depth_gate that can only
+be satisfied by something visual: banned phrasing includes "shown in diagram notation," "illustrated in a figure,"
+"drawn," or "depicted." If the topic's canonical proof or derivation is traditionally visual or geometric (area
+arguments, similar-triangle constructions, geometric optics, free-body diagrams, vector diagrams), the depth_gate
+must instead require every one of those visual relationships to be translated into its own explicit quantitative
+or symbolic equation inside a formula_block (e.g. an area equality written as an equation, a ratio written as a
+fraction, a substitution written as an equation) — never leave a step describable only in words about a picture.
+
+Worked example (algebraic):
   requirement:  "Derive the time complexity of merge sort step-by-step from the recurrence relation T(n) = 2T(n/2) + n, showing each substitution until the closed form is reached."
-  depth_gate:   "Derivation begins from the recurrence relation T(n) = 2T(n/2) + n; each algebraic step is shown explicitly via substitution; all variables defined; correct closed-form result O(n log n) reached and stated."
+  depth_gate:   "Derivation begins from the recurrence relation T(n) = 2T(n/2) + n; the chain contains at least 4 sequential steps, each expressed as its own formula_block entry that follows mechanically from the one before it; all variables defined; correct closed-form result O(n log n) reached and stated."
+
+Worked example (geometric/constructive, translated into equation form per the compatibility rule above):
+  requirement:  "Derive the relationship between a solid's cross-sectional area and its volume using Cavalieri's principle, starting from the definition of two solids with equal cross-sectional areas at every height, showing each integration step until the volume formula is reached."
+  depth_gate:   "Derivation begins from Cavalieri's principle stated as an equation relating equal cross-sectional areas A(h) at every height h; the chain contains at least 4 sequential steps, each expressed as its own formula_block entry (the area function, the integral setup, the evaluated integral, the final closed form) that follows mechanically from the one before it; all variables defined with units; correct final volume formula reached and stated."
 
 FAMILY A2 — MATHEMATICAL/EMPIRICAL APPLICATION
 Use for every other equation-, formula-, or fact-grounded item: applying a named law, rule, or formula to a specific case, or reading/computing a result from given data. This is the default Family A mode.
@@ -124,7 +145,10 @@ TOPIC_SPLIT_STYLE_BLOCK = """\
 STRUCTURAL_INTEGRITY_BLOCK = """\
 STRUCTURAL INTEGRITY — applies to every output, no exceptions, this is checked before anything else
 - Every must_cover_checklist item's section_id MUST match the id of a topic_split entry that is present in THIS SAME JSON output. A checklist item pointing at a section_id you did not also output (e.g. an item with section_id "ts_7" when topic_split only goes up to ts_6) is an invalid plan and must never be produced.
-- Conversely, every topic_split entry should be the section_id of at least one must_cover_checklist item. A topic_split entry with zero checklist items pointing at it is an uncovered section.
+- Conversely, every topic_split entry MUST be the section_id of at least one must_cover_checklist item. A topic_split
+  entry with zero checklist items pointing at it is an invalid plan and must never be produced — before output,
+  either add a checklist item that points to it, or remove that topic_split entry. This is not a stylistic
+  preference; treat it exactly like the orphaned-section_id case above.
 - If you decide a checklist item needs a section_id that does not yet exist, you must add the matching topic_split entry to this same output BEFORE you finish — never invent a new section_id without creating its topic_split counterpart in the same response.
 - Before output, walk through every must_cover_checklist item and confirm its section_id resolves to an entry you actually wrote; walk through every topic_split entry and confirm at least one checklist item resolves to it."""
 
