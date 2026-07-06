@@ -161,11 +161,11 @@ def block_placement_checks(
                         evidence=_location_evidence(
                             section_heading,
                             None,
-                            "Section contains code_blocks or formula_blocks",
+                            "Section contains code_blocks or formula_blocks, conceptual sections should not contain code_blocks or formula_blocks",
                         ),
                         corrective_hint=(
                             "Remove code_blocks and formula_blocks from Conceptual "
-                            "sections; express examples in prose."
+                            "sections; express examples in prose. Instead of using code_blocks or formula_blocks, use prose to explain the example. Give a detailed step by step explanation of the example."
                         ),
                     )
                 )

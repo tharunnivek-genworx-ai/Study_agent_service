@@ -1,4 +1,14 @@
-"""Domain-specific JSON output schemas for study material generation."""
+"""Domain-specific JSON output schemas for study material generation.
+
+Each domain gets its own schema with only the fields that domain may use:
+STEM has formula_blocks and never code_blocks; Programming has code_blocks
+and never formula_blocks; Conceptual has neither. Only Mixed (or an
+unresolved/empty domain) gets both fields. Callers MUST pass the resolved
+domain through to build_json_output_schema()/build_section_patch_output_schema()
+— there is no "safe" default here. Passing None/"" is the Mixed schema,
+which silently re-opens the code_blocks-in-a-STEM-doc bug if a STEM domain
+string fails to reach this function.
+"""
 
 from __future__ import annotations
 
@@ -43,10 +53,11 @@ Output format — return ONLY valid JSON, nothing else:
   ]
 }
 Rules: omit "formula_blocks" and "subsections" entirely when empty. When <topic_split> is present, create exactly one
-section per entry with matching id and heading. Do NOT include "code_blocks" anywhere — STEM study material uses
-formula_blocks only. Equations, chemical reactions, and mathematical derivations live ONLY inside "formula_blocks" —
-never inside "content" and never as executable code. Each formula_block entry is one step or one equation in a chain.
-The "explanation" field inside every formula_block entry is mandatory and must not be empty."""
+section per entry with matching id and heading. There is no "code_blocks" field in this schema — it does not exist for
+STEM output, not even for a section whose checklist item uses "calculate," "apply," or "determine." Equations, chemical
+reactions, and mathematical derivations live ONLY inside "formula_blocks" — never inside "content" and never as
+executable code. Each formula_block entry is one step or one equation in a chain. The "explanation" field inside every
+formula_block entry is mandatory and must not be empty."""
 )
 
 PROGRAMMING_JSON_OUTPUT_SCHEMA = (
@@ -123,9 +134,6 @@ A formula_block is not source code: never give it a programming-language "langua
 inside one. The "explanation" field inside every code_block and formula_block entry is mandatory and must not be empty.\
 """
 
-# Backward-compatible alias — empty / unknown domain and Mixed use the full schema.
-JSON_OUTPUT_SCHEMA = MIXED_JSON_OUTPUT_SCHEMA
-
 _DOMAIN_SCHEMA_MAP: dict[str, str] = {
     "STEM": STEM_JSON_OUTPUT_SCHEMA,
     "Programming": PROGRAMMING_JSON_OUTPUT_SCHEMA,
@@ -135,7 +143,10 @@ _DOMAIN_SCHEMA_MAP: dict[str, str] = {
 
 
 def build_json_output_schema(domain: str | None) -> str:
-    """Return the output JSON schema for the given domain classification."""
+    """Return the output JSON schema for the given domain classification.
+    domain=None/"" returns the Mixed schema — callers must treat that as a
+    deliberate choice (genuinely mixed/unresolved), not a default to fall
+    back on for a known single-domain document."""
     normalized = normalize_domain(domain)
     if not normalized or normalized == "Mixed":
         return MIXED_JSON_OUTPUT_SCHEMA
@@ -177,7 +188,8 @@ def build_section_patch_output_schema(domain: str | None) -> str:
             "    }\n"
             "  ]\n"
             "}\n"
-            'Omit "formula_blocks" and "subsections" when empty. Do NOT include "code_blocks". '
+            'Omit "formula_blocks" and "subsections" when empty. There is no "code_blocks" field in this schema — '
+            'not even for a section whose checklist item says "calculate" or "apply" rather than "derive". '
             'Preserve each section "id" exactly. Equations and derivations live only in formula_blocks.'
         )
     if normalized == "Programming":

@@ -7,8 +7,6 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
-
 
 def parse_json_array(raw: str) -> list:
     """Parse an LLM response that should be a JSON array.
@@ -48,7 +46,6 @@ def normalize_question_markdown(text: str) -> str:
 
 def normalize_parsed_items(
     items: list[Any],
-    state: QuizGraphState,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     parsed: list[dict[str, Any]] = []
     hints_stale_ids: list[str] = []

@@ -14,7 +14,7 @@ from src.api.utils.study_agent_utils.generation.must_cover_checklist_format impo
     format_must_cover_checklist_line,
 )
 
-STEM_SUBSTANCE_BLOCK = "- STEM: state equations and reactions in formula_blocks only (the STEM schema has no code_blocks), trace worked examples step-by-step to correct answers, define all variables with units. When the depth_gate demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — one step per formula_block entry if needed. Do NOT use Python, sympy, scipy, numpy, or any computational library as a substitute."
+STEM_SUBSTANCE_BLOCK = "- STEM: state equations and reactions in formula_blocks only — this schema has no code_blocks field, for any new STEM section regardless of which verb its depth_gate uses. Trace worked examples step-by-step to correct answers; define all variables with units. When the depth_gate demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks, one step per entry. Never use Python, sympy, scipy, numpy, or any computational library as a substitute."
 PROGRAMMING_SUBSTANCE_BLOCK = '- Programming: show complete runnable examples in code_blocks; every code_block must have a non-empty "explanation" field.'
 CONCEPTUAL_SUBSTANCE_BLOCK = """- Conceptual: every new section must define the concept precisely (distinguishing it from adjacent or commonly confused concepts), explain the mechanism (what causes it, how it operates step by step, who the actors are, what conditions are required, and what the observable outcome is), and illustrate with at least one specific named case — name the organisation, event, legislation, or individual, describe the context, and state the outcome. When a depth_gate requires comparison: name both options and provide a real named case for each side. When a depth_gate requires causal analysis: trace precondition → trigger → mechanism → outcome; 'X caused Y' without the mechanism chain is insufficient. Never use sector-level generalisations ('many companies', 'government agencies') where a named entity is required. Do not add code_blocks or formula_blocks — all content must appear as specific named real-world scenarios in prose. Do not attribute statistics or performance metrics to named organisations unless publicly documented and widely known."""
 _SUBSTANCE_RULES_COMMON = """\
@@ -86,9 +86,6 @@ def _build_base_system(domain: str | None) -> str:
         + "\n\n"
         + _FINAL_CHECK_BLOCK
     )
-
-
-_BASE_SYSTEM = _build_base_system("")
 
 
 def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:

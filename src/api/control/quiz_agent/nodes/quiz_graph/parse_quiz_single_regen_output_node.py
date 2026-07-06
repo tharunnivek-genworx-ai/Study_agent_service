@@ -75,7 +75,7 @@ async def parse_quiz_single_regen_output(
     expected_ids = {str(question_id) for question_id in state.get("question_ids") or []}
     try:
         items = parse_json_array(raw)
-        parsed, hints_stale_ids = normalize_parsed_items(items, cast(Any, state))
+        parsed, hints_stale_ids = normalize_parsed_items(items)
         parsed = _restore_patch_order_indices(
             parsed,
             state.get("all_questions") or [],

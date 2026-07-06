@@ -8,7 +8,7 @@ from src.api.control.study_agent.prompts.generation.output_schemas import (
 )
 from src.api.utils.prompt_utils.domain_merge import merge_domain_blocks
 
-STEM_ACCURACY_BLOCK = "STEM: State equations in standard notation; define all variables and units; trace worked examples to correct numerical answers; state assumptions. Physical constants must carry correct values. Equations and reactions belong in formula_blocks only — the STEM schema has no code_blocks. When the regeneration goal or a must_cover item demands derivation, proof, or step-by-step calculation, provide sequential algebraic or logical steps in formula_blocks — do not use Python, sympy, scipy, numpy, or any computational library as a substitute. Code shows computation; it does not demonstrate the reasoning chain. Do not ever include coding examples for computation in STEM and derivation. Never state a reaction or formula you cannot verify as real."
+STEM_ACCURACY_BLOCK = "STEM: State equations in standard notation; define all variables and units; trace worked examples to correct numerical answers; state assumptions. Physical constants must carry correct values. Equations and reactions belong in formula_blocks only — this schema has no code_blocks field, for any STEM section, regardless of whether the regeneration goal or a must_cover item uses derive/prove/calculate/apply/determine/solve. Never use Python, sympy, scipy, numpy, or any computational library as a substitute — code shows computation, it does not demonstrate mathematical reasoning. Never include coding examples for computation in a STEM section. Never state a reaction or formula you cannot verify as real."
 PROGRAMMING_ACCURACY_BLOCK = 'Programming: Code must be syntactically valid and run correctly on the demonstrated path. Every symbol must be defined or imported in the same block. Never define the same method or function name twice in the same scope without explaining the consequence. Every code_block must have a non-empty "explanation" field. Verify every API or function name is real for the stated language/version.'
 CONCEPTUAL_ACCURACY_BLOCK = "Conceptual: Named facts (dates, people, events, laws, organisations) must be accurate per mainstream record. Examples must be specific and named: identify a real actor, describe the context, and state the verifiable outcome — 'many organisations' or 'in the tech sector' without a named entity is not an example. Causal claims must reflect actual historical or empirical record, not merely plausible generalisations; when the regeneration goal demands causal analysis, trace precondition → trigger → mechanism → outcome explicitly. When the goal demands comparison: name both sides and provide a specific named case for each. Do not introduce code_blocks or formula_blocks into a Conceptual section unless the regeneration goal explicitly requires a technical or quantitative addition. Do not attribute statistics or performance metrics to named organisations unless those figures are publicly documented and widely known."
 _DOMAIN_ACCURACY_HEADER = "DOMAIN-SPECIFIC ACCURACY (applies to everything you write)"
@@ -104,9 +104,6 @@ def _build_base_system(domain: str | None) -> str:
         + build_domain_accuracy_block(domain)
         + _BASE_SYSTEM_SUFFIX
     )
-
-
-_BASE_SYSTEM = _build_base_system("")
 
 
 def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:

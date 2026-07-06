@@ -42,26 +42,32 @@ QC_MUST_COVER_INTRO = """\
    d. Pass only if EVERY component is present with specific quoted evidence.
 """
 QC_STEM_DERIVATION_MUST_COVER_BLOCK = """\
-   DERIVATION MANDATORY CHECK — applies ONLY when the must_cover item's own domain is STEM (for a Mixed document, only to the items whose individual content is fundamentally mathematical — never to its Programming or Conceptual items). Do not apply any part of this check to a Programming or Conceptual item even if its requirement or depth_gate text contains the words derive, prove, calculate, trace, or step-by-step — in those domains those words describe tracing code execution or walking through an argument, not producing an algebraic derivation; evaluate those items instead under the Programming or Conceptual verification procedures below.
-   For a qualifying STEM item, before issuing any pass decision, verify the section contains formula_blocks with SEQUENTIAL ALGEBRAIC OR LOGICAL STEPS where each step follows from the previous using standard mathematical operations. The following situations ALWAYS force passed=false regardless of how the depth_gate prose is worded:
-     - The section contains only a final formula with a one-line or one-sentence explanation (no steps shown between start and end).
-     - The section contains a formula_block with a starting equation and a final result but omits intermediate algebraic steps.
-     - The "derivation" is provided entirely as Python, sympy, scipy, numpy, or any other computational code inside a code_block. Code computes answers; it does not demonstrate mathematical reasoning and cannot satisfy a derive/prove requirement.
-     - A subsection describes the derivation in prose without any formula_block entries showing the actual steps.
+   STEM RULE — applies to every must_cover item whose own domain is STEM (for Mixed documents: only to items whose
+   individual content is fundamentally mathematical, never to Programming or Conceptual items in the same document):
+   - The section MUST have zero code_blocks. Python, sympy, scipy, numpy, or any other computational code anywhere
+     in that section forces passed=false — unconditionally, regardless of whether the depth_gate says "derive,"
+     "prove," "calculate," "apply," "determine," or "solve." There is no STEM verb that makes code an acceptable
+     substitute for formula_blocks.
+   - When the depth_gate further demands derivation, proof, or step-by-step calculation: the section must contain
+     formula_blocks with sequential algebraic or logical steps, each following from the previous. A final formula
+     plus a one-sentence explanation does not pass; a starting equation and final result with no intermediate steps
+     does not pass; a prose description of "how" the derivation works with no formula_block steps does not pass.
+   Never apply any part of this rule to a Programming or Conceptual item, even if its text contains the same words —
+   evaluate those under their own procedures below.
 """
 QC_MUST_COVER_HARD_DISQUALIFIERS = """\
    HARD DISQUALIFIERS — any single one forces passed=false:
    - Concept appears only in a heading or a single sentence with no mechanism explanation.
    - An example exists but produces a wrong result, raises an error, or skips steps.
    - A subtype or variant named in the depth_gate has no dedicated explanation in the section.
-   - Code is present but any code_block or formula_block has an empty or heading-restating "explanation" field.
+   - Any code_block or formula_block has an empty or heading-restating "explanation" field.
    - Section defines the concept but never explains how or why it works.
-   - The section's depth is thin enough that it reads as a summary rather than a worked teaching treatment, even if every depth_gate keyword is technically present.
-   - For a STEM item only: the depth_gate or requirement demands derivation, proof, or step-by-step calculation, but the section only states the final formula, rule, or result — or provides only computational code. (Never apply this disqualifier to a Programming item, where runnable code is the correct and sufficient evidence, or to a Conceptual item.)
+   - The section reads as a summary rather than a worked teaching treatment, even if every depth_gate keyword is technically present.
+   - For a STEM item: the section contains any code_block at all — code is never acceptable in a STEM section regardless of which verb the depth_gate uses. (Never apply this disqualifier to a Programming item, where runnable code is the correct and sufficient evidence.)
    severity: "critical" for required; "major" for recommended.
    checklist_id REQUIRED. section_id REQUIRED. evidence REQUIRED on both pass and fail.
    For must_cover, set section_id to the checklist item's section_id exactly; never leave it empty.
-   On pass: quote the specific text (the actual sequential steps or the specific named case) that satisfies each depth_gate component.
+   On pass: quote the specific text (the actual sequential steps, the runnable code, or the named case) that satisfies each depth_gate component.
    On fail: quote the specific text (or its absence) that reveals the gap.
 """
 QC_CONTENT_ACCURACY_INTRO = """\
@@ -82,7 +88,9 @@ QC_STEM_VERIFICATION_BLOCK = """\
    - Is every stated constant (speed of light, Planck's constant, Avogadro's number, etc.) numerically correct?
    - For chemical reactions: verify the reactants, intermediates, mechanistic sequence, and products are consistent with the reaction class. Check the actual chemistry, not just the labels or symbols.
    - Is every named reaction, mechanism, or compound a real one? A confident, well-formatted reaction or formula that you cannot positively verify as real chemistry/physics/mathematics — including plausible-sounding but fabricated reagents, products, or mechanisms — FAILS, even if no other error is present.
-   FAIL if any equation or reaction is wrong, misapplied, fabricated, or if a worked example reaches an incorrect result.
+   - FAIL if any code_block is present in this section at all — see the STEM RULE above. This is a content_accuracy
+     and document_coherence failure simultaneously; do not let a correct formula_block elsewhere offset it.
+   FAIL if any equation or reaction is wrong, misapplied, fabricated, or a worked example reaches an incorrect result.
 """
 
 QC_PROGRAMMING_VERIFICATION_BLOCK = """\
@@ -125,9 +133,11 @@ QC_DOCUMENT_COHERENCE_BLOCK = """\
    - A code block uses a symbol not defined or imported within that block.
    - Two sections state contradictory facts about the same concept.
    - Any code_block or formula_block has an empty or heading-restating "explanation" field.
-   - A code_block contains content that is not genuine executable code (an equation, a chemical reaction, or plain prose dressed up as "code") — that content belongs in a formula_block or in prose instead.
-   - A code_block appears in a STEM section whose linked must_cover requirement demands derivation, proof, or step-by-step calculation. Python, sympy, scipy, or numerical computation code does not satisfy a mathematical derivation requirement — this is a domain coherence violation regardless of whether the code is syntactically correct. The derivation must appear as sequential algebraic steps in formula_blocks.
-   - A code_block or formula_block appears in a section whose domain does not call for one without the teaching instruction explicitly requiring it. This includes: programming code_blocks in purely Conceptual sections (HR, history, management, law); formula_blocks in purely narrative sections with no quantitative content.
+   - A code_block contains non-code content (an equation, reaction, or plain prose dressed up as "code") — that content belongs in a formula_block or prose instead.
+   - A code_block appears anywhere in a STEM-classified section. This applies to every STEM section unconditionally
+     — not only ones whose checklist item demands derivation. The STEM schema has no code_blocks field; its presence
+     is itself the failure, independent of correctness or which verb the linked requirement uses.
+   - A code_block or formula_block appears in a section whose domain does not call for one and the teaching instruction does not explicitly require it (programming code_blocks in purely Conceptual sections; formula_blocks in purely narrative sections).
    - The document's own introduction or outline promises content the body never delivers.
    severity: "critical". evidence REQUIRED on both pass and fail.
 """
@@ -164,13 +174,15 @@ Emit no code_quality or stack_fidelity checks for documents with no code_blocks.
 SYSTEM_PROMPT_SUFFIX = """\
 ANTI-INFLATION RULES — absolute, no exceptions
 - NEVER pass a must_cover check because the section "generally covers the topic."
-- NEVER pass a STEM must_cover check whose requirement or depth_gate uses derive/prove/calculate/step-by-step when the section contains only a formula statement, a one-sentence explanation, or Python code in place of formula_block derivation steps — no exceptions. This rule applies only to items whose own domain is STEM; a Programming item's runnable code IS the correct evidence for its own depth_gate and must never be penalised under this rule.
+- NEVER pass any must_cover or document_coherence check for a STEM section that contains a code_block — this applies
+  to every STEM section, unconditionally, not only ones whose requirement uses derive/prove/calculate/step-by-step.
+  A Programming item's runnable code IS the correct evidence for its own depth_gate and must never be penalised
+  under this rule — this rule is STEM-only.
 - NEVER pass code_quality without mentally tracing the code's actual output.
-- NEVER pass content_accuracy using the pattern "X is indeed Y" or "this is correct" without first stating the correct fact from your own knowledge. Circular restatement of the document's claim is never sufficient to pass.
-- NEVER pass content_accuracy for a formula, reaction, or constant you have not independently verified using the 3-step procedure.
-- NEVER set hallucination_risk to "none" if any specific named claim (formula value, reaction, API name, date, constant, statistic) could not be positively confirmed using the 3-step procedure.
-- NEVER leave the evidence field empty for must_cover, teaching_alignment, or document_coherence on pass or fail.
-- NEVER pass document_coherence when any code_block has an empty or heading-only "explanation" field, when a code_block holds non-code content, when a code_block appears in a STEM derivation section instead of formula_blocks, or when a code_block/formula_block appears in a section whose domain does not call for one.
+- NEVER pass content_accuracy using "X is indeed Y" without first stating the correct fact from your own knowledge.
+- NEVER pass content_accuracy for a formula, reaction, or constant you have not independently verified.
+- NEVER set hallucination_risk to "none" if any specific named claim could not be positively confirmed via the 3-step procedure.
+- NEVER leave evidence empty for must_cover, teaching_alignment, or document_coherence on pass or fail.
 - NEVER set corrective_hint when passed=true; use "".
 - NEVER set retry_recommendation.mode to "none" while any check has passed=false.
 - NEVER treat length, detail density, or formatting quality as evidence of correctness.
@@ -272,7 +284,6 @@ def build_system_prompt(domain: str | None = None) -> str:
     )
 
 
-SYSTEM_PROMPT = build_system_prompt(domain="")
 REPROMPT_SYSTEM = (
     "Your previous response was not valid JSON. "
     "Return ONLY the JSON object. Start with { and end with }. No markdown, no commentary."

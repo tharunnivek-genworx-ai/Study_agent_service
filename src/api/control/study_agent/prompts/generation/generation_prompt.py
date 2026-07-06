@@ -13,15 +13,11 @@ from src.api.utils.study_agent_utils.generation.must_cover_checklist_format impo
 
 STEM_DOMAIN_RULES_BLOCK = """\
 STEM (mathematics, physics, chemistry, biology, engineering, statistics):
-- Every equation, chemical reaction, or derivation step belongs in a formula_block, not a code_block or inline text.
-- State every equation in standard notation. Define every variable and its unit on first use.
-- COMPLETE SECTION STANDARD: A well-formed STEM section delivers: (1) a formal statement of the concept or law with all defining conditions; (2) derivation or proof from first principles where the concept permits it — each algebraic or logical step in its own formula_block entry so the reasoning chain is visible; (3) a fully worked numerical or algebraic example tracing from stated inputs through every intermediate step to the correct final answer; (4) the assumptions and boundary conditions under which the concept holds or breaks down. A section that states a formula and gives one sentence of context has not met this standard.
-- Worked examples must show every calculation or derivation step, not just the final answer.
-- State all assumptions and constraints explicitly (e.g. "assuming ideal gas behaviour", "for small angles").
-- Physical and mathematical constants must carry their correct value and unit every time they appear.
-- Do not skip algebraic or logical steps in derivations — each step must follow from the previous one. Each intermediate step belongs in its own formula_block entry so the reasoning chain is visible.
-- Never state a reaction, mechanism, or formula that you cannot independently verify as real chemistry, physics, or mathematics. A confident, well-formatted but fabricated reaction or constant is a serious failure — if you are not certain a reaction or value is real, do not include it.
-- DERIVATION ANTI-SUBSTITUTION RULE: When a must_cover_checklist item's requirement or depth_gate uses verbs such as derive, prove, calculate, trace, or step-by-step, the complete mathematical working MUST appear as sequential algebraic or logical steps inside formula_blocks. Using Python, sympy, scipy, numpy, or any other computational library is NOT a substitute for a mathematical derivation. Running code computes an answer; it does not demonstrate the reasoning chain. The STEM output schema has no code_blocks field — never emit executable code for equation work."""
+- NO CODE, EVER: the STEM output schema has no code_blocks field. This is unconditional — it does not depend on which verb the linked checklist item uses (calculate, apply, determine, solve, derive, prove, trace, step-by-step all fall under this). Every equation, chemical reaction, derivation, or numeric substitution belongs in a formula_block, never in executable code, regardless of whether the requirement reads as a "derivation" or an "application."
+- Each algebraic or logical step belongs in its own formula_block entry, in order, so the reasoning chain is visible — whether the task is deriving a result from first principles or substituting values into an established formula.
+- State every equation in standard notation. Define every variable and its unit on first use. Constants must carry their correct value and unit every time they appear.
+- COMPLETE SECTION STANDARD: (1) a formal statement of the concept or law with its defining conditions; (2) derivation or proof from first principles where the concept's evidence family calls for it; (3) a fully worked numerical or algebraic example tracing from stated inputs through every intermediate step to the correct final answer; (4) the assumptions and boundary conditions under which the concept holds or breaks down. A formula plus one sentence of context does not meet this standard.
+- Never state a reaction, mechanism, or formula you cannot independently verify as real chemistry, physics, or mathematics — a confident but fabricated reaction or constant is a serious failure."""
 
 PROGRAMMING_DOMAIN_RULES_BLOCK = """\
 Programming (code, algorithms, data structures, APIs, frameworks):
@@ -83,12 +79,9 @@ FINAL CHECK before outputting (do not print this list):
 2. Every required checklist item satisfies its depth_gate with demonstrated evidence.
 3. All code_block and formula_block "explanation" fields are non-empty.
 4. No code block references an undefined symbol.
-5. All domain-specific accuracy rules are satisfied.
-6. code_blocks contain only real programming code, formula_blocks contain only equations/reactions/derivations, and neither appears in a Conceptual section without the topic genuinely requiring it.
-7. Every `must_cover` item's evidence appears in the section matching its `section_id`, not a neighbouring section.
-8. Every STEM section whose must_cover item demands derivation contains sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.
-9. Every Conceptual section whose must_cover item demands a named example, comparison, or causal analysis contains a specific named actor, described context, and stated outcome — a sector-level generalisation is not a named example.
-10. Every Programming section whose must_cover item demands a step-by-step trace or execution walkthrough includes an explicit execution trace showing intermediate state changes, not just the final output.\
+5. Every STEM section has zero code_blocks — formula_blocks only, regardless of which verb its checklist item used.
+6. Every Conceptual section whose item demands a named example, comparison, or causal analysis contains a specific named actor, described context, and stated outcome.
+7. Every Programming section whose item demands a step-by-step trace includes an explicit execution trace with intermediate state changes, not just the final output.\
 """
 
 REPROMPT_SYSTEM = (
@@ -129,10 +122,13 @@ def _build_system_prompt_prefix(domain: str | None) -> str:
     )
 
 
-SYSTEM_PROMPT_PREFIX = _build_system_prompt_prefix(None)
-
-
 def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
+    """domain is REQUIRED and must be the same resolved value used to build
+    the <domain> tag in the user message and passed to build_domain_rules_block().
+    There is no legacy/default schema fallback — passing None or "" here
+    deliberately returns the Mixed schema (both code_blocks and
+    formula_blocks available), so an unresolved domain must be an explicit
+    choice, never an accident of a stale default parameter."""
     return (
         _build_system_prompt_prefix(domain)
         + build_domain_rules_block(domain)
@@ -140,14 +136,6 @@ def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> st
         + SYSTEM_PROMPT_SUFFIX
         + (_REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM)
     )
-
-
-SYSTEM_PROMPT = (
-    _build_system_prompt_prefix(None)
-    + build_domain_rules_block("")
-    + "\n\n"
-    + SYSTEM_PROMPT_SUFFIX
-)
 
 
 def format_reference_user_block(

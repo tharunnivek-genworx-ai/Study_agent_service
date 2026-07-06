@@ -19,7 +19,7 @@ async def parse_quiz_output(state: QuizGraphState) -> QuizGraphState:
 
     try:
         items = parse_json_array(raw)
-        parsed, hints_stale_ids = normalize_parsed_items(items, state)
+        parsed, hints_stale_ids = normalize_parsed_items(items)
     except Exception as exc:  # noqa: BLE001
         return {**state, "error": f"Malformed quiz output: {exc}"}
 

@@ -38,17 +38,17 @@ class TestEmptyToNone:
 
 class TestNormalizeParsedItems:
     def test_preserves_option_c_and_d(self):
-        parsed, _ = normalize_parsed_items([_item()], {})
+        parsed, _ = normalize_parsed_items([_item()])
         assert parsed[0]["option_c"] == "A reducer"
         assert parsed[0]["option_d"] == "A context"
 
     def test_rejects_missing_option_c(self):
         with pytest.raises(ValueError, match="option_c"):
-            normalize_parsed_items([_item(option_c=None)], {})
+            normalize_parsed_items([_item(option_c=None)])
 
     def test_rejects_missing_option_d(self):
         with pytest.raises(ValueError, match="option_d"):
-            normalize_parsed_items([_item(option_d="")], {})
+            normalize_parsed_items([_item(option_d="")])
 
 
 class TestNormalizeQuestionMarkdown:
@@ -68,5 +68,5 @@ class TestNormalizeQuestionMarkdown:
 
     def test_normalizes_question_text_in_parsed_items(self):
         raw_text = "Output?: ```python\nx = 1\n```"
-        parsed, _ = normalize_parsed_items([_item(question_text=raw_text)], {})
+        parsed, _ = normalize_parsed_items([_item(question_text=raw_text)])
         assert parsed[0]["question_text"].startswith("Output?\n\n```python")
