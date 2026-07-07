@@ -178,3 +178,8 @@ class GenerationDiagnosticsOut(BaseModel):
     hint_generation: HintGenerationDiagnosticsOut | None = Field(
         default=None, alias="hintGeneration"
     )
+
+    # ── Mentor acknowledgement (persisted in qc_result JSONB) ─────────────
+    mentor_dismissed_qc_warning: bool | None = Field(
+        default=None, alias="mentorDismissedQcWarning"
+    )

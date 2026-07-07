@@ -842,6 +842,36 @@ class QuizService:
         quiz_out.hints_status = compute_hints_status(active_questions)
         return quiz_out
 
+    async def dismiss_quiz_qc_warning(
+        self,
+        node_id: UUID,
+        quiz_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> QuizOut:
+        """Record that the mentor accepted a quiz draft despite a permanent QC failure."""
+        _assert_mentor(role)
+        await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+
+        repo = QuizRepository(self.session)
+        quiz = await repo.get_quiz_by_id(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
+
+        dismissed = await repo.dismiss_qc_warning(quiz_id)
+        if dismissed is None:
+            raise QuizNotFoundException()
+
+        questions = await repo.get_questions_by_quiz(quiz_id)
+        active_questions = await repo.get_active_questions_by_quiz(quiz_id)
+        await self.session.commit()
+        quiz_out = QuizOut.model_validate(dismissed)
+        quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
+        quiz_out.hints_status = compute_hints_status(active_questions)
+        return quiz_out
+
     # ── publish ────────────────────────────────────────────────────────
 
     async def publish_quiz(

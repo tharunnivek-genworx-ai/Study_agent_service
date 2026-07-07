@@ -331,6 +331,23 @@ async def unarchive_study_material_version(
     )
 
 
+@router.patch(
+    "/nodes/{node_id}/study-material/versions/{version_id}/dismiss-qc-warning",
+    response_model=StudyMaterialVersionOut,
+)
+async def dismiss_study_material_qc_warning(
+    node_id: UUID,
+    version_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> StudyMaterialVersionOut:
+    """Mentor acknowledges a QC warning and accepts the draft."""
+    service = StudyMaterialService(db)
+    return await service.dismiss_study_material_qc_warning(
+        node_id, version_id, current_user.sub, current_user.role
+    )
+
+
 @router.get(
     "/nodes/{node_id}/study-material/versions/{version_id}",
     response_model=StudyMaterialVersionOut,
