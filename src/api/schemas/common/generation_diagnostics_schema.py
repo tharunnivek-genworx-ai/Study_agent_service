@@ -157,7 +157,7 @@ class GenerationDiagnosticsOut(BaseModel):
         default=None, alias="checklistLlmModelUsed"
     )
     qc_extraction: dict[str, Any] | None = Field(default=None, alias="qcExtraction")
-    verification_mode: Literal["full", "targeted"] | None = Field(
+    verification_mode: Literal["full", "targeted", "deterministic_only"] | None = Field(
         default=None, alias="verificationMode"
     )
     fixed_sections: list[dict[str, Any]] | None = Field(
@@ -177,4 +177,9 @@ class GenerationDiagnosticsOut(BaseModel):
     next_llm_retry_at: datetime | None = Field(default=None, alias="nextLlmRetryAt")
     hint_generation: HintGenerationDiagnosticsOut | None = Field(
         default=None, alias="hintGeneration"
+    )
+
+    # ── Mentor acknowledgement (persisted in qc_result JSONB) ─────────────
+    mentor_dismissed_qc_warning: bool | None = Field(
+        default=None, alias="mentorDismissedQcWarning"
     )

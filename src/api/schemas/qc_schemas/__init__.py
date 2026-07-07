@@ -23,6 +23,7 @@ from src.api.schemas.qc_schemas.qc_document_structure_schema import (
     DocumentStructure,
 )
 from src.api.schemas.qc_schemas.qc_retry_routing_schema import (
+    FailureClass,
     RetryMode,
     RetryRoutingResult,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "CODE_CATEGORIES",
     "CodeArtifact",
     "DocumentStructure",
+    "FailureClass",
     "PROSE_CATEGORIES",
     "QcCategory",
     "QcCheckItem",

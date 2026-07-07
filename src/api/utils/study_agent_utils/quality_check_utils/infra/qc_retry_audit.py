@@ -36,6 +36,7 @@ def build_retry_routing_snapshot(routing: RetryRoutingResult) -> dict[str, Any]:
         "missing_checklist_ids": routing.missing_checklist_ids,
         "section_failures": routing.section_failures,
         "rationale": routing.rationale,
+        "failure_class": routing.failure_class,
     }
 
 
@@ -91,12 +92,18 @@ def build_qc_result_log_payload(
     passed: bool,
     qc_attempt: int,
     pipeline_attempt: int,
+    failure_class: str | None = None,
+    llm_qc_skipped: bool = False,
+    verification_strategy_reason: str = "",
     **base_fields: Any,
 ) -> dict[str, Any]:
     """Merge standard QC result artifact fields with unified retry audit context."""
     return {
         **base_fields,
         "qc_result": qc_result,
+        "failure_class": failure_class,
+        "llm_qc_skipped": llm_qc_skipped,
+        "verification_strategy_reason": verification_strategy_reason,
         **build_qc_retry_context(
             qc_result=qc_result,
             routing=routing,

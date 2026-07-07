@@ -54,6 +54,11 @@ from src.api.utils.study_agent_utils.quality_check_utils.parsing.json_parse impo
     parse_llm_json_object,
     parse_qc_verification_response,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.remediation import (
+    apply_relocation_plans,
+    build_relocation_plans,
+    run_placement_remediation_phase,
+)
 from src.api.utils.study_agent_utils.quality_check_utils.results.feedback import (
     format_qc_feedback,
 )
@@ -103,6 +108,9 @@ __all__ = [
     "build_infra_failure_return",
     "build_qc_guard_return",
     "build_qc_result_log_payload",
+    "apply_relocation_plans",
+    "build_relocation_plans",
+    "run_placement_remediation_phase",
     "build_retry_routing_snapshot",
     "check_targets_reverify",
     "classify_retry_routing",

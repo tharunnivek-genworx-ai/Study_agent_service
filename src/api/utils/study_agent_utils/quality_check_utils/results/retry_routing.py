@@ -31,14 +31,17 @@ from src.api.schemas.qc_schemas import (
     RetryMode,
     RetryRoutingResult,
 )
-from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
-    checklist_section_id,
-)
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     expected_document_section_ids,
     normalize_checklist_id,
     resolve_checklist_section_id,
     validate_section_id_coverage,
+)
+from src.api.utils.study_agent_utils.quality_check_utils.core.failure_class import (
+    classify_failure_class,
+    failed_must_cover_checklist_ids,
+    is_placement_only_failure,
+    split_section_failures_by_kind,
 )
 
 _VALID_MODES: frozenset[str] = frozenset(
@@ -97,6 +100,7 @@ def _failed_checks(qc_result: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _failure_record(check: dict[str, Any]) -> dict[str, str]:
     return {
+        "check_id": str(check.get("id", "")),
         "category": str(check.get("category", "")),
         "evidence": str(check.get("evidence", "")),
         "corrective_hint": str(check.get("corrective_hint", "")),
@@ -138,35 +142,18 @@ def _checklist_ids_for_missing_sections(
     return checklist_ids
 
 
-def _checklist_ids_for_failed_sections(
-    checklist: list[dict[str, Any]],
-    failed_section_ids: set[str],
-) -> set[str]:
-    """Map document section ids (e.g. ts_*) to checklist ids (e.g. mc_*)."""
-    if not failed_section_ids:
-        return set()
-    return {
-        str(item.get("id", "")).strip()
-        for item in checklist
-        if str(item.get("id", "")).strip()
-        and checklist_section_id(item) in failed_section_ids
-    }
-
-
 def _affected_required_checklist_ids(
     *,
     checklist: list[dict[str, Any]],
-    failed_section_ids: set[str],
+    failed: list[dict[str, Any]],
     missing_checklist_ids: set[str],
 ) -> set[str]:
-    """Required checklist ids that are missing or tied to a failed section."""
+    """Required checklist ids that are missing or failed on must_cover."""
     required = _required_checklist_ids(checklist)
     if not required:
         return set()
     affected = set(missing_checklist_ids)
-    affected |= _checklist_ids_for_failed_sections(checklist, failed_section_ids)
-    # Legacy pipelines use mc_* as both checklist id and document section id.
-    affected |= failed_section_ids
+    affected |= failed_must_cover_checklist_ids(failed, checklist)
     return affected & required
 
 
@@ -368,6 +355,9 @@ def _should_force_full_regeneration(
     ≥40% required checklist items affected, ≥4 distinct failed section ids,
     or ≥3 unmapped checks (LLM checks without valid section_id).
     """
+    if is_placement_only_failure(failed):
+        return False, ""
+
     if _teaching_alignment_critical_fail(failed):
         return True, "teaching_alignment critical failure"
 
@@ -385,7 +375,7 @@ def _should_force_full_regeneration(
     if required and not _is_structure_only_failure(failed):
         affected_required = _affected_required_checklist_ids(
             checklist=checklist,
-            failed_section_ids=failed_section_ids,
+            failed=failed,
             missing_checklist_ids=missing_checklist_ids,
         )
         ratio = len(affected_required) / len(required)
@@ -435,6 +425,54 @@ def _coerce_llm_recommendation_mode(raw_mode: Any) -> RetryMode | None:
     return None
 
 
+def _merge_llm_recommendation_targets(
+    *,
+    recommendation: dict[str, Any] | None,
+    document: dict[str, Any],
+    checklist: list[dict[str, Any]],
+    failed_section_ids: set[str],
+    missing_checklist_ids: set[str],
+    failures_by_section: dict[str, list[dict[str, str]]],
+    failed: list[dict[str, Any]],
+) -> None:
+    """Fill routing targets from ``retry_recommendation`` when the mapper found none.
+
+    Only runs when deterministic mapping produced no patch or insert targets, so
+    existing scoped failures (must_cover, det_*, content_accuracy, …) are unchanged.
+    """
+    if failed_section_ids or missing_checklist_ids:
+        return
+    if not isinstance(recommendation, dict):
+        return
+
+    known = _document_section_ids(document)
+    for raw in recommendation.get("failed_section_ids") or []:
+        section_id = str(raw).strip()
+        if section_id in known:
+            failed_section_ids.add(section_id)
+
+    for raw in recommendation.get("missing_checklist_ids") or []:
+        item_id = normalize_checklist_id(str(raw), checklist)
+        if item_id:
+            missing_checklist_ids.add(item_id)
+
+    if not failed_section_ids:
+        return
+
+    doc_level_failures = [
+        _failure_record(check)
+        for check in failed
+        if not str(check.get("section_id", "") or "").strip()
+    ]
+    if not doc_level_failures:
+        return
+
+    for section_id in failed_section_ids:
+        existing = failures_by_section.setdefault(section_id, [])
+        if not existing:
+            existing.extend(doc_level_failures)
+
+
 def _teaching_alignment_sole_failure(failed: list[dict[str, Any]]) -> bool:
     """True when every failed check is document-level teaching_alignment."""
     if not failed:
@@ -458,6 +496,21 @@ def _reconcile_mode(
     if deterministic == "none":
         if teaching_alignment_sole_failure:
             return "full_regeneration"
+        if llm_recommendation_mode and llm_recommendation_mode != "none":
+            has_failed = bool(failed_section_ids)
+            has_missing = bool(missing_checklist_ids)
+            if llm_recommendation_mode == "full_regeneration":
+                return "full_regeneration"
+            if llm_recommendation_mode == "section_patch" and has_failed:
+                return "section_patch"
+            if llm_recommendation_mode == "section_insert" and has_missing:
+                return "section_insert"
+            if (
+                llm_recommendation_mode == "section_patch_then_insert"
+                and has_failed
+                and has_missing
+            ):
+                return "section_patch_then_insert"
         return "none"
 
     if llm_recommendation_mode is None:
@@ -488,11 +541,10 @@ def _build_section_failures(
     failures_by_section: dict[str, list[dict[str, str]]],
     sections: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Build ``qc_section_failures`` bundles for ``section_rework_prompt``.
+    """Build ``qc_section_failures`` bundles for section patch prompts.
 
     Each bundle: ``section_id``, ``heading``, ``current_section_json``, ``failures``
-    where each failure has ``category``, ``evidence``, ``corrective_hint`` only
-    (no question/severity — those stay in ``qc_result`` artifacts).
+    where each failure has ``check_id``, ``category``, ``evidence``, ``corrective_hint``.
     """
     bundles: list[dict[str, Any]] = []
     for section_id in failed_section_ids:
@@ -533,6 +585,8 @@ def classify_retry_routing(
     checklist = checklist or []
     failed = _failed_checks(qc_result)
 
+    failure_class = classify_failure_class(failed)
+
     if not failed:
         return RetryRoutingResult(
             mode="none",
@@ -540,6 +594,7 @@ def classify_retry_routing(
             missing_checklist_ids=[],
             section_failures=[],
             rationale="no failed checks",
+            failure_class=failure_class,
         )
 
     (
@@ -554,6 +609,28 @@ def classify_retry_routing(
         checklist=checklist,
         topic_split=topic_split,
         structure_missing_ids=structure_missing_ids,
+    )
+
+    recommendation = qc_result.get("retry_recommendation")
+    recommendation_dict = recommendation if isinstance(recommendation, dict) else None
+    llm_recommendation_mode: RetryMode | None = None
+    llm_recommendation_rationale = ""
+    if recommendation_dict is not None:
+        llm_recommendation_mode = _coerce_llm_recommendation_mode(
+            recommendation_dict.get("mode")
+        )
+        llm_recommendation_rationale = str(
+            recommendation_dict.get("rationale", "")
+        ).strip()
+
+    _merge_llm_recommendation_targets(
+        recommendation=recommendation_dict,
+        document=document,
+        checklist=checklist,
+        failed_section_ids=failed_section_ids,
+        missing_checklist_ids=missing_checklist_ids,
+        failures_by_section=failures_by_section,
+        failed=failed,
     )
 
     force_full_regen, force_reason = _should_force_full_regeneration(
@@ -571,15 +648,6 @@ def classify_retry_routing(
         missing_checklist_ids=missing_checklist_ids,
     )
 
-    recommendation = qc_result.get("retry_recommendation")
-    llm_recommendation_mode: RetryMode | None = None
-    llm_recommendation_rationale = ""
-    if isinstance(recommendation, dict):
-        llm_recommendation_mode = _coerce_llm_recommendation_mode(
-            recommendation.get("mode")
-        )
-        llm_recommendation_rationale = str(recommendation.get("rationale", "")).strip()
-
     teaching_alignment_only = _teaching_alignment_sole_failure(failed)
 
     mode = _reconcile_mode(
@@ -590,6 +658,9 @@ def classify_retry_routing(
         missing_checklist_ids=missing_checklist_ids,
         teaching_alignment_sole_failure=teaching_alignment_only,
     )
+
+    if is_placement_only_failure(failed) and mode == "full_regeneration":
+        mode = "section_patch"
 
     if (
         _is_structure_only_failure(failed)
@@ -612,15 +683,22 @@ def classify_retry_routing(
     sorted_failed_ids = sorted(failed_section_ids)
     sorted_missing_ids = sorted(missing_checklist_ids)
     sections = _section_by_id(document)
+    section_failures = _build_section_failures(
+        sorted_failed_ids,
+        failures_by_section,
+        sections,
+    )
+    placement_section_failures, substance_section_failures = (
+        split_section_failures_by_kind(section_failures)
+    )
 
     return RetryRoutingResult(
         mode=mode,
         failed_section_ids=sorted_failed_ids,
         missing_checklist_ids=sorted_missing_ids,
-        section_failures=_build_section_failures(
-            sorted_failed_ids,
-            failures_by_section,
-            sections,
-        ),
+        section_failures=section_failures,
+        placement_section_failures=placement_section_failures,
+        substance_section_failures=substance_section_failures,
         rationale=rationale,
+        failure_class=failure_class,
     )

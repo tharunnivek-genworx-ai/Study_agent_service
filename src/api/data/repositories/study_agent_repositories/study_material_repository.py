@@ -447,3 +447,16 @@ class StudyMaterialRepository:
         )
         await self.db.commit()
         return int(getattr(sm_result, "rowcount", 0) or 0)
+
+    async def dismiss_qc_warning(self, version_id: UUID) -> StudyMaterialVersion | None:
+        """Persist mentor acknowledgement of a failed QC warning on this version."""
+        version = await self.get_version_by_id(version_id)
+        if version is None:
+            return None
+        existing: dict[str, Any] = (
+            dict(version.qc_result) if isinstance(version.qc_result, dict) else {}
+        )
+        existing["mentor_dismissed_qc_warning"] = True
+        version.qc_result = existing
+        await self.db.flush()
+        return version

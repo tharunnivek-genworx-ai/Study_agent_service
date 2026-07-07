@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from src.api.control.study_agent.prompts.concept import concept_checklist_prompt
+from test_new_prompts.prompts import concept_checklist_prompt
 
 
 def test_system_prompt_includes_domain_disambiguation_for_software_topics() -> None:

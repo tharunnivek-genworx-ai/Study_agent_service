@@ -8,6 +8,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge
     extract_sections_by_ids,
     insert_sections,
     merge_full_regeneration_preserving_passing,
+    merge_section_field_patches,
     merge_section_patches,
 )
 
@@ -49,6 +50,87 @@ class TestMergeSectionPatches:
         result = merge_section_patches(document, [{"heading": "No id", "content": "x"}])
         assert result.unmatched_patch_ids == []
         assert result.document["sections"][0]["content"] == "intro"
+
+
+class TestMergeSectionFieldPatches:
+    def test_updates_only_block_fields_preserving_subsections(self):
+        document = _doc(
+            {
+                "id": "ts_2",
+                "heading": "Derivatives",
+                "content": "old prose with inline math",
+                "subsections": [
+                    {
+                        "heading": "Examples",
+                        "content": "untouched subsection prose",
+                    }
+                ],
+            }
+        )
+        patches = [
+            {
+                "id": "ts_2",
+                "heading": "Renamed heading",
+                "content": "relocated prose only",
+                "formula_blocks": [
+                    {
+                        "notation": "plain-text",
+                        "formula": "f'(x) = ...",
+                        "explanation": "Relocated equation.",
+                    }
+                ],
+            }
+        ]
+
+        result = merge_section_field_patches(document, patches)
+
+        section = result.document["sections"][0]
+        assert section["heading"] == "Derivatives"
+        assert section["content"] == "relocated prose only"
+        assert section["formula_blocks"][0]["formula"] == "f'(x) = ..."
+        assert section["subsections"][0]["content"] == "untouched subsection prose"
+
+    def test_merges_subsection_block_fields_by_heading(self):
+        document = _doc(
+            {
+                "id": "ts_2",
+                "heading": "Derivatives",
+                "content": "section prose",
+                "subsections": [
+                    {
+                        "heading": "Examples",
+                        "content": "inline if f(x) = x^2 then f'(x) = 2x",
+                        "formula_blocks": [],
+                    }
+                ],
+            }
+        )
+        patches = [
+            {
+                "id": "ts_2",
+                "content": "section prose",
+                "subsections": [
+                    {
+                        "heading": "Examples",
+                        "content": "relocated subsection prose",
+                        "formula_blocks": [
+                            {
+                                "notation": "plain-text",
+                                "formula": "f'(x) = 2x",
+                                "explanation": "Power rule example.",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        result = merge_section_field_patches(document, patches)
+
+        subsection = result.document["sections"][0]["subsections"][0]
+        assert subsection["content"] == "relocated subsection prose"
+        assert subsection["formula_blocks"][0]["formula"] == "f'(x) = 2x"
+        assert result.document["sections"][0]["heading"] == "Derivatives"
 
 
 class TestInsertSections:

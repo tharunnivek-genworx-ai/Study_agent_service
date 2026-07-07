@@ -88,6 +88,10 @@ def _build_base_system(domain: str | None) -> str:
     )
 
 
+# Legacy constant for testing backward-compatibility
+_BASE_SYSTEM = _build_base_system("")
+
+
 def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
     return _build_base_system(domain) + (
         _REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM

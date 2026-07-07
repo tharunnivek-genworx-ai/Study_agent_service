@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -335,22 +336,62 @@ def _is_math_like_language(language: str) -> bool:
 
 
 def _strip_math_delimiters(formula: str) -> str:
-    """Strip leading/trailing LaTeX math delimiters ($, $$) from a formula string.
+    """Strip leading/trailing LaTeX math delimiters from a formula string.
 
-    The LLM often outputs formulas that already include ``$...$`` or
-    ``$$...$$`` delimiters.  If we blindly wrap those in ``$$\\n...\\n$$``
-    we end up with ``$$\\n$formula$\\n$$`` which KaTeX cannot parse and
-    renders as raw red text.  This helper normalises the body so the
-    caller always gets bare LaTeX.
+    The LLM often outputs formulas that already include ``$...$``,
+    ``$$...$$``, or ``\\(...\\)`` delimiters.  If we blindly wrap those in
+    ``$$\\n...\\n$$`` we end up with nested delimiters that KaTeX cannot
+    parse.  This helper normalises the body so the caller always gets bare
+    LaTeX.
     """
     body = formula.strip()
     # Display math: $$...$$
     if body.startswith("$$") and body.endswith("$$") and len(body) > 4:
         return body[2:-2].strip()
+    # Display math: \[...\]
+    if body.startswith(r"\[") and body.endswith(r"\]") and len(body) > 4:
+        return body[2:-2].strip()
     # Inline math: $...$  (but avoid stripping a lone $ sign)
     if body.startswith("$") and body.endswith("$") and len(body) > 2:
         return body[1:-1].strip()
+    # Inline math: \(...\)
+    if body.startswith(r"\(") and body.endswith(r"\)") and len(body) > 4:
+        return body[2:-2].strip()
     return body
+
+
+_PSEUDOCODE_NOTATIONS = frozenset({"pseudo-code", "pseudocode"})
+
+_LATEX_NOTATION_KEYS = frozenset(
+    {
+        "",
+        "latex",
+        "tex",
+        "math",
+        "mathematics",
+        "mathematical",
+        "chemical equation",
+        "chemistry",
+    }
+)
+
+_LATEX_BODY_PATTERN = re.compile(
+    r"(\\frac|\\lim|\\int|\\sum|\\sqrt|\\to\b|\\cdot\b|\\partial\b|[_^]\{)"
+)
+
+
+def _formula_renders_as_display_math(body: str, notation: str) -> bool:
+    """True when a formula_block should render as KaTeX display math ($$)."""
+    notation_key = notation.strip().lower()
+    if notation_key in _PSEUDOCODE_NOTATIONS:
+        return False
+    if notation_key in _LATEX_NOTATION_KEYS:
+        return True
+    if "math" in notation_key or "latex" in notation_key or "chem" in notation_key:
+        return True
+    if notation_key in {"plain-text", "plain text"}:
+        return True
+    return bool(_LATEX_BODY_PATTERN.search(body))
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -381,8 +422,7 @@ def _render_formula_block(formula: str, *, notation: str = "") -> list[str]:
     body = _strip_math_delimiters(_strip_markdown_fences(formula).strip())
     if not body:
         return []
-    notation_key = notation.strip().lower()
-    if notation_key in {"", "latex", "tex", "math", "mathematics"}:
+    if _formula_renders_as_display_math(body, notation):
         return [f"$$\n{body}\n$$"]
     return [f"```\n{body}\n```"]
 

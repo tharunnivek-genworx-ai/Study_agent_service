@@ -88,6 +88,77 @@ def merge_section_patches(
     return MergePatchesResult(document=merged, unmatched_patch_ids=unmatched)
 
 
+_BLOCK_PATCH_FIELDS = frozenset({"content", "formula_blocks", "code_blocks"})
+
+
+def _merge_subsection_block_fields(
+    existing_subsections: list[Any],
+    patch_subsections: list[Any],
+) -> None:
+    """Merge block fields into matching subsections by heading."""
+    patch_by_heading = {
+        str(subsection.get("heading", "")).strip(): subsection
+        for subsection in patch_subsections
+        if isinstance(subsection, dict) and str(subsection.get("heading", "")).strip()
+    }
+    for subsection in existing_subsections:
+        if not isinstance(subsection, dict):
+            continue
+        heading = str(subsection.get("heading", "")).strip()
+        patch_subsection = patch_by_heading.get(heading)
+        if patch_subsection is None:
+            continue
+        for field_name in _BLOCK_PATCH_FIELDS:
+            if field_name in patch_subsection:
+                subsection[field_name] = copy.deepcopy(patch_subsection[field_name])
+
+
+def merge_section_field_patches(
+    document: dict[str, Any],
+    patch_sections: list[dict[str, Any]],
+    *,
+    fields: tuple[str, ...] = ("content", "formula_blocks", "code_blocks"),
+) -> MergePatchesResult:
+    """Merge only selected block fields from patch sections into *document*.
+
+    Preserves headings, subsections, and other section metadata from the
+    current document — reduces LLM drift on untouched structure during
+    placement-only block relocations. Subsection block fields are merged by
+    matching ``heading`` when the patch includes a ``subsections`` array.
+    """
+    merged = copy.deepcopy(document)
+    sections: list[dict[str, Any]] = list(merged.get("sections") or [])
+    index_by_id = {
+        _section_id(section): index
+        for index, section in enumerate(sections)
+        if isinstance(section, dict) and _section_id(section)
+    }
+
+    unmatched: list[str] = []
+    for patch in patch_sections:
+        if not isinstance(patch, dict):
+            continue
+        patch_id = _section_id(patch)
+        if not patch_id:
+            continue
+        if patch_id not in index_by_id:
+            unmatched.append(patch_id)
+            logger.warning("Section patch id %s not found in document", patch_id)
+            continue
+        section = sections[index_by_id[patch_id]]
+        for field_name in fields:
+            if field_name in patch:
+                section[field_name] = copy.deepcopy(patch[field_name])
+        patch_subsections = patch.get("subsections")
+        if isinstance(patch_subsections, list) and patch_subsections:
+            existing_subsections = section.get("subsections")
+            if isinstance(existing_subsections, list):
+                _merge_subsection_block_fields(existing_subsections, patch_subsections)
+
+    merged["sections"] = sections
+    return MergePatchesResult(document=merged, unmatched_patch_ids=unmatched)
+
+
 def _default_insert_index(sections: list[dict[str, Any]], new_section_id: str) -> int:
     """Insert after the last section with a lower checklist order, else append."""
     new_order = _checklist_order(new_section_id)

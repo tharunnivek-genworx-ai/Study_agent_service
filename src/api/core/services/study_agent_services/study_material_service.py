@@ -1334,6 +1334,30 @@ class StudyMaterialService:
             raise StudyMaterialVersionMismatchException()
         return _study_material_version_out(restored)
 
+    async def dismiss_study_material_qc_warning(
+        self,
+        node_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> StudyMaterialVersionOut:
+        """Record that the mentor accepted a draft despite a permanent QC failure."""
+        _assert_mentor(role)
+        await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+
+        repo = StudyMaterialRepository(self.session)
+        version = await repo.get_version_by_id(version_id)
+        if version is None or version.node_id != node_id:
+            raise StudyMaterialVersionMismatchException()
+
+        dismissed = await repo.dismiss_qc_warning(version_id)
+        if dismissed is None:
+            raise StudyMaterialVersionMismatchException()
+        await self.session.commit()
+        return _study_material_version_out(dismissed)
+
     # ── list versions ──────────────────────────────────────────────────
 
     async def list_versions(

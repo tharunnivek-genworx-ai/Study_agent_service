@@ -19,7 +19,7 @@ Quiz question generation and hint generation are separate flows:
 """
 
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -691,3 +691,16 @@ class QuizRepository:
         await self.db.flush()
         await self.db.refresh(response)
         return response
+
+    async def dismiss_qc_warning(self, quiz_id: UUID) -> Quiz | None:
+        """Persist mentor acknowledgement of a failed QC warning on this quiz."""
+        quiz = await self.get_quiz_by_id(quiz_id)
+        if quiz is None:
+            return None
+        existing: dict[str, Any] = (
+            dict(quiz.qc_result) if isinstance(quiz.qc_result, dict) else {}
+        )
+        existing["mentor_dismissed_qc_warning"] = True
+        quiz.qc_result = existing
+        await self.db.flush()
+        return quiz

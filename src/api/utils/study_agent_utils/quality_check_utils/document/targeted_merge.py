@@ -188,6 +188,27 @@ def _log_scoped_must_cover_gaps(
             )
 
 
+def build_carried_forward_verification(
+    prior_qc_result: dict[str, Any],
+    carried_checks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a verification dict from carried-forward LLM checks for ``build_final_qc_result``."""
+    verification: dict[str, Any] = {
+        "checks": carried_checks,
+        "hallucination_risk": prior_qc_result.get("hallucination_risk", "none"),
+        "is_refusal": bool(prior_qc_result.get("is_refusal", False)),
+        "issues": list(prior_qc_result.get("issues") or []),
+        "corrective_instructions": str(
+            prior_qc_result.get("corrective_instructions", "")
+        ).strip(),
+        "summary": str(prior_qc_result.get("summary", "")).strip(),
+    }
+    recommendation = prior_qc_result.get("retry_recommendation")
+    if isinstance(recommendation, dict):
+        verification["retry_recommendation"] = recommendation
+    return verification
+
+
 def merge_targeted_qc_checks(
     prior_qc_result: dict[str, Any],
     new_verification: dict[str, Any] | None,

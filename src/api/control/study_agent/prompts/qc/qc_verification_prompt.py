@@ -62,6 +62,7 @@ QC_STEM_DERIVATION_MUST_COVER_BLOCK = """\
      than 4 chained entries is automatic failure for a "derive"/"prove" item — a starting statement and an ending
      result with nothing shown in between is not a derivation, no matter how confident or well-written the prose
      around it is.
+   - If the depth_gate demands derivation, proof, or step-by-step calculation, but the section only states the final formula, rule, or result, the check fails.
    - Independently recompute every step in the chain from the one immediately before it. A step that does not
      follow validly from its predecessor forces passed=false and the specific invalid step must be quoted verbatim
      in "issues" — even if the document's final stated answer happens to be numerically correct.

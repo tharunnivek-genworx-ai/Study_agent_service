@@ -105,6 +105,10 @@ class TestClassifyRetryRouting:
         assert result.section_failures[0]["section_id"] == "mc_2"
         assert result.section_failures[0]["heading"] == "Basics"
         assert len(result.section_failures[0]["failures"]) == 1
+        assert (
+            result.section_failures[0]["failures"][0]["check_id"]
+            == "content_accuracy_1"
+        )
 
     def test_missing_checklist_section_uses_section_insert(self):
         document = _doc({"id": "mc_1", "heading": "Intro", "content": "intro"})
@@ -294,8 +298,8 @@ class TestClassifyRetryRouting:
         assert result.mode == "full_regeneration"
         assert "required checklist sections missing or failed" in result.rationale
 
-    def test_topic_split_section_failures_trigger_full_regen_via_coverage_rule(self):
-        """ts_* failures must map to mc_* for the 40% required-coverage rule."""
+    def test_topic_split_three_section_det_failures_use_section_patch(self):
+        """Placement-only det_* failures must not escalate via F4 coverage rule."""
         checklist = [
             {
                 "id": "mc_1",
@@ -395,9 +399,147 @@ class TestClassifyRetryRouting:
         result = classify_retry_routing(
             qc_result, document, checklist, topic_split=topic_split
         )
-        assert result.mode == "full_regeneration"
-        assert "required checklist sections missing or failed" in result.rationale
+        assert result.mode == "section_patch"
+        assert "deterministic routing" in result.rationale
+        assert result.failure_class == "placement_only"
         assert result.failed_section_ids == ["ts_1", "ts_2", "ts_3"]
+
+    def test_calculus_two_det_failures_all_must_cover_pass_section_patch(self):
+        """Calculus regression: must_cover passes, det placement fails → section_patch."""
+        checklist = [
+            {
+                "id": "mc_1",
+                "section_id": "ts_1",
+                "concept": "Limits",
+                "requirement": "Cover limits",
+                "priority": "required",
+            },
+            {
+                "id": "mc_2",
+                "section_id": "ts_2",
+                "concept": "Derivatives",
+                "requirement": "Cover derivatives",
+                "priority": "required",
+            },
+            {
+                "id": "mc_3",
+                "section_id": "ts_3",
+                "concept": "Power rule",
+                "requirement": "Derive power rule",
+                "priority": "required",
+            },
+        ]
+        document = _doc(
+            {"id": "ts_1", "heading": "Limits", "content": "limits"},
+            {"id": "ts_2", "heading": "Derivatives", "content": "derivatives"},
+            {"id": "ts_3", "heading": "Power rule", "content": "power rule"},
+        )
+        qc_result = {
+            "checks": [
+                _check(
+                    id="mc_1",
+                    category="must_cover",
+                    checklist_id="mc_1",
+                    passed=True,
+                    section_id="ts_1",
+                ),
+                _check(
+                    id="mc_2",
+                    category="must_cover",
+                    checklist_id="mc_2",
+                    passed=True,
+                    section_id="ts_2",
+                ),
+                _check(
+                    id="mc_3",
+                    category="must_cover",
+                    checklist_id="mc_3",
+                    passed=True,
+                    section_id="ts_3",
+                ),
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_2",
+                    evidence="Prose contains display-math patterns",
+                ),
+                _check(
+                    id="det_equation_in_content",
+                    category="document_coherence",
+                    section_id="ts_3",
+                    evidence="Prose contains display-math patterns",
+                ),
+            ]
+        }
+        result = classify_retry_routing(qc_result, document, checklist)
+        assert result.mode == "section_patch"
+        assert result.failure_class == "placement_only"
+        assert result.failed_section_ids == ["ts_2", "ts_3"]
+        assert "deterministic routing" in result.rationale
+
+    def test_must_cover_fail_still_escalates_f4(self):
+        """Real must_cover failures still trigger the 40% F4 escalation rule."""
+        checklist = [
+            {
+                "id": "mc_1",
+                "section_id": "ts_1",
+                "concept": "Intro",
+                "requirement": "Cover intro",
+                "priority": "required",
+            },
+            {
+                "id": "mc_2",
+                "section_id": "ts_2",
+                "concept": "Basics",
+                "requirement": "Cover basics",
+                "priority": "required",
+            },
+            {
+                "id": "mc_3",
+                "section_id": "ts_3",
+                "concept": "Examples",
+                "requirement": "Cover examples",
+                "priority": "required",
+            },
+            {
+                "id": "mc_4",
+                "section_id": "ts_4",
+                "concept": "Advanced",
+                "requirement": "Cover advanced",
+                "priority": "required",
+            },
+            {
+                "id": "mc_5",
+                "section_id": "ts_5",
+                "concept": "Pitfalls",
+                "requirement": "Cover pitfalls",
+                "priority": "required",
+            },
+        ]
+        document = _doc(
+            {"id": "ts_1", "heading": "Intro", "content": "intro"},
+            {"id": "ts_2", "heading": "Basics", "content": "basics"},
+        )
+        qc_result = {
+            "checks": [
+                _check(
+                    id="mc_3",
+                    category="must_cover",
+                    checklist_id="mc_3",
+                    severity="critical",
+                ),
+                _check(
+                    id="mc_4",
+                    category="must_cover",
+                    checklist_id="mc_4",
+                    severity="critical",
+                ),
+            ]
+        }
+        result = classify_retry_routing(qc_result, document, checklist)
+        assert result.mode == "full_regeneration"
+        assert result.failure_class == "substance"
+        assert "required checklist sections missing or failed" in result.rationale
 
     def test_topic_split_two_section_failures_stay_section_patch(self):
         """Under 40% of required items affected → section_patch, not full regen."""
@@ -649,6 +791,96 @@ class TestClassifyRetryRouting:
         assert result.mode == "section_patch"
         assert result.failed_section_ids == ["mc_2"]
 
+    def test_llm_recommendation_fills_targets_when_deterministic_none(self):
+        """Document-level failures with LLM section_patch rec route to patch targets."""
+        checklist = [
+            {
+                "id": "mc_1",
+                "section_id": "ts_1",
+                "concept": "Pointers",
+                "requirement": "Cover pointers",
+                "priority": "required",
+            },
+            {
+                "id": "mc_2",
+                "section_id": "ts_3",
+                "concept": "Arrays",
+                "requirement": "Cover arrays",
+                "priority": "required",
+            },
+            {
+                "id": "mc_3",
+                "section_id": "ts_4",
+                "concept": "Memory",
+                "requirement": "Cover memory",
+                "priority": "required",
+            },
+        ]
+        document = _doc(
+            {"id": "ts_1", "heading": "Pointers", "content": "pointers"},
+            {"id": "ts_3", "heading": "Arrays", "content": "arrays"},
+            {"id": "ts_4", "heading": "Memory", "content": "memory"},
+        )
+        qc_result = {
+            "checks": [
+                _check(
+                    id="teaching_alignment",
+                    category="teaching_alignment",
+                    severity="major",
+                    evidence="Missing examples for edge cases.",
+                ),
+                _check(
+                    id="document_coherence",
+                    category="document_coherence",
+                    severity="critical",
+                    evidence=(
+                        "ts_1 lacks pointer reassignment; ts_3 lacks OOB access; "
+                        "ts_4 lacks memory leak scenario."
+                    ),
+                ),
+            ],
+            "retry_recommendation": {
+                "mode": "section_patch",
+                "failed_section_ids": ["ts_1", "ts_3", "ts_4"],
+                "missing_checklist_ids": [],
+                "rationale": "Patch ts_1, ts_3, ts_4 for depth gaps",
+            },
+        }
+        result = classify_retry_routing(qc_result, document, checklist)
+        assert result.mode == "section_patch"
+        assert result.failed_section_ids == ["ts_1", "ts_3", "ts_4"]
+        assert len(result.section_failures) == 3
+        for bundle in result.section_failures:
+            assert bundle["failures"]
+            categories = {f["category"] for f in bundle["failures"]}
+            assert "teaching_alignment" in categories
+            assert "document_coherence" in categories
+
+    def test_llm_recommendation_ignored_when_deterministic_has_targets(self):
+        document = _doc(
+            {"id": "mc_1", "heading": "Intro", "content": "intro"},
+            {"id": "mc_2", "heading": "Basics", "content": "basics"},
+            {"id": "mc_3", "heading": "Extra", "content": "extra"},
+        )
+        qc_result = {
+            "checks": [
+                _check(
+                    id="content_accuracy_1",
+                    category="content_accuracy",
+                    section_id="mc_2",
+                )
+            ],
+            "retry_recommendation": {
+                "mode": "section_patch",
+                "failed_section_ids": ["mc_2", "mc_3"],
+                "missing_checklist_ids": [],
+                "rationale": "Also patch mc_3",
+            },
+        }
+        result = classify_retry_routing(qc_result, document, _CHECKLIST)
+        assert result.mode == "section_patch"
+        assert result.failed_section_ids == ["mc_2"]
+
 
 class TestCoerceLlmRecommendationMode:
     def test_accepts_valid_modes(self):
@@ -713,6 +945,19 @@ class TestReconcileMode:
                 llm_recommendation_mode="section_patch",
                 force_full_regen=False,
                 failed_section_ids={"mc_2"},
+                missing_checklist_ids=set(),
+                teaching_alignment_sole_failure=False,
+            )
+            == "section_patch"
+        )
+
+    def test_llm_section_patch_when_deterministic_none_and_targets_present(self):
+        assert (
+            _reconcile_mode(
+                deterministic="none",
+                llm_recommendation_mode="section_patch",
+                force_full_regen=False,
+                failed_section_ids={"ts_1", "ts_3"},
                 missing_checklist_ids=set(),
                 teaching_alignment_sole_failure=False,
             )

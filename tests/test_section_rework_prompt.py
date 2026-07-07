@@ -65,7 +65,10 @@ class TestSectionReworkPrompt:
         system = section_rework_prompt.build_system_prompt(
             has_reference=False, domain="STEM"
         )
-        assert "STEM DERIVATION RULE" in system
+        assert (
+            "NO CODE, EVER: this section's output schema has no code_blocks field"
+            in system
+        )
         assert "Programming: code must be syntactically valid" not in system
         assert "Conceptual: named facts must be accurate" not in system
 

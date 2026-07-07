@@ -114,6 +114,23 @@ async def get_quiz(
 
 
 @router.patch(
+    "/nodes/{node_id}/quizzes/{quiz_id}/dismiss-qc-warning",
+    response_model=QuizOut,
+)
+async def dismiss_quiz_qc_warning(
+    node_id: UUID,
+    quiz_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizOut:
+    """Mentor acknowledges a QC warning and accepts the quiz draft."""
+    service = QuizService(db)
+    return await service.dismiss_quiz_qc_warning(
+        node_id, quiz_id, current_user.sub, current_user.role
+    )
+
+
+@router.patch(
     "/nodes/{node_id}/quizzes/{quiz_id}/publish",
     response_model=QuizOut,
 )
