@@ -12,3 +12,10 @@ wheels/
 # Environment variables
 .env
 .env.*
+
+# Runtime uploads and debug output
+uploads/
+test_pipeline_output/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

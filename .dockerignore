@@ -9,5 +9,12 @@ __pycache__
 .env
 .env.*
 tests/
+test_new_prompts/
+test_pipeline_output/
+docs/
+examples/
 docker-compose.yml
 *.md
+*.txt
+QC_PIPELINE_INCONSISTENCIES_AUDIT.txt
+FULL_REGEN_FROZEN_SETS_EDGE_CASES.txt

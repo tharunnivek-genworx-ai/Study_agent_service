@@ -14,6 +14,7 @@ from uuid import UUID
 
 from llama_cloud import LlamaCloud
 
+from src.api.config import feature_settings
 from src.api.control.study_agent.prompts.parsing import build_parsing_instruction
 from src.api.schemas.study_material_schemas.llama_parse_schema import (
     LlamaParseExtractionResult,
@@ -51,6 +52,8 @@ def _save_llamaparse_artifact(
     stamp: str,
 ) -> None:
     """Persist LlamaParse JSON under {topic}_LlamaParse/ for debug logging only."""
+    if not feature_settings.enable_artifact_logging:
+        return
     try:
         out_path = llamaparse_log_path(
             topic_title,

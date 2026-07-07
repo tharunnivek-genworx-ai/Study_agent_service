@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 import src.api.data.models.postgres  # noqa: F401 — register all ORM models on startup
+from src.api.config import feature_settings
 from src.api.rest.middleware.cors import setup_cors
 from src.api.rest.routes import health
 from src.api.rest.routes.generation_progress_route import (
@@ -51,5 +52,6 @@ app.include_router(mentor_progress_route.router)
 _UPLOADS_DIR = Path("/app/uploads")
 _ARTIFACTS_DIR = _UPLOADS_DIR / "artifacts"
 _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+if feature_settings.enable_artifact_logging:
+    _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(_UPLOADS_DIR)), name="uploads")

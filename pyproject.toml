@@ -18,7 +18,7 @@ dependencies = [
     "langchain-groq>=0.2.0",
     "langgraph>=0.2.0",
     "reportlab>=4.2.0",
-    "langsmith[claude-agent-sdk]>=0.8.14",
+    "langsmith>=0.8.14",
 ]
 
 [dependency-groups]
