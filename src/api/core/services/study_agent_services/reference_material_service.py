@@ -3,7 +3,7 @@
 Reference material and node media service.
 
 Reference materials (TDD §3.3.2):
-  UPLOAD     → validate ownership → scope/node_id guard → GCS stub upload
+  UPLOAD     → validate ownership → scope/node_id guard → object storage upload
                → soft-delete prior active materials (EC-17) → insert row
   LIST       → access guard → return active rows for space or node
   VISIBILITY → ownership guard → update is_visible_to_trainees
@@ -11,15 +11,12 @@ Reference materials (TDD §3.3.2):
 
 Node media (TDD §3.3.2):
   ATTACH     → ownership guard → cross-field type/url guard
-               → GCS stub for images → insert row
+               → object storage for images → insert row
   LIST       → access guard → return active rows ordered by order_index
   REORDER    → ownership guard → validate complete set → bulk update
   DELETE     → ownership guard → hard delete (no soft-delete for media)
-
-GCS upload is a placeholder stub until the GCS client is wired in.
 """
 
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -53,16 +50,19 @@ from src.api.schemas.study_material_schemas import (
     ReferenceMaterialScope,
     ReferenceMaterialVisibilityUpdate,
 )
-from src.api.utils.reference_media_utils.media_url_utils import storage_path_to_url
 from src.api.utils.space_node_utils.node_role_assert import (
     _assert_mentor,
     _assert_space_access,
     _get_node_and_assert_space_access,
     _get_space_and_assert_owner,
 )
+from src.api.utils.storage.object_storage import (
+    build_node_media_key,
+    build_reference_material_key,
+    resolve_public_url,
+    upload_bytes,
+)
 from src.api.utils.study_agent_utils.media import build_node_media_out
-
-_UPLOAD_ROOT = Path("/app/uploads/reference_materials")
 
 
 def _reference_image_items(
@@ -73,32 +73,31 @@ def _reference_image_items(
             llamaparse_image_id=image.llamaparse_image_id,
             filename=image.filename,
             title=image.title,
-            url=storage_path_to_url(image.file_url),
+            url=resolve_public_url(image.file_url),
             source_page=image.source_page_number,
         )
         for image in images
     ]
 
 
-async def _save_file_locally(
+def _reference_material_out(material: object) -> ReferenceMaterialOut:
+    out = ReferenceMaterialOut.model_validate(material)
+    file_url = getattr(material, "file_url", None)
+    if file_url:
+        return out.model_copy(update={"file_url": resolve_public_url(file_url)})
+    return out
+
+
+async def _upload_file(
     file: UploadFile,
-    space_id: UUID,
-    node_id: UUID | None,
-    material_id: UUID,
-) -> str:
-    """Save uploaded file to the local uploads directory and return the absolute path."""
-    scope_dir = str(node_id) if node_id else "space"
-    dest_dir = _UPLOAD_ROOT / str(space_id) / scope_dir
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    safe_name = Path(file.filename or "upload").name
-    dest_path = dest_dir / f"{material_id}_{safe_name}"
-
+    object_key: str,
+) -> tuple[str, int]:
+    """Upload file bytes to object storage and return storage ref and size."""
+    content_type = file.content_type or "application/octet-stream"
     contents = await file.read()
-    dest_path.write_bytes(contents)
+    storage_ref = await upload_bytes(object_key, contents, content_type)
     await file.seek(0)
-
-    return str(dest_path)
+    return storage_ref, len(contents)
 
 
 class ReferenceMaterialService:
@@ -129,11 +128,13 @@ class ReferenceMaterialService:
             raise ReferenceMaterialNodeScopeMismatchException()
 
         material_id = uuid4()
-        file_url = await _save_file_locally(file, space_id, node_id, material_id)
-
-        content = await file.read()
-        file_size = len(content)
-        await file.seek(0)
+        object_key = build_reference_material_key(
+            space_id,
+            node_id,
+            material_id,
+            file.filename or "upload",
+        )
+        file_url, file_size = await _upload_file(file, object_key)
 
         repo = ReferenceMaterialRepository(self.session)
         if scope == "node":
@@ -155,7 +156,7 @@ class ReferenceMaterialService:
             is_visible_to_trainees=is_visible_to_trainees,
             uploaded_by=user_id,
         )
-        return ReferenceMaterialOut.model_validate(material)
+        return _reference_material_out(material)
 
     async def list_by_space(
         self, space_id: UUID, user_id: UUID, role: str
@@ -166,7 +167,7 @@ class ReferenceMaterialService:
         repo = ReferenceMaterialRepository(self.session)
         items = await repo.get_by_space(space_id)
         return ReferenceMaterialListOut(
-            items=[ReferenceMaterialOut.model_validate(i) for i in items],
+            items=[_reference_material_out(i) for i in items],
             total=len(items),
         )
 
@@ -182,7 +183,7 @@ class ReferenceMaterialService:
         repo = ReferenceMaterialRepository(self.session)
         items = await repo.get_by_node(node_id)
         return ReferenceMaterialListOut(
-            items=[ReferenceMaterialOut.model_validate(i) for i in items],
+            items=[_reference_material_out(i) for i in items],
             total=len(items),
         )
 
@@ -199,7 +200,7 @@ class ReferenceMaterialService:
         material = await repo.get_latest_by_node(node_id)
         if material is None:
             return None
-        return ReferenceMaterialOut.model_validate(material)
+        return _reference_material_out(material)
 
     async def update_visibility(
         self,
@@ -221,7 +222,7 @@ class ReferenceMaterialService:
         material = await repo.update_visibility(
             material, request.is_visible_to_trainees
         )
-        return ReferenceMaterialOut.model_validate(material)
+        return _reference_material_out(material)
 
     async def delete_reference_material(
         self, material_id: UUID, user_id: UUID, role: str
@@ -266,7 +267,13 @@ class ReferenceMaterialService:
         media_id = uuid4()
 
         if request.media_type in ("image", "pdf") and file is not None:
-            file_url = await _save_file_locally(file, node.space_id, node_id, media_id)
+            object_key = build_node_media_key(
+                node.space_id,
+                node_id,
+                media_id,
+                file.filename or "upload",
+            )
+            file_url, _size = await _upload_file(file, object_key)
             url = None
 
         repo = ReferenceMaterialRepository(self.session)

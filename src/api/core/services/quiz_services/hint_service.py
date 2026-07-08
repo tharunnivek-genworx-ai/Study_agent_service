@@ -21,6 +21,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.exceptions import (
+    GenerationRunAborted,
     GenerationRunConflictException,
     HintGenerationFailedException,
     HintQuestionsNotFoundException,
@@ -50,6 +51,7 @@ from src.api.schemas.quiz_schemas import (
     QuizOut,
     QuizQuestionOut,
 )
+from src.api.utils.generation_progress.store import hint_step_profile_for_mode
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.study_material_link import (
     require_mentor_quiz_study_material_source,
@@ -98,6 +100,15 @@ class HintService:
         generation_mode: GenerationRunMode,
         request_params: dict[str, Any],
     ) -> UUID:
+        profile = hint_step_profile_for_mode(
+            generation_mode=generation_mode.value,
+        )
+        request_params = {
+            **request_params,
+            "node_id": str(node_id),
+            "quiz_id": str(quiz_id),
+            "step_profile": profile.value,
+        }
         resource_type, resource_id = GenerationRunService.resource_for_hint(quiz_id)
         run_service = GenerationRunService(self.session)
         run = await run_service.start_run(
@@ -187,6 +198,8 @@ class HintService:
             )
             await self._complete_generation_run(run_id)
             return final_state
+        except GenerationRunAborted:
+            raise
         except Exception as exc:
             graph_result = exc.__dict__.get("graph_result")
             if isinstance(graph_result, dict):
@@ -252,6 +265,8 @@ class HintService:
             if updated_quiz is None:
                 raise HintGenerationFailedException()
             return await self._build_quiz_out(quiz_id, updated_quiz, run_id=run_id)
+        except GenerationRunAborted:
+            return None
         except Exception as exc:
             graph_result = exc.__dict__.get("graph_result")
             if isinstance(graph_result, dict):
@@ -262,72 +277,91 @@ class HintService:
                 await self._fail_generation_run(run_id, exc=exc)
             raise
 
-    async def generate_hints(
+    async def _persist_hint_result(self, run_id: UUID, quiz_out: QuizOut) -> None:
+        await GenerationRunService(self.session).store_run_result(
+            run_id,
+            {"quiz": quiz_out.model_dump(mode="json")},
+        )
+
+    async def start_generate_hints(
         self,
         node_id: UUID,
         quiz_id: UUID,
         request: HintGenerateRequest,  # noqa: ARG002
         user_id: UUID,
         role: str,
-    ) -> QuizOut:
-        """Generate hints for all active questions missing hints via the Hint Agent LangGraph."""
+    ) -> UUID:
+        """Validate and create a durable hint generation run."""
         repo, quiz = await self._get_unpublished_quiz(node_id, quiz_id, user_id, role)
-
         active_questions = await repo.get_active_questions_by_quiz(quiz_id)
         if not active_questions:
             raise QuizHasNoQuestionsException()
-
         questions_needing_hints = await repo.get_active_questions_missing_hints(quiz_id)
         if not questions_needing_hints:
             raise HintsAlreadyCompleteException()
-
         await self._assert_no_running_hint_generation(quiz_id)
-
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
-        run_id = await self._start_hint_run(
+        return await self._start_hint_run(
             node_id=node_id,
             space_id=node.space_id,
             mentor_id=user_id,
             quiz_id=quiz_id,
             generation_mode=GenerationRunMode.GENERATE,
-            request_params={
-                "node_id": str(node_id),
-                "quiz_id": str(quiz_id),
-                "mentor_id": str(user_id),
-            },
+            request_params={"mentor_id": str(user_id)},
         )
 
+    async def execute_generate_hints(
+        self,
+        *,
+        run_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        run_service = GenerationRunService(self.session)
+        run = await run_service.acquire_lock_for_run(run_id)
+        if run is None:
+            return
+        params = run.request_params or {}
+        node_id = UUID(str(params["node_id"]))
+        quiz_id = UUID(str(params["quiz_id"]))
         initial_state = {
             "mentor_id": user_id,
             "node_id": node_id,
             "quiz_id": quiz_id,
         }
+        try:
+            await self._run_hint_graph(initial_state=initial_state, run_id=run_id)
+            quiz_repo = QuizRepository(self.session)
+            updated_quiz = await quiz_repo.get_quiz_by_id(quiz_id)
+            if updated_quiz is None:
+                raise HintGenerationFailedException()
+            quiz_out = await self._build_quiz_out(quiz_id, updated_quiz, run_id=run_id)
+            await self._persist_hint_result(run_id, quiz_out)
+        except GenerationRunAborted:
+            return
+        except Exception as exc:
+            graph_result = exc.__dict__.get("graph_result")
+            if isinstance(graph_result, dict):
+                await self._fail_generation_run(
+                    run_id, graph_result=graph_result, exc=exc
+                )
+            else:
+                await self._fail_generation_run(run_id, exc=exc)
 
-        await self._run_hint_graph(initial_state=initial_state, run_id=run_id)
-
-        quiz_repo = QuizRepository(self.session)
-        updated_quiz = await quiz_repo.get_quiz_by_id(quiz_id)
-        if updated_quiz is None:
-            raise HintGenerationFailedException()
-        return await self._build_quiz_out(quiz_id, updated_quiz, run_id=run_id)
-
-    async def regenerate_hints(
+    async def start_regenerate_hints(
         self,
         node_id: UUID,
         quiz_id: UUID,
         request: HintRegenerateRequest,
         user_id: UUID,
         role: str,
-    ) -> QuizOut:
-        """Regenerate hints for selective questions or the whole quiz via the Hint Agent."""
+    ) -> UUID:
+        """Validate and create a durable hint regeneration run."""
         repo, quiz = await self._get_unpublished_quiz(node_id, quiz_id, user_id, role)
-
         active_questions = await repo.get_active_questions_by_quiz(quiz_id)
         if not active_questions:
             raise QuizHasNoQuestionsException()
-
         if request.scope == "all":
             questions_with_hints = await repo.get_active_questions_with_complete_hints(
                 quiz_id
@@ -341,28 +375,22 @@ class HintService:
             mentor_feedback = (
                 request.mentor_feedback.strip() if request.mentor_feedback else None
             )
-
         payload_ids = set(question_ids)
         matched = await repo.get_active_questions_by_ids(quiz_id, question_ids)
         matched_ids = {q.question_id for q in matched}
-
         if matched_ids != payload_ids:
             raise HintQuestionsNotFoundException()
-
         await self._assert_no_running_hint_generation(quiz_id)
-
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
-        run_id = await self._start_hint_run(
+        return await self._start_hint_run(
             node_id=node_id,
             space_id=node.space_id,
             mentor_id=user_id,
             quiz_id=quiz_id,
             generation_mode=GenerationRunMode.REGENERATE,
             request_params={
-                "node_id": str(node_id),
-                "quiz_id": str(quiz_id),
                 "mentor_id": str(user_id),
                 "scope": request.scope,
                 "questions_filter_ids": [str(qid) for qid in question_ids],
@@ -370,6 +398,23 @@ class HintService:
             },
         )
 
+    async def execute_regenerate_hints(
+        self,
+        *,
+        run_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        run_service = GenerationRunService(self.session)
+        run = await run_service.acquire_lock_for_run(run_id)
+        if run is None:
+            return
+        params = run.request_params or {}
+        node_id = UUID(str(params["node_id"]))
+        quiz_id = UUID(str(params["quiz_id"]))
+        question_ids = [
+            UUID(str(qid)) for qid in params.get("questions_filter_ids") or []
+        ]
+        mentor_feedback = params.get("mentor_feedback")
         initial_state = {
             "mentor_id": user_id,
             "node_id": node_id,
@@ -377,14 +422,24 @@ class HintService:
             "questions_filter_ids": question_ids,
             "mentor_feedback": mentor_feedback,
         }
-
-        await self._run_hint_graph(initial_state=initial_state, run_id=run_id)
-
-        quiz_repo = QuizRepository(self.session)
-        updated_quiz = await quiz_repo.get_quiz_by_id(quiz_id)
-        if updated_quiz is None:
-            raise HintGenerationFailedException()
-        return await self._build_quiz_out(quiz_id, updated_quiz, run_id=run_id)
+        try:
+            await self._run_hint_graph(initial_state=initial_state, run_id=run_id)
+            quiz_repo = QuizRepository(self.session)
+            updated_quiz = await quiz_repo.get_quiz_by_id(quiz_id)
+            if updated_quiz is None:
+                raise HintGenerationFailedException()
+            quiz_out = await self._build_quiz_out(quiz_id, updated_quiz, run_id=run_id)
+            await self._persist_hint_result(run_id, quiz_out)
+        except GenerationRunAborted:
+            return
+        except Exception as exc:
+            graph_result = exc.__dict__.get("graph_result")
+            if isinstance(graph_result, dict):
+                await self._fail_generation_run(
+                    run_id, graph_result=graph_result, exc=exc
+                )
+            else:
+                await self._fail_generation_run(run_id, exc=exc)
 
     async def delete_hints_draft(
         self,

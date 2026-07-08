@@ -19,10 +19,12 @@ from src.api.core.exceptions import (
 from src.api.data.repositories import GenerationRunRepository
 from src.api.schemas import (
     MAX_RESUME_ATTEMPTS,
+    GenerationRunActiveOut,
     GenerationRunCreate,
     GenerationRunOut,
     GenerationRunPipeline,
     GenerationRunResourceType,
+    GenerationRunResultOut,
     GenerationRunResumeResponse,
     GenerationRunResumeResult,
     GenerationRunStatus,
@@ -31,9 +33,13 @@ from src.api.schemas.common import GenerationPipeline
 from src.api.utils.generation_progress.advisory_lock import (
     release_generation_lock,
     require_generation_lock,
+    try_acquire_generation_lock,
 )
 from src.api.utils.generation_progress.db_store import DbGenerationProgressStore
-from src.api.utils.generation_progress.store import node_to_step
+from src.api.utils.generation_progress.store import (
+    node_to_step_for_profile,
+    step_profile_from_request_params,
+)
 
 
 class GenerationRunService:
@@ -66,10 +72,44 @@ class GenerationRunService:
             pipeline=payload.pipeline.value,
             resource_id=payload.resource_id,
         )
+        try:
+            run = await self.repo.create(payload)
+            await self.progress.start(run.run_id, payload.pipeline)
+            await self.session.commit()
+            return GenerationRunOut.from_orm_run(run)
+        finally:
+            # Release before the HTTP handler returns 202. The background job
+            # re-acquires on its own DB session for the graph duration.
+            await release_generation_lock(
+                self.session,
+                pipeline=payload.pipeline.value,
+                resource_id=payload.resource_id,
+            )
 
-        run = await self.repo.create(payload)
-        await self.progress.start(run.run_id, payload.pipeline)
-        return GenerationRunOut.from_orm_run(run)
+    async def is_run_active(self, run_id: UUID) -> bool:
+        run = await self.repo.get_by_id(run_id)
+        return run is not None and run.status == GenerationRunStatus.RUNNING.value
+
+    async def acquire_lock_for_run(self, run_id: UUID) -> Any | None:
+        """Acquire the advisory lock for an existing run (background job entry)."""
+        run = await self.repo.get_by_id(run_id)
+        if run is None:
+            return None
+        if run.status != GenerationRunStatus.RUNNING.value:
+            return None
+        acquired = await try_acquire_generation_lock(
+            self.session,
+            pipeline=run.pipeline,
+            resource_id=run.resource_id,
+        )
+        if not acquired:
+            await self.fail_run(
+                run_id,
+                error_message="Could not acquire generation lock for this resource.",
+                error_type="lock_unavailable",
+            )
+            return None
+        return run
 
     async def checkpoint_after_node(
         self,
@@ -83,7 +123,10 @@ class GenerationRunService:
             return
 
         pipeline = GenerationPipeline(run.pipeline)
-        step_index = node_to_step(pipeline, node_name)
+        profile = step_profile_from_request_params(
+            run.request_params, pipeline=pipeline
+        )
+        step_index = node_to_step_for_profile(profile, node_name)
         artifact_run_id = state.get("artifact_run_id")
         if isinstance(artifact_run_id, str):
             artifact_id: str | None = artifact_run_id
@@ -133,6 +176,61 @@ class GenerationRunService:
     async def get_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
         run = await self._get_run_for_mentor(run_id, mentor_id)
         return GenerationRunOut.from_orm_run(run)
+
+    async def get_active_run_for_resource(
+        self,
+        *,
+        resource_id: UUID,
+        pipeline: str,
+        mentor_id: UUID,
+    ) -> GenerationRunActiveOut | None:
+        run = await self.repo.get_active_run(
+            resource_id=resource_id,
+            pipeline=pipeline,
+        )
+        if run is None or run.mentor_id != mentor_id:
+            return None
+        if run.status != GenerationRunStatus.RUNNING.value:
+            return None
+        params: dict[str, Any] = run.request_params or {}
+        return GenerationRunActiveOut(
+            run_id=run.run_id,
+            pipeline=run.pipeline,
+            status=run.status,
+            step_profile=params.get("step_profile"),
+            generation_mode=run.generation_mode,
+        )
+
+    async def store_run_result(
+        self,
+        run_id: UUID,
+        result_payload: dict[str, Any],
+    ) -> None:
+        run = await self.repo.get_by_id(run_id)
+        if run is None:
+            return
+        params = dict(run.request_params or {})
+        params["result"] = result_payload
+        await self.repo.update_request_params(run_id, params)
+
+    async def get_run_result(
+        self,
+        run_id: UUID,
+        *,
+        mentor_id: UUID,
+    ) -> GenerationRunResultOut:
+        run = await self._get_run_for_mentor(run_id, mentor_id)
+        params = run.request_params or {}
+        stored = params.get("result") or {}
+        return GenerationRunResultOut(
+            run_id=run.run_id,
+            pipeline=run.pipeline,
+            status=run.status,
+            error_message=run.error_message,
+            study_material_generate=stored.get("study_material_generate"),
+            study_material_feedback=stored.get("study_material_feedback"),
+            quiz=stored.get("quiz"),
+        )
 
     async def _get_run_for_mentor(self, run_id: UUID, mentor_id: UUID) -> Any:
         run = await self.repo.get_by_id(run_id)
@@ -192,18 +290,56 @@ class GenerationRunService:
         last_completed_node = run.last_completed_node
         artifact_run_id = run.artifact_run_id
 
-        await self.repo.increment_attempt_count(run_id)
-        await self.repo.mark_running(run_id)
+        try:
+            await self.repo.increment_attempt_count(run_id)
+            await self.repo.mark_running(run_id)
 
-        return GenerationRunResumeResult(
-            run_id=run_id,
-            pipeline=run_pipeline,
-            generation_mode=run_generation_mode,
-            checkpoint_state=checkpoint,
-            request_params=request_params,
-            last_completed_node=last_completed_node,
-            artifact_run_id=artifact_run_id,
-        )
+            return GenerationRunResumeResult(
+                run_id=run_id,
+                pipeline=run_pipeline,
+                generation_mode=run_generation_mode,
+                checkpoint_state=checkpoint,
+                request_params=request_params,
+                last_completed_node=last_completed_node,
+                artifact_run_id=artifact_run_id,
+            )
+        finally:
+            await release_generation_lock(
+                self.session,
+                pipeline=run.pipeline,
+                resource_id=run.resource_id,
+            )
+
+    async def begin_resume(
+        self,
+        run_id: UUID,
+        *,
+        mentor_id: UUID,
+    ) -> GenerationRunResumeResult:
+        """Validate and mark a failed run as running; returns resume payload."""
+        run = await self._get_run_for_mentor(run_id, mentor_id)
+        self._validate_resumable(run, run_id=run_id)
+
+        handler = _pipeline_resume_handler(run.pipeline)
+        if handler is None:
+            raise GenerationPipelineResumeNotImplementedException(run.pipeline)
+
+        return await self.resume_run(run_id, mentor_id=mentor_id)
+
+    async def run_resume_pipeline(
+        self,
+        resume_result: GenerationRunResumeResult,
+        *,
+        mentor_id: UUID,
+        role: str,
+    ) -> None:
+        """Execute the pipeline resume handler (background job body)."""
+        handler = _pipeline_resume_handler(resume_result.pipeline)
+        if handler is None:
+            raise GenerationPipelineResumeNotImplementedException(
+                resume_result.pipeline
+            )
+        await handler(self.session, resume_result, mentor_id=mentor_id, role=role)
 
     async def execute_resume(
         self,
@@ -213,17 +349,8 @@ class GenerationRunService:
         role: str,
     ) -> GenerationRunResumeResponse:
         """Validate, mark running, and dispatch to the pipeline resume executor."""
-        run = await self._get_run_for_mentor(run_id, mentor_id)
-        self._validate_resumable(run, run_id=run_id)
-
-        handler = _pipeline_resume_handler(run.pipeline)
-        if handler is None:
-            raise GenerationPipelineResumeNotImplementedException(run.pipeline)
-
-        resume_result = await self.resume_run(run_id, mentor_id=mentor_id)
-        # Pipeline handler (and graph_runner inside it) call fail_run with specific
-        # diagnostics on any exception — no catch needed here.
-        await handler(self.session, resume_result, mentor_id=mentor_id, role=role)
+        resume_result = await self.begin_resume(run_id, mentor_id=mentor_id)
+        await self.run_resume_pipeline(resume_result, mentor_id=mentor_id, role=role)
 
         return GenerationRunResumeResponse(
             run_id=run_id,

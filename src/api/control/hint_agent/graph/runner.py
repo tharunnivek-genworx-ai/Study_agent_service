@@ -30,7 +30,13 @@ async def _run_graph(
     run_id: UUID | None = None,
 ) -> HintGraphState:
     graph = get_hint_generation_graph()
-    config = {"configurable": {"session": session}}
+    config = {
+        "configurable": {
+            "session": session,
+            "run_id": str(run_id) if run_id is not None else None,
+            "pipeline": GenerationPipeline.HINT.value,
+        }
+    }
     result = cast(
         HintGraphState,
         await invoke_graph_with_progress(

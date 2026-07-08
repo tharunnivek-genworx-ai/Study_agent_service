@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from src.api.core.exceptions import GenerationRunAborted
 from src.api.schemas import GenerationRunResumeResult
 from src.api.utils.space_node_utils.node_role_assert import _assert_mentor
 
@@ -24,5 +25,13 @@ async def execute_pipeline_resume(
 ) -> None:
     """Assert mentor role, construct the service, and invoke its resume handler."""
     _assert_mentor(role)
+    from src.api.core.services.generation_run_service import GenerationRunService
+
+    run_service = GenerationRunService(session)
+    if await run_service.acquire_lock_for_run(resume_result.run_id) is None:
+        return
     service = service_factory(session)
-    await resume_fn(service, resume_result, user_id=mentor_id, role=role)
+    try:
+        await resume_fn(service, resume_result, user_id=mentor_id, role=role)
+    except GenerationRunAborted:
+        return

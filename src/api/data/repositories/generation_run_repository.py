@@ -230,6 +230,21 @@ class GenerationRunRepository:
         rowcount = getattr(result, "rowcount", 0)
         return int(rowcount or 0) > 0
 
+    async def update_request_params(
+        self,
+        run_id: UUID,
+        request_params: dict[str, Any],
+    ) -> None:
+        await self.db.execute(
+            update(GenerationRun)
+            .where(GenerationRun.run_id == run_id)
+            .values(
+                request_params=request_params,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.commit()
+
     async def supersede_stale_runs(
         self,
         *,

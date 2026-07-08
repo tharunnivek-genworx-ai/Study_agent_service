@@ -1,5 +1,8 @@
 """Environment-backed configuration for the Study Agent Service."""
 
+from typing import Literal
+
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +25,15 @@ class Settings(BaseSettings):
     # Public base URL of this service, used to build absolute image URLs that
     # the browser can load directly (must be reachable from the frontend).
     media_base_url: str = "http://localhost:8001"
+    # Object storage: leave gcs_bucket empty for local /uploads mode.
+    gcs_bucket: str = ""
+    gcs_prefix: str = "studyguru/tharun"
+    gcs_signed_url_expiry_minutes: int = 60
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def storage_backend(self) -> Literal["local", "gcs"]:
+        return "gcs" if self.gcs_bucket.strip() else "local"
 
 
 settings = Settings()

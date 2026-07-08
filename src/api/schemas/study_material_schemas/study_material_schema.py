@@ -29,10 +29,8 @@ A version can be published without being the active working draft (mentor
 can publish v2 but keep editing v3 as the active draft). Both flags are
 independent.
 
-SSE note: generate/regenerate/improve stream their output via Server-Sent Events.
-The request bodies here are what the client POSTs to kick off the stream.
-The SSE event payload is a plain text stream; no Pydantic schema is needed
-for that — FastAPI's StreamingResponse handles it directly.
+Request bodies kick off async generation jobs; poll ``GET /generation-progress/{run_id}``
+and fetch results from ``GET /generation-runs/{run_id}/result``.
 """
 
 from datetime import datetime
@@ -141,10 +139,6 @@ class StudyMaterialGenerateRequest(BaseModel):
             "or its parent space. When set, extracted PDF text is passed to the LLM."
         ),
     )
-    progress_session_id: UUID | None = Field(
-        default=None,
-        description="Client-generated session id for polling generation progress.",
-    )
 
 
 class StudyMaterialRegenerateRequest(BaseModel):
@@ -163,10 +157,6 @@ class StudyMaterialRegenerateRequest(BaseModel):
         description=(
             "What is wrong with the current draft and what must improve in the rewrite."
         ),
-    )
-    progress_session_id: UUID | None = Field(
-        default=None,
-        description="Client-generated session id for polling generation progress.",
     )
 
 
@@ -188,10 +178,6 @@ class StudyMaterialImproveRequest(BaseModel):
         min_length=10,
         max_length=4000,
         description="Mentor's improvement instructions sent to the LLM.",
-    )
-    progress_session_id: UUID | None = Field(
-        default=None,
-        description="Client-generated session id for polling generation progress.",
     )
 
 
@@ -371,7 +357,6 @@ class StudyMaterialGenerateResponse(StudyMaterialVersionOut):
     """Generate endpoint response including durable run metadata for resume/progress."""
 
     run_id: UUID
-    progress_session_id: UUID
 
 
 class StudyMaterialVersionSummary(BaseModel):
@@ -658,4 +643,3 @@ class StudyMaterialFeedbackResponse(BaseModel):
     qc_result: GenerationDiagnosticsOut | None = None
     next_llm_retry_at: datetime | None = None
     run_id: UUID | None = None
-    progress_session_id: UUID | None = None

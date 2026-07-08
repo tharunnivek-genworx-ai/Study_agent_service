@@ -3,7 +3,7 @@
 
 Graph flow (happy path):
 
-    entry_router → resolver → [llamaparse] → concept_checklist
+    entry_router → resolver → concept_checklist → [llamaparse]
         → study_agent ⇄ quality_check → END
 QC retry loop:
     quality_check (fail) → study_agent (patch|insert|full_regen) → quality_check
@@ -69,29 +69,40 @@ def _route_from_entry(
 
 def _route_after_resolver(
     state: StudyMaterialGraphState,
-) -> Literal["llamaparse", "concept_checklist", "__end__"]:
-    if state.get("error"):
-        return "__end__"
-    if state.get("skip_llamaparse"):
-        return "concept_checklist"
-    if state.get("has_reference_material") and state.get("reference_file_path"):
-        return "llamaparse"
-    return "concept_checklist"
-
-
-def _route_after_llamaparse(
-    state: StudyMaterialGraphState,
 ) -> Literal["concept_checklist", "__end__"]:
     if state.get("error"):
         return "__end__"
     return "concept_checklist"
 
 
+def _needs_llamaparse(state: StudyMaterialGraphState) -> bool:
+    if state.get("skip_llamaparse"):
+        return False
+    if not state.get("has_reference_material"):
+        return False
+    if not state.get("reference_file_path"):
+        return False
+    parsed = state.get("parsed_reference_data")
+    if isinstance(parsed, dict) and parsed.get("sections"):
+        return False
+    return True
+
+
 def _route_after_concept_checklist(
     state: StudyMaterialGraphState,
-) -> Literal["study_agent", "__end__"]:
+) -> Literal["llamaparse", "study_agent", "__end__"]:
     if state.get("terminal_llm_failure"):
         return "__end__"
+    if state.get("error"):
+        return "__end__"
+    if _needs_llamaparse(state):
+        return "llamaparse"
+    return "study_agent"
+
+
+def _route_after_llamaparse(
+    state: StudyMaterialGraphState,
+) -> Literal["study_agent", "__end__"]:
     if state.get("error"):
         return "__end__"
     return "study_agent"

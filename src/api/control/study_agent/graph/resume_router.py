@@ -94,18 +94,22 @@ def resolve_resume_next_node(
         return "resolver"
 
     if last_completed_node == "resolver":
-        if state.get("skip_llamaparse"):
-            return "concept_checklist"
-        if state.get("has_reference_material") and state.get("reference_file_path"):
-            return "llamaparse"
-        return "concept_checklist"
-
-    if last_completed_node == "llamaparse":
         return "concept_checklist"
 
     if last_completed_node == "concept_checklist":
         if not state.get("must_cover_checklist"):
             return "concept_checklist"
+        if state.get("skip_llamaparse"):
+            return "study_agent"
+        if (
+            state.get("has_reference_material")
+            and state.get("reference_file_path")
+            and not (state.get("parsed_reference_data") or {}).get("sections")
+        ):
+            return "llamaparse"
+        return "study_agent"
+
+    if last_completed_node == "llamaparse":
         return "study_agent"
 
     if last_completed_node == "study_agent":

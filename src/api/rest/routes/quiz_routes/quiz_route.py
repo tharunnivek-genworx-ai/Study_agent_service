@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.core.services import QuizService
 from src.api.data.clients.postgres import get_db
 from src.api.rest.routes.dependencies import get_current_user
+from src.api.schemas.generation_run_schema import GenerationJobStartResponse
 from src.api.schemas.identity_schemas import TokenPayload
 from src.api.schemas.quiz_schemas import (
     QuizDeleteOut,
@@ -49,6 +50,9 @@ from src.api.schemas.quiz_schemas import (
     QuizUnpublishPreviewOut,
     QuizUnpublishRequest,
 )
+from src.api.utils.generation_progress.generation_job_executor import (
+    schedule_generation_job,
+)
 
 router = APIRouter(tags=["Quiz"])
 
@@ -58,25 +62,29 @@ router = APIRouter(tags=["Quiz"])
 
 @router.post(
     "/nodes/{node_id}/quizzes/generate",
-    status_code=status.HTTP_201_CREATED,
-    response_model=QuizOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=GenerationJobStartResponse,
 )
 async def generate_quiz(
     node_id: UUID,
     payload: QuizGenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> QuizOut:
-    """Mentor triggers quiz question generation from a published study material version.
-
-    Creates quiz and question rows without hints. After finalizing the draft,
-    call the separate hint generation endpoint (Hint Agent LangGraph flow).
-    Returns the created QuizOut with all questions.
-    """
+) -> GenerationJobStartResponse:
+    """Mentor triggers quiz question generation (async)."""
     service = QuizService(db)
-    return await service.generate_quiz(
+    run_id = await service.start_generate_quiz(
         node_id, payload, current_user.sub, current_user.role
     )
+    await db.commit()
+    user_id = current_user.sub
+    schedule_generation_job(
+        lambda session: QuizService(session).execute_generate_quiz(
+            run_id=run_id,
+            user_id=user_id,
+        )
+    )
+    return GenerationJobStartResponse(run_id=run_id, pipeline="quiz")
 
 
 @router.get(
@@ -235,8 +243,8 @@ async def create_quiz_question(
 
 @router.post(
     "/nodes/{node_id}/quizzes/{quiz_id}/questions/regenerate",
-    status_code=status.HTTP_200_OK,
-    response_model=QuizOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=GenerationJobStartResponse,
 )
 async def regenerate_quiz_questions(
     node_id: UUID,
@@ -244,16 +252,21 @@ async def regenerate_quiz_questions(
     payload: QuizQuestionRegenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> QuizOut:
-    """Mentor reworks one or more active questions using AI and mentor feedback.
-
-    Patched questions have hints cleared; response includes hints_stale_question_ids
-    so the UI can nudge hint regeneration.
-    """
+) -> GenerationJobStartResponse:
+    """Mentor reworks one or more active questions using AI (async)."""
     service = QuizService(db)
-    return await service.regenerate_questions(
+    run_id = await service.start_regenerate_questions(
         node_id, quiz_id, payload, current_user.sub, current_user.role
     )
+    await db.commit()
+    user_id = current_user.sub
+    schedule_generation_job(
+        lambda session: QuizService(session).execute_regenerate_questions(
+            run_id=run_id,
+            user_id=user_id,
+        )
+    )
+    return GenerationJobStartResponse(run_id=run_id, pipeline="quiz")
 
 
 @router.patch(
