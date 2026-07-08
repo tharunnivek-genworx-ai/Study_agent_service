@@ -128,6 +128,24 @@ def reference_llamaparse_images_dir(
     )
 
 
+def reference_llamaparse_images_key(
+    reference_material_id: UUID,
+    node_id: UUID,
+    *,
+    stamp: str | None = None,
+    filename: str,
+    gcs_prefix: str = "studyguru/tharun",
+) -> str:
+    """GCS object key for a LlamaParse figure image."""
+    ts = stamp or ist_timestamp()
+    safe_name = re.sub(r"[^\w.\-]", "_", Path(filename).name) or "image"
+    prefix = gcs_prefix.strip("/")
+    return (
+        f"{prefix}/reference_llamaparse/"
+        f"{reference_material_id}/{node_id}/images_{ts}/{safe_name}"
+    )
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path

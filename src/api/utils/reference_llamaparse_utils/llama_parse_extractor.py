@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import mimetypes
 import re
 import time
 import urllib.request
@@ -14,11 +15,16 @@ from uuid import UUID
 
 from llama_cloud import LlamaCloud
 
+from src.api.config import feature_settings, settings
 from src.api.control.study_agent.prompts.parsing import build_parsing_instruction
 from src.api.schemas.study_material_schemas.llama_parse_schema import (
     LlamaParseExtractionResult,
     ParseImageRecord,
     load_study_material_schema,
+)
+from src.api.utils.storage.object_storage import (
+    build_llamaparse_image_key,
+    upload_bytes_sync,
 )
 from src.api.utils.study_agent_utils.artifacts.artifact_paths import (
     ensure_dir,
@@ -51,6 +57,8 @@ def _save_llamaparse_artifact(
     stamp: str,
 ) -> None:
     """Persist LlamaParse JSON under {topic}_LlamaParse/ for debug logging only."""
+    if not feature_settings.enable_artifact_logging:
+        return
     try:
         out_path = llamaparse_log_path(
             topic_title,
@@ -97,10 +105,16 @@ def _bbox_y(img_meta: Any) -> float:
 def download_figures(
     client: LlamaCloud,
     file_id: str,
-    images_dir: Path,
+    *,
+    reference_material_id: UUID,
+    node_id: UUID,
+    stamp: str,
+    images_dir: Path | None = None,
 ) -> tuple[list[ParseImageRecord], str | None]:
     """Run a Parse job and download extracted images with original filenames."""
-    images_dir.mkdir(parents=True, exist_ok=True)
+    use_gcs = settings.storage_backend == "gcs"
+    if not use_gcs and images_dir is not None:
+        images_dir.mkdir(parents=True, exist_ok=True)
 
     parse_job_create = client.parsing.create(
         file_id=file_id,
@@ -147,8 +161,17 @@ def download_figures(
         except OSError:
             continue
 
-        local_path = images_dir / filename
-        local_path.write_bytes(binary_data)
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        if use_gcs:
+            object_key = build_llamaparse_image_key(
+                reference_material_id, node_id, stamp, filename
+            )
+            storage_ref = upload_bytes_sync(object_key, binary_data, content_type)
+        else:
+            assert images_dir is not None
+            local_path = images_dir / filename
+            local_path.write_bytes(binary_data)
+            storage_ref = str(local_path)
 
         api_page = getattr(img_meta, "page_number", None)
         page_number = _normalize_page_number(api_page, filename)
@@ -160,7 +183,7 @@ def download_figures(
                 page_number=page_number,
                 figure_index_on_page=filename_ordinal or 1,
                 filename=filename,
-                path=str(local_path),
+                path=storage_ref,
                 category=getattr(img_meta, "category", None),
                 bbox_y=_bbox_y(img_meta),
             )
@@ -237,14 +260,16 @@ def extract_structured_reference(
 
     stamp = artifact_stamp or ist_timestamp()
     content_hash = compute_pdf_content_hash(source)
-    resolved_images_dir = (
-        Path(images_dir)
-        if images_dir
-        else reference_llamaparse_images_dir(
-            reference_material_id, node_id, stamp=stamp
+    resolved_images_dir: Path | None = None
+    if settings.storage_backend != "gcs":
+        resolved_images_dir = (
+            Path(images_dir)
+            if images_dir
+            else reference_llamaparse_images_dir(
+                reference_material_id, node_id, stamp=stamp
+            )
         )
-    )
-    ensure_dir(resolved_images_dir)
+        ensure_dir(resolved_images_dir)
 
     client = LlamaCloud(api_key=api_key)
 
@@ -289,18 +314,20 @@ def extract_structured_reference(
     parse_images, parse_job_id = download_figures(
         client=client,
         file_id=file_id,
+        reference_material_id=reference_material_id,
+        node_id=node_id,
+        stamp=stamp,
         images_dir=resolved_images_dir,
     )
 
     logger.info(
         "LlamaParse extraction complete: %d section image metadata entr(ies), "
-        "%d downloaded reference figure(s) → %s",
+        "%d downloaded reference figure(s)",
         sum(
             len(section.get("images") or [])
             for section in structured_data.get("sections") or []
         ),
         len(parse_images),
-        resolved_images_dir,
     )
 
     return LlamaParseExtractionResult(

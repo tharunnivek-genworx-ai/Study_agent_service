@@ -5,6 +5,10 @@ from datetime import datetime
 from fastapi import HTTPException, status
 
 
+class GenerationRunAborted(Exception):
+    """Raised when a background job should stop (run cancelled or no longer active)."""
+
+
 class GenerationRunNotFoundException(HTTPException):
     def __init__(self) -> None:
         super().__init__(

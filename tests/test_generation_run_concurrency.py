@@ -56,6 +56,7 @@ def test_start_run_raises_409_when_running_exists() -> None:
         active = _make_running_run(resource_id=resource_id)
 
         session = MagicMock()
+        session.commit = AsyncMock()
         service = GenerationRunService(session)
         service.repo = MagicMock()
         service.repo.supersede_stale_runs = AsyncMock(return_value=0)
@@ -85,6 +86,7 @@ def test_start_run_supersedes_failed_before_create() -> None:
     async def _run() -> None:
         resource_id = uuid4()
         session = MagicMock()
+        session.commit = AsyncMock()
         service = GenerationRunService(session)
         service.repo = MagicMock()
         service.repo.supersede_stale_runs = AsyncMock(return_value=1)
@@ -112,7 +114,6 @@ def test_start_run_supersedes_failed_before_create() -> None:
                 completed_at=None,
             )
         )
-        service.progress = MagicMock()
         service.progress.start = AsyncMock()
 
         payload = GenerationRunCreate(
@@ -125,11 +126,19 @@ def test_start_run_supersedes_failed_before_create() -> None:
             generation_mode=GenerationRunMode.GENERATE,
         )
 
-        with patch(
-            "src.api.core.services.generation_run_service.require_generation_lock",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "src.api.core.services.generation_run_service.require_generation_lock",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.api.core.services.generation_run_service.release_generation_lock",
+                new_callable=AsyncMock,
+            ) as release_lock,
         ):
             await service.start_run(payload)
+
+        release_lock.assert_awaited_once()
 
         service.repo.supersede_stale_runs.assert_awaited_once_with(
             resource_id=resource_id,
@@ -177,6 +186,7 @@ def test_cancel_run_rejects_completed_status() -> None:
         run.status = GenerationRunStatus.COMPLETED.value
 
         session = MagicMock()
+        session.commit = AsyncMock()
         service = GenerationRunService(session)
         service.repo = MagicMock()
         service.repo.get_by_id = AsyncMock(return_value=run)
@@ -203,6 +213,7 @@ def test_resume_rejects_when_another_run_is_active() -> None:
         other_active.run_id = uuid4()
 
         session = MagicMock()
+        session.commit = AsyncMock()
         service = GenerationRunService(session)
         service.repo = MagicMock()
         service.repo.get_by_id = AsyncMock(return_value=run)
@@ -212,5 +223,105 @@ def test_resume_rejects_when_another_run_is_active() -> None:
             await service.resume_run(run_id, mentor_id=mentor_id)
 
         assert exc_info.value.status_code == 409
+
+    asyncio.run(_run())
+
+
+def test_get_active_run_for_resource_returns_running_run() -> None:
+    async def _run() -> None:
+        mentor_id = uuid4()
+        resource_id = uuid4()
+        run = _make_running_run(resource_id=resource_id)
+        run.mentor_id = mentor_id
+        run.request_params = {"step_profile": "study_generate_with_ref"}
+
+        session = MagicMock()
+        session.commit = AsyncMock()
+        service = GenerationRunService(session)
+        service.repo = MagicMock()
+        service.repo.get_active_run = AsyncMock(return_value=run)
+
+        result = await service.get_active_run_for_resource(
+            resource_id=resource_id,
+            pipeline="study_material",
+            mentor_id=mentor_id,
+        )
+
+        assert result is not None
+        assert result.run_id == run.run_id
+        assert result.step_profile == "study_generate_with_ref"
+        assert result.status == GenerationRunStatus.RUNNING.value
+
+    asyncio.run(_run())
+
+
+def test_get_active_run_for_resource_hides_other_mentor() -> None:
+    async def _run() -> None:
+        resource_id = uuid4()
+        run = _make_running_run(resource_id=resource_id)
+        run.mentor_id = uuid4()
+
+        session = MagicMock()
+        session.commit = AsyncMock()
+        service = GenerationRunService(session)
+        service.repo = MagicMock()
+        service.repo.get_active_run = AsyncMock(return_value=run)
+
+        result = await service.get_active_run_for_resource(
+            resource_id=resource_id,
+            pipeline="study_material",
+            mentor_id=uuid4(),
+        )
+
+        assert result is None
+
+    asyncio.run(_run())
+
+
+def test_acquire_lock_for_run_skips_cancelled_run() -> None:
+    async def _run() -> None:
+        run_id = uuid4()
+        run = _make_running_run()
+        run.run_id = run_id
+        run.status = GenerationRunStatus.CANCELLED.value
+
+        session = MagicMock()
+        service = GenerationRunService(session)
+        service.repo = MagicMock()
+        service.repo.get_by_id = AsyncMock(return_value=run)
+
+        with patch(
+            "src.api.core.services.generation_run_service.try_acquire_generation_lock",
+            new_callable=AsyncMock,
+        ) as try_lock:
+            result = await service.acquire_lock_for_run(run_id)
+
+        assert result is None
+        try_lock.assert_not_awaited()
+
+    asyncio.run(_run())
+
+
+def test_acquire_lock_for_run_fails_run_when_lock_unavailable() -> None:
+    async def _run() -> None:
+        run_id = uuid4()
+        run = _make_running_run()
+        run.run_id = run_id
+
+        session = MagicMock()
+        service = GenerationRunService(session)
+        service.repo = MagicMock()
+        service.repo.get_by_id = AsyncMock(return_value=run)
+        service.fail_run = AsyncMock()
+
+        with patch(
+            "src.api.core.services.generation_run_service.try_acquire_generation_lock",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await service.acquire_lock_for_run(run_id)
+
+        assert result is None
+        service.fail_run.assert_awaited_once()
 
     asyncio.run(_run())

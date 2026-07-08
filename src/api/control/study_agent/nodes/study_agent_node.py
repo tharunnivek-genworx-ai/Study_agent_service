@@ -357,6 +357,13 @@ async def study_agent_node(
     document generation/improve/regenerate. Classifies output via
     ``classify_generation_output`` (study_document | reference_required | malformed).
     """
+    from src.api.schemas import GenerationPipeline
+    from src.api.utils.generation_progress.reporter import maybe_report_node_enter
+
+    await maybe_report_node_enter(
+        config, "study_agent", default_pipeline=GenerationPipeline.STUDY_MATERIAL
+    )
+
     if not helpers.groq_api_keys_configured():
         return {"error": "No GROQ API keys are configured."}
 

@@ -82,6 +82,14 @@ class TestHintServiceRegenerateAll:
             mock_node = MagicMock()
             mock_node.space_id = uuid4()
 
+            mock_run = MagicMock()
+            mock_run.request_params = {
+                "node_id": str(node_id),
+                "quiz_id": str(quiz_id),
+                "questions_filter_ids": [str(q1_id), str(q2_id)],
+                "mentor_feedback": request.mentor_feedback,
+            }
+
             with (
                 patch.object(
                     service,
@@ -109,12 +117,24 @@ class TestHintServiceRegenerateAll:
                 patch(
                     "src.api.core.services.quiz_services.hint_service.QuizRepository"
                 ) as mock_quiz_repo_cls,
+                patch(
+                    "src.api.core.services.quiz_services.hint_service.GenerationRunService"
+                ) as mock_run_service_cls,
             ):
                 mock_quiz_repo_cls.return_value.get_quiz_by_id = AsyncMock(
                     return_value=mock_quiz
                 )
-                await service.regenerate_hints(
+                mock_run_service_cls.return_value.acquire_lock_for_run = AsyncMock(
+                    return_value=mock_run
+                )
+                mock_run_service_cls.return_value.store_run_result = AsyncMock()
+                mock_run_service_cls.return_value.fail_run = AsyncMock()
+                run_id = await service.start_regenerate_hints(
                     node_id, quiz_id, request, user_id, "mentor"
+                )
+                await service.execute_regenerate_hints(
+                    run_id=run_id,
+                    user_id=user_id,
                 )
 
             mock_repo.get_active_questions_with_complete_hints.assert_awaited_once_with(
@@ -153,7 +173,7 @@ class TestHintServiceRegenerateAll:
                 AsyncMock(return_value=(mock_repo, mock_quiz)),
             ):
                 with pytest.raises(HintsNothingToRegenerateException):
-                    await service.regenerate_hints(
+                    await service.start_regenerate_hints(
                         node_id, quiz_id, request, user_id, "mentor"
                     )
 

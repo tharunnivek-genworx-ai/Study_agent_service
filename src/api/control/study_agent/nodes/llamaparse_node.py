@@ -34,6 +34,13 @@ async def llamaparse_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
+    from src.api.schemas import GenerationPipeline
+    from src.api.utils.generation_progress.reporter import maybe_report_node_enter
+
+    await maybe_report_node_enter(
+        config, "llamaparse", default_pipeline=GenerationPipeline.STUDY_MATERIAL
+    )
+
     file_path = state.get("reference_file_path")
     if not file_path:
         return {"extracted_reference_text": "", "parsed_reference_data": {}}

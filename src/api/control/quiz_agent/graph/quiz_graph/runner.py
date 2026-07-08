@@ -30,7 +30,13 @@ async def _run_graph(
     run_id: UUID | None = None,
 ) -> QuizGraphState:
     graph = get_quiz_generation_graph()
-    config = {"configurable": {"session": session}}
+    config = {
+        "configurable": {
+            "session": session,
+            "run_id": str(run_id) if run_id is not None else None,
+            "pipeline": GenerationPipeline.QUIZ.value,
+        }
+    }
     result = cast(
         QuizGraphState,
         await invoke_graph_with_progress(
@@ -94,7 +100,13 @@ async def _run_question_rework_graph(
 ) -> QuizGraphState:
     graph = get_quiz_generation_graph()
     state_with_mode: dict[str, Any] = {**initial_state, "mode": "improve"}
-    config = {"configurable": {"session": session}}
+    config = {
+        "configurable": {
+            "session": session,
+            "run_id": str(run_id) if run_id is not None else None,
+            "pipeline": GenerationPipeline.QUIZ.value,
+        }
+    }
     result = cast(
         QuizGraphState,
         await invoke_graph_with_progress(

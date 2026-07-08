@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -18,12 +18,15 @@ from src.api.schemas.common import (
 # Re-exported for callers that import from this module.
 __all__ = [
     "ACTIVE_RUN_STATUSES",
+    "GenerationJobStartResponse",
+    "GenerationRunActiveOut",
     "GenerationRunCancelResponse",
     "GenerationRunCreate",
     "GenerationRunMode",
     "GenerationRunOut",
     "GenerationRunPipeline",
     "GenerationRunResourceType",
+    "GenerationRunResultOut",
     "GenerationRunResumeResponse",
     "GenerationRunResumeResult",
     "GenerationRunStatus",
@@ -151,3 +154,33 @@ class GenerationRunResumeResult(BaseModel):
     request_params: dict[str, Any]
     last_completed_node: str | None = None
     artifact_run_id: str | None = None
+
+
+class GenerationJobStartResponse(BaseModel):
+    """Returned immediately when a generation job is accepted (HTTP 202)."""
+
+    run_id: UUID
+    pipeline: str
+    status: Literal["running"] = "running"
+
+
+class GenerationRunActiveOut(BaseModel):
+    """Active generation run for a resource, if any."""
+
+    run_id: UUID
+    pipeline: str
+    status: str
+    step_profile: str | None = None
+    generation_mode: str | None = None
+
+
+class GenerationRunResultOut(BaseModel):
+    """Materialized result of a completed or failed generation run."""
+
+    run_id: UUID
+    pipeline: str
+    status: str
+    error_message: str | None = None
+    study_material_generate: dict[str, Any] | None = None
+    study_material_feedback: dict[str, Any] | None = None
+    quiz: dict[str, Any] | None = None

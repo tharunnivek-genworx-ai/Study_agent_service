@@ -1,18 +1,11 @@
-"""Convert on-disk upload paths to browser-loadable URLs."""
+"""Convert storage references to browser-loadable URLs."""
 
 from __future__ import annotations
 
-from src.api.config import settings
+from src.api.utils.storage.object_storage import resolve_public_url
 
 
 def storage_path_to_url(storage_path: str, base_url: str | None = None) -> str:
-    """Convert an on-disk uploads path to a browser-loadable URL."""
-    root = base_url or settings.media_base_url
-    normalized = storage_path.replace("\\", "/")
-    marker = "/uploads/"
-    idx = normalized.find(marker)
-    if idx != -1:
-        return f"{root.rstrip('/')}{normalized[idx:]}"
-    if normalized.startswith("/app/"):
-        return f"{root.rstrip('/')}{normalized[len('/app') :]}"
-    return normalized
+    """Convert a storage reference to a browser-loadable URL."""
+    del base_url
+    return resolve_public_url(storage_path)

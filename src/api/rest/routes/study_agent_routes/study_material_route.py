@@ -1,17 +1,10 @@
-# src/api/rest/routes/study_material_route.py
+# src/api/rest/routes/study_agent_routes/study_material_route.py
 """
 Routes for study_material_versions.
 
-  generate    → POST  /nodes/{node_id}/study-material/generate
-  regenerate  → POST  /nodes/{node_id}/study-material/regenerate
-  improve     → POST  /nodes/{node_id}/study-material/improve
-  manual_edit → PATCH /nodes/{node_id}/study-material/manual-edit
-  publish     → PATCH /nodes/{node_id}/study-material/publish
-  activate    → PATCH /nodes/{node_id}/study-material/activate
-  versions    → GET   /nodes/{node_id}/study-material/versions
-  version     → GET   /nodes/{node_id}/study-material/versions/{version_id}
-  version_pdf → GET   /nodes/{node_id}/study-material/versions/{version_id}/pdf
-  trainee routes → see ``trainee_study_routes`` (GET study-material, PDF, panel, progress)
+  generate    → POST  /nodes/{node_id}/study-material/generate  (202 async)
+  regenerate  → POST  /nodes/{node_id}/study-material/regenerate (202 async)
+  improve     → POST  /nodes/{node_id}/study-material/improve   (202 async)
 """
 
 from uuid import UUID
@@ -25,6 +18,7 @@ from src.api.core.services.study_agent_services.study_material_service import (
 )
 from src.api.data.clients.postgres.database import get_db
 from src.api.rest.routes.dependencies import get_current_user
+from src.api.schemas.generation_run_schema import GenerationJobStartResponse
 from src.api.schemas.identity_schemas.auth_schema import TokenPayload
 from src.api.schemas.study_material_schemas.study_material_schema import (
     SpacePublishedResourcesResponse,
@@ -32,9 +26,7 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialActivateRequest,
     StudyMaterialClearDraftsEligibilityOut,
     StudyMaterialClearDraftsOut,
-    StudyMaterialFeedbackResponse,
     StudyMaterialGenerateRequest,
-    StudyMaterialGenerateResponse,
     StudyMaterialImproveRequest,
     StudyMaterialManualEditRequest,
     StudyMaterialMentorUiStateOut,
@@ -46,62 +38,92 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialVersionHistoryOut,
     StudyMaterialVersionOut,
 )
+from src.api.utils.generation_progress.generation_job_executor import (
+    schedule_generation_job,
+)
 
 router = APIRouter(tags=["Study Material"])
 
 
 @router.post(
     "/nodes/{node_id}/study-material/generate",
-    status_code=status.HTTP_201_CREATED,
-    response_model=StudyMaterialGenerateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=GenerationJobStartResponse,
 )
 async def generate_study_material(
     node_id: UUID,
     payload: StudyMaterialGenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialGenerateResponse:
-    """Mentor triggers first-time study material generation."""
+) -> GenerationJobStartResponse:
+    """Mentor triggers first-time study material generation (async)."""
     service = StudyMaterialService(db)
-    return await service.generate_study_material(
+    run_id = await service.start_generate_study_material(
         node_id, payload, current_user.sub, current_user.role
     )
+    await db.commit()
+    user_id = current_user.sub
+    schedule_generation_job(
+        lambda session: StudyMaterialService(session).execute_generate_study_material(
+            run_id=run_id,
+            user_id=user_id,
+        )
+    )
+    return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
 
 
 @router.post(
     "/nodes/{node_id}/study-material/regenerate",
-    status_code=status.HTTP_201_CREATED,
-    response_model=StudyMaterialFeedbackResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=GenerationJobStartResponse,
 )
 async def regenerate_study_material(
     node_id: UUID,
     payload: StudyMaterialRegenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialFeedbackResponse:
-    """Mentor rewrites the active draft with feedback. No LlamaParse re-run."""
+) -> GenerationJobStartResponse:
+    """Mentor rewrites the active draft with feedback (async)."""
     service = StudyMaterialService(db)
-    return await service.regenerate_study_material(
+    run_id = await service.start_regenerate_study_material(
         node_id, payload, current_user.sub, current_user.role
     )
+    await db.commit()
+    user_id = current_user.sub
+    schedule_generation_job(
+        lambda session: StudyMaterialService(session).execute_regenerate_study_material(
+            run_id=run_id,
+            user_id=user_id,
+        )
+    )
+    return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
 
 
 @router.post(
     "/nodes/{node_id}/study-material/improve",
-    status_code=status.HTTP_201_CREATED,
-    response_model=StudyMaterialFeedbackResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=GenerationJobStartResponse,
 )
 async def improve_study_material(
     node_id: UUID,
     payload: StudyMaterialImproveRequest,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialFeedbackResponse:
-    """Mentor submits feedback to improve the current active version."""
+) -> GenerationJobStartResponse:
+    """Mentor submits feedback to improve the current active version (async)."""
     service = StudyMaterialService(db)
-    return await service.improve_study_material(
+    run_id = await service.start_improve_study_material(
         node_id, payload, current_user.sub, current_user.role
     )
+    await db.commit()
+    user_id = current_user.sub
+    schedule_generation_job(
+        lambda session: StudyMaterialService(session).execute_improve_study_material(
+            run_id=run_id,
+            user_id=user_id,
+        )
+    )
+    return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
 
 
 @router.patch(
@@ -327,23 +349,6 @@ async def unarchive_study_material_version(
     """Mentor restores an archived version to working history."""
     service = StudyMaterialService(db)
     return await service.unarchive_study_material_version(
-        node_id, version_id, current_user.sub, current_user.role
-    )
-
-
-@router.patch(
-    "/nodes/{node_id}/study-material/versions/{version_id}/dismiss-qc-warning",
-    response_model=StudyMaterialVersionOut,
-)
-async def dismiss_study_material_qc_warning(
-    node_id: UUID,
-    version_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: TokenPayload = Depends(get_current_user),
-) -> StudyMaterialVersionOut:
-    """Mentor acknowledges a QC warning and accepts the draft."""
-    service = StudyMaterialService(db)
-    return await service.dismiss_study_material_qc_warning(
         node_id, version_id, current_user.sub, current_user.role
     )
 

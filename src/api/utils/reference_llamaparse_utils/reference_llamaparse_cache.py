@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -28,15 +27,17 @@ from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
     extract_structured_reference,
     fetch_structured_data_from_extract_job,
 )
+from src.api.utils.storage.object_storage import exists
 
 logger = logging.getLogger(__name__)
 
 
-def _cached_image_files_exist(images: list[ReferenceLlamaParseImage]) -> bool:
-    """Return True when every stored figure path is still readable on disk."""
+async def _cached_image_files_exist(images: list[ReferenceLlamaParseImage]) -> bool:
+    """Return True when every stored figure path is still readable."""
     if not images:
         return True
-    return all(Path(image.file_url).is_file() for image in images)
+    checks = await asyncio.gather(*(exists(image.file_url) for image in images))
+    return all(checks)
 
 
 def _images_to_parse_records(
@@ -125,7 +126,7 @@ async def _try_load_cached_extraction(
     current = await repo.get_by_reference_and_node(reference_material_id, node_id)
     if current is not None and current.content_hash == content_hash:
         images = await repo.list_images_for_pdf(current.llamaparse_pdf_id)
-        if _cached_image_files_exist(images):
+        if await _cached_image_files_exist(images):
             try:
                 structured_data, json_fetched = await _resolve_structured_json(
                     current, api_key
@@ -160,7 +161,7 @@ async def _try_load_cached_extraction(
         return None
 
     pdf_row, images = cached
-    if not _cached_image_files_exist(images):
+    if not await _cached_image_files_exist(images):
         logger.warning(
             "Cached LlamaParse images missing on disk for hash=%s; will re-extract",
             content_hash[:12],

@@ -101,6 +101,13 @@ async def concept_checklist_node(
     config: RunnableConfig,
 ) -> dict[str, Any]:
     """Generate the must-cover checklist and write it to state."""
+    from src.api.schemas import GenerationPipeline
+    from src.api.utils.generation_progress.reporter import maybe_report_node_enter
+
+    await maybe_report_node_enter(
+        config, "concept_checklist", default_pipeline=GenerationPipeline.STUDY_MATERIAL
+    )
+
     mode = state.get("generation_mode") or "generate"
     existing_checklist = state.get("must_cover_checklist")
     if existing_checklist and mode == "generate":

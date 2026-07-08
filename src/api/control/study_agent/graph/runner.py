@@ -68,11 +68,17 @@ async def _run_graph(
     initial_state: StudyMaterialGraphState,
     user_id: UUID,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     graph = get_study_material_graph()
-    config = {"configurable": {"session": session, "user_id": user_id}}
+    config = {
+        "configurable": {
+            "session": session,
+            "user_id": user_id,
+            "run_id": str(run_id) if run_id is not None else None,
+            "pipeline": GenerationPipeline.STUDY_MATERIAL.value,
+        }
+    }
     result = cast(
         StudyMaterialGraphState,
         await invoke_graph_with_progress(
@@ -80,7 +86,6 @@ async def _run_graph(
             cast(dict[str, Any], initial_state),
             config,
             pipeline=GenerationPipeline.STUDY_MATERIAL,
-            progress_session_id=progress_session_id,
             run_id=run_id,
         ),
     )
@@ -132,7 +137,6 @@ async def run_study_material_generation(
     reference_material_id: UUID | None = None,
     user_id: UUID | None = None,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """First-time generate: resolver → optional llamaparse → study_agent."""
@@ -149,7 +153,6 @@ async def run_study_material_generation(
         session,
         initial_state,
         user_id,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )
 
@@ -159,7 +162,6 @@ async def run_study_material_from_checkpoint(
     initial_state: StudyMaterialGraphState,
     user_id: UUID,
     *,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """Resume a failed run from a hydrated checkpoint state."""
@@ -167,7 +169,6 @@ async def run_study_material_from_checkpoint(
         session,
         initial_state,
         user_id,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )
 
@@ -182,7 +183,6 @@ async def run_study_material_regeneration(
     *,
     hydration: dict[str, Any] | None = None,
     failed_qc_feedback: str | None = None,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """Regenerate from active draft + mentor feedback. Skips LlamaParse when persisted."""
@@ -213,7 +213,6 @@ async def run_study_material_regeneration(
         session,
         initial_state,
         user_id,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )
 
@@ -228,7 +227,6 @@ async def run_study_material_improve(
     *,
     hydration: dict[str, Any] | None = None,
     failed_qc_feedback: str | None = None,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> StudyMaterialGraphState:
     """Improve active draft surgically. Skips LlamaParse when persisted reference exists."""
@@ -259,6 +257,5 @@ async def run_study_material_improve(
         session,
         initial_state,
         user_id,
-        progress_session_id=progress_session_id,
         run_id=run_id,
     )

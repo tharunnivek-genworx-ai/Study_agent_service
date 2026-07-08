@@ -206,7 +206,7 @@ def test_upload_twice_to_same_node_leaves_one_active_row() -> None:
                 new_callable=AsyncMock,
             ),
             patch(
-                "src.api.core.services.study_agent_services.reference_material_service._save_file_locally",
+                "src.api.core.services.study_agent_services.reference_material_service.upload_bytes",
                 new_callable=AsyncMock,
                 return_value="/tmp/second.pdf",
             ),
@@ -262,7 +262,7 @@ def test_upload_reference_material_soft_deletes_prior_node_materials() -> None:
                 new_callable=AsyncMock,
             ),
             patch(
-                "src.api.core.services.study_agent_services.reference_material_service._save_file_locally",
+                "src.api.core.services.study_agent_services.reference_material_service.upload_bytes",
                 new_callable=AsyncMock,
                 return_value="/tmp/upload.pdf",
             ),
@@ -308,7 +308,7 @@ def test_upload_reference_material_soft_deletes_prior_space_materials() -> None:
                 new_callable=AsyncMock,
             ),
             patch(
-                "src.api.core.services.study_agent_services.reference_material_service._save_file_locally",
+                "src.api.core.services.study_agent_services.reference_material_service.upload_bytes",
                 new_callable=AsyncMock,
                 return_value="/tmp/upload.pdf",
             ),

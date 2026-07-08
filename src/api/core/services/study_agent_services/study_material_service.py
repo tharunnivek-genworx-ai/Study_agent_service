@@ -30,6 +30,7 @@ from src.api.control.study_agent.utils.instructions.instruction_snapshot import 
     embed_effective_instruction_snapshot,
     extract_effective_instruction_snapshot,
 )
+from src.api.core.exceptions import GenerationRunAborted
 from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     LLMGenerationFailedException,
     StudyMaterialCannotArchiveNonDraftException,
@@ -119,6 +120,7 @@ from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ARCHIVED,
     LIFECYCLE_DRAFT,
 )
+from src.api.utils.generation_progress.store import study_step_profile_for_mode
 from src.api.utils.space_node_utils.build_node import (
     format_effective_instruction,
     resolve_effective_instruction_parts,
@@ -165,16 +167,6 @@ from src.api.utils.study_agent_utils.version.version_actions import (
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
-
-
-def _progress_session_id(
-    progress_session_id: UUID | None,
-    *,
-    run_id: UUID | None = None,
-) -> str | None:
-    if run_id is not None:
-        return str(run_id)
-    return str(progress_session_id) if progress_session_id is not None else None
 
 
 def _request_param_uuid(value: UUID | None) -> str | None:
@@ -481,6 +473,15 @@ class StudyMaterialService:
         generation_mode: GenerationRunMode,
         request_params: dict[str, Any],
     ) -> UUID:
+        has_reference = bool(request_params.get("reference_material_id"))
+        request_params = {
+            **request_params,
+            "node_id": str(node_id),
+            "step_profile": study_step_profile_for_mode(
+                generation_mode=generation_mode.value,
+                has_reference_material=has_reference,
+            ).value,
+        }
         resource_type, resource_id = GenerationRunService.resource_for_study_material(
             node_id
         )
@@ -528,6 +529,18 @@ class StudyMaterialService:
             next_llm_retry_at=next_retry,
         )
 
+    async def _persist_run_result(
+        self,
+        run_id: UUID,
+        result: StudyMaterialGenerateResponse | StudyMaterialFeedbackResponse,
+    ) -> None:
+        payload: dict[str, Any] = {}
+        if isinstance(result, StudyMaterialGenerateResponse):
+            payload["study_material_generate"] = result.model_dump(mode="json")
+        else:
+            payload["study_material_feedback"] = result.model_dump(mode="json")
+        await GenerationRunService(self.session).store_run_result(run_id, payload)
+
     async def resume_study_material_generation(
         self,
         resume_result: GenerationRunResumeResult,
@@ -553,7 +566,6 @@ class StudyMaterialService:
         space_id = node.space_id
         node_title = node.title
         run_id = resume_result.run_id
-        progress_id = str(run_id)
         generation_mode = resume_result.generation_mode
 
         initial_state = hydrate_checkpoint_state(
@@ -568,11 +580,10 @@ class StudyMaterialService:
                 session=self.session,
                 initial_state=initial_state,
                 user_id=user_id,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
             graph_result["node_title"] = node_title
-            return await self._finalize_generation_run(
+            result = await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
                 space_id=space_id,
@@ -581,6 +592,10 @@ class StudyMaterialService:
                 user_id=user_id,
                 request_params=resume_result.request_params,
             )
+            await self._persist_run_result(run_id, result)
+            return result
+        except GenerationRunAborted:
+            return None
         except Exception as exc:
             await self._fail_generation_run(run_id, exc=exc)
             raise
@@ -607,7 +622,6 @@ class StudyMaterialService:
                 status_message=graph_result.get("llm_output_content"),
                 new_version=None,
                 run_id=run_id,
-                progress_session_id=run_id,
             )
 
         if (
@@ -621,7 +635,6 @@ class StudyMaterialService:
                 status_message=graph_result.get("llm_output_content"),
                 new_version=None,
                 run_id=run_id,
-                progress_session_id=run_id,
             )
 
         reference_material_id = graph_result.get("reference_material_id")
@@ -657,7 +670,6 @@ class StudyMaterialService:
             return StudyMaterialGenerateResponse(
                 **version_out.model_dump(),
                 run_id=run_id,
-                progress_session_id=run_id,
             )
 
         return StudyMaterialFeedbackResponse(
@@ -668,7 +680,6 @@ class StudyMaterialService:
             qc_failed_permanently=version_out.qc_failed_permanently,
             qc_result=version_out.qc_result,
             run_id=run_id,
-            progress_session_id=run_id,
         )
 
     async def _persist_new_version(
@@ -748,24 +759,21 @@ class StudyMaterialService:
 
     # ── generate ───────────────────────────────────────────────────────
 
-    async def generate_study_material(
+    async def start_generate_study_material(
         self,
         node_id: UUID,
         request: StudyMaterialGenerateRequest,
         user_id: UUID,
         role: str,
-    ) -> StudyMaterialGenerateResponse:
-        """First-time generation via LangGraph (includes LlamaParse when PDF attached)."""
+    ) -> UUID:
+        """Validate and create a durable run for first-time generation."""
         _assert_mentor(role)
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
-        space_id = node.space_id
-        node_title = node.title
-
-        run_id = await self._start_study_material_run(
+        return await self._start_study_material_run(
             node_id=node_id,
-            space_id=space_id,
+            space_id=node.space_id,
             mentor_id=user_id,
             generation_mode=GenerationRunMode.GENERATE,
             request_params={
@@ -774,61 +782,66 @@ class StudyMaterialService:
                 ),
             },
         )
-        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
 
+    async def execute_generate_study_material(
+        self,
+        *,
+        run_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        run_service = GenerationRunService(self.session)
+        run = await run_service.acquire_lock_for_run(run_id)
+        if run is None:
+            return
+        params = run.request_params or {}
+        node_id = UUID(str(params["node_id"]))
+        ref_raw = params.get("reference_material_id")
+        reference_material_id = UUID(str(ref_raw)) if ref_raw else None
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
         try:
             graph_result = await run_study_material_generation(
                 session=self.session,
                 node_id=node_id,
-                reference_material_id=request.reference_material_id,
+                reference_material_id=reference_material_id,
                 user_id=user_id,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
-            graph_result["node_title"] = node_title
-
+            graph_result["node_title"] = node.title
             result = await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=space_id,
+                space_id=node.space_id,
                 graph_result=graph_result,
                 generation_mode="generate",
                 user_id=user_id,
-                request_params={
-                    "reference_material_id": _request_param_uuid(
-                        request.reference_material_id
-                    ),
-                },
+                request_params=params,
             )
-            assert isinstance(result, StudyMaterialGenerateResponse)
-            return result
+            await self._persist_run_result(run_id, result)
+        except GenerationRunAborted:
+            return
         except Exception as exc:
             await self._fail_generation_run(run_id, exc=exc)
-            raise
 
     # ── regenerate ─────────────────────────────────────────────────────
 
-    async def regenerate_study_material(
+    async def start_regenerate_study_material(
         self,
         node_id: UUID,
         request: StudyMaterialRegenerateRequest,
         user_id: UUID,
         role: str,
-    ) -> StudyMaterialFeedbackResponse:
-        """Rewrite active draft using mentor feedback. Skips LlamaParse."""
+    ) -> UUID:
+        """Validate and create a durable run for regeneration."""
         _assert_mentor(role)
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
-
-        space_id = node.space_id
-        node_title = node.title
-
         repo = StudyMaterialRepository(self.session)
         active = await repo.get_active_version(node_id)
         if active is None:
             raise StudyMaterialNoActiveVersionException()
-
         if (
             active.content
             and "GENERATION STATUS: Reference material required" in active.content
@@ -836,83 +849,91 @@ class StudyMaterialService:
             raise StudyMaterialModificationBlockedReferenceMaterialRequiredException(
                 action="regenerate"
             )
-
-        reference_material_id = active.reference_material_id
-        based_on_version_id = active.version_id
-        current_draft_content = active.content
-
-        hydration, failed_qc_feedback = _hydration_from_active_version(active)
-
-        run_id = await self._start_study_material_run(
+        return await self._start_study_material_run(
             node_id=node_id,
-            space_id=space_id,
+            space_id=node.space_id,
             mentor_id=user_id,
             generation_mode=GenerationRunMode.REGENERATE,
             request_params={
                 "mentor_regeneration_goal": request.mentor_regeneration_goal,
-                "reference_material_id": _request_param_uuid(reference_material_id),
-                "based_on_version_id": _request_param_uuid(based_on_version_id),
+                "reference_material_id": _request_param_uuid(
+                    active.reference_material_id
+                ),
+                "based_on_version_id": _request_param_uuid(active.version_id),
             },
         )
-        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
 
+    async def execute_regenerate_study_material(
+        self,
+        *,
+        run_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        run_service = GenerationRunService(self.session)
+        run = await run_service.acquire_lock_for_run(run_id)
+        if run is None:
+            return
+        params = run.request_params or {}
+        node_id = UUID(str(params["node_id"]))
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        repo = StudyMaterialRepository(self.session)
+        active = await repo.get_active_version(node_id)
+        if active is None:
+            await self._fail_generation_run(
+                run_id, exc=StudyMaterialNoActiveVersionException()
+            )
+            return
+        reference_material_id = active.reference_material_id
+        hydration, failed_qc_feedback = _hydration_from_active_version(active)
+        mentor_goal = str(params.get("mentor_regeneration_goal") or "")
         try:
             graph_result = await run_study_material_regeneration(
                 session=self.session,
                 node_id=node_id,
-                current_draft_content=current_draft_content,
-                mentor_regeneration_goal=request.mentor_regeneration_goal,
+                current_draft_content=active.content,
+                mentor_regeneration_goal=mentor_goal,
                 reference_material_id=reference_material_id,
                 user_id=user_id,
                 hydration=hydration,
                 failed_qc_feedback=failed_qc_feedback,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
-            graph_result["node_title"] = node_title
-
+            graph_result["node_title"] = node.title
             result = await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=space_id,
+                space_id=node.space_id,
                 graph_result=graph_result,
                 generation_mode="regenerate",
                 user_id=user_id,
-                request_params={
-                    "mentor_regeneration_goal": request.mentor_regeneration_goal,
-                    "reference_material_id": _request_param_uuid(reference_material_id),
-                    "based_on_version_id": _request_param_uuid(based_on_version_id),
-                },
+                request_params=params,
             )
-            assert isinstance(result, StudyMaterialFeedbackResponse)
-            return result
+            await self._persist_run_result(run_id, result)
+        except GenerationRunAborted:
+            return
         except Exception as exc:
             await self._fail_generation_run(run_id, exc=exc)
-            raise
 
     # ── improve ────────────────────────────────────────────────────────
 
-    async def improve_study_material(
+    async def start_improve_study_material(
         self,
         node_id: UUID,
         request: StudyMaterialImproveRequest,
         user_id: UUID,
         role: str,
-    ) -> StudyMaterialFeedbackResponse:
-        """Surgical improvement of active draft via LangGraph. Skips LlamaParse."""
+    ) -> UUID:
+        """Validate and create a durable run for improvement."""
         _assert_mentor(role)
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
-
-        space_id = node.space_id
-        node_title = node.title
-
         repo = StudyMaterialRepository(self.session)
         active = await repo.get_active_version(node_id)
         if active is None:
             raise StudyMaterialNoActiveVersionException()
-
         if (
             active.content
             and "GENERATION STATUS: Reference material required" in active.content
@@ -920,59 +941,72 @@ class StudyMaterialService:
             raise StudyMaterialModificationBlockedReferenceMaterialRequiredException(
                 action="improve"
             )
-
-        reference_material_id = active.reference_material_id
-        based_on_version_id = active.version_id
-        current_draft_content = active.content
-
-        hydration, failed_qc_feedback = _hydration_from_active_version(active)
-
-        run_id = await self._start_study_material_run(
+        return await self._start_study_material_run(
             node_id=node_id,
-            space_id=space_id,
+            space_id=node.space_id,
             mentor_id=user_id,
             generation_mode=GenerationRunMode.IMPROVE,
             request_params={
                 "mentor_feedback": request.mentor_feedback,
-                "reference_material_id": _request_param_uuid(reference_material_id),
-                "based_on_version_id": _request_param_uuid(based_on_version_id),
+                "reference_material_id": _request_param_uuid(
+                    active.reference_material_id
+                ),
+                "based_on_version_id": _request_param_uuid(active.version_id),
             },
         )
-        progress_id = _progress_session_id(request.progress_session_id, run_id=run_id)
 
+    async def execute_improve_study_material(
+        self,
+        *,
+        run_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        run_service = GenerationRunService(self.session)
+        run = await run_service.acquire_lock_for_run(run_id)
+        if run is None:
+            return
+        params = run.request_params or {}
+        node_id = UUID(str(params["node_id"]))
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        repo = StudyMaterialRepository(self.session)
+        active = await repo.get_active_version(node_id)
+        if active is None:
+            await self._fail_generation_run(
+                run_id, exc=StudyMaterialNoActiveVersionException()
+            )
+            return
+        reference_material_id = active.reference_material_id
+        hydration, failed_qc_feedback = _hydration_from_active_version(active)
+        mentor_feedback = str(params.get("mentor_feedback") or "")
         try:
             graph_result = await run_study_material_improve(
                 session=self.session,
                 node_id=node_id,
-                current_draft_content=current_draft_content,
-                mentor_feedback=request.mentor_feedback,
+                current_draft_content=active.content,
+                mentor_feedback=mentor_feedback,
                 reference_material_id=reference_material_id,
                 user_id=user_id,
                 hydration=hydration,
                 failed_qc_feedback=failed_qc_feedback,
-                progress_session_id=progress_id,
                 run_id=run_id,
             )
-            graph_result["node_title"] = node_title
-
+            graph_result["node_title"] = node.title
             result = await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=space_id,
+                space_id=node.space_id,
                 graph_result=graph_result,
                 generation_mode="improve",
                 user_id=user_id,
-                request_params={
-                    "mentor_feedback": request.mentor_feedback,
-                    "reference_material_id": _request_param_uuid(reference_material_id),
-                    "based_on_version_id": _request_param_uuid(based_on_version_id),
-                },
+                request_params=params,
             )
-            assert isinstance(result, StudyMaterialFeedbackResponse)
-            return result
+            await self._persist_run_result(run_id, result)
+        except GenerationRunAborted:
+            return
         except Exception as exc:
             await self._fail_generation_run(run_id, exc=exc)
-            raise
 
     # ── manual edit ────────────────────────────────────────────────────
 

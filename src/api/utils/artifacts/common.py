@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.api.config import feature_settings
+
 logger = logging.getLogger(__name__)
 
 ARTIFACTS_ROOT = Path("/app/uploads/artifacts")
@@ -47,6 +49,8 @@ def _json_default(obj: Any) -> Any:
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
+    if not feature_settings.enable_artifact_logging:
+        return
     ensure_dir(path.parent)
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default),
@@ -117,6 +121,8 @@ def log_agent_output(
     generation_type: str | None = None,
 ) -> None:
     """Write one agent's output under {topic}_{suffix}/run_{run_id}/."""
+    if not feature_settings.enable_artifact_logging:
+        return
     try:
         out_path = agent_artifact_path(
             topic_title,

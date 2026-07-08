@@ -6,7 +6,6 @@ Handles reading published content and PDF export. Progress side effects
 """
 
 import mimetypes
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -45,6 +44,7 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _assert_trainee,
     _get_node_and_assert_space_access,
 )
+from src.api.utils.storage.object_storage import download_bytes, exists
 from src.api.utils.study_agent_utils.media import (
     build_study_material_pdf_filename,
     render_study_material_pdf,
@@ -324,8 +324,7 @@ class TraineeStudyService:
                 detail="This resource cannot be downloaded as a file.",
             )
 
-        file_path = Path(media.file_url.replace("\\", "/"))
-        if not file_path.is_file():
+        if not await exists(media.file_url):
             raise NodeMediaNotFoundException()
 
         filename = _storage_filename(media.file_url)
@@ -336,7 +335,8 @@ class TraineeStudyService:
         )
         disposition = "attachment" if as_attachment else "inline"
         content_disposition = f'{disposition}; filename="{filename}"'
-        return file_path.read_bytes(), filename, mime_type, content_disposition
+        data = await download_bytes(media.file_url)
+        return data, filename, mime_type, content_disposition
 
     async def get_reference_material_file(
         self,
@@ -364,8 +364,7 @@ class TraineeStudyService:
         ):
             raise NodeMediaNotFoundException()
 
-        file_path = Path(material.file_url.replace("\\", "/"))
-        if not file_path.is_file():
+        if not await exists(material.file_url):
             raise NodeMediaNotFoundException()
 
         filename = material.file_name
@@ -376,4 +375,5 @@ class TraineeStudyService:
         )
         disposition = "attachment" if as_attachment else "inline"
         content_disposition = f'{disposition}; filename="{filename}"'
-        return file_path.read_bytes(), filename, mime_type, content_disposition
+        data = await download_bytes(material.file_url)
+        return data, filename, mime_type, content_disposition

@@ -14,13 +14,22 @@ from src.api.schemas import (
     GenerationProgressRecord,
     GenerationRunStatus,
 )
-from src.api.utils.generation_progress.store import build_steps, node_to_step, step_defs
+from src.api.utils.generation_progress.store import (
+    build_steps_for_profile,
+    node_to_step_for_profile,
+    step_defs_for_profile,
+    step_profile_from_request_params,
+)
 
 
 def _status_from_run(run_status: str) -> GenerationJobStatus:
     if run_status == GenerationRunStatus.COMPLETED.value:
         return GenerationJobStatus.COMPLETED
-    if run_status == GenerationRunStatus.FAILED.value:
+    if run_status in (
+        GenerationRunStatus.FAILED.value,
+        GenerationRunStatus.CANCELLED.value,
+        GenerationRunStatus.SUPERSEDED.value,
+    ):
         return GenerationJobStatus.FAILED
     return GenerationJobStatus.RUNNING
 
@@ -30,6 +39,7 @@ class DbGenerationProgressStore:
 
     def __init__(self, session: AsyncSession) -> None:
         self._repo = GenerationRunRepository(session)
+        self._session = session
 
     async def start(
         self,
@@ -40,20 +50,38 @@ class DbGenerationProgressStore:
             run_id,
             progress_step_index=0,
         )
+        await self._session.commit()
 
     async def set_step(self, run_id: UUID, step_index: int) -> None:
         await self._repo.update_progress(
             run_id,
             progress_step_index=step_index,
         )
+        await self._session.commit()
 
     async def on_node(
         self,
         run_id: UUID,
         pipeline: GenerationPipeline,
         node_name: str,
+        *,
+        step_profile: str | None = None,
     ) -> None:
-        step_index = node_to_step(pipeline, node_name)
+        run = await self._repo.get_by_id(run_id)
+        if run is None or run.status != GenerationRunStatus.RUNNING.value:
+            return
+        profile = step_profile_from_request_params(
+            run.request_params,
+            pipeline=GenerationPipeline(run.pipeline),
+        )
+        if step_profile is not None:
+            from src.api.utils.generation_progress.store import GenerationStepProfile
+
+            try:
+                profile = GenerationStepProfile(step_profile)
+            except ValueError:
+                pass
+        step_index = node_to_step_for_profile(profile, node_name)
         if step_index is not None:
             await self.set_step(run_id, step_index)
 
@@ -62,7 +90,10 @@ class DbGenerationProgressStore:
         if run is None:
             return
         pipeline = GenerationPipeline(run.pipeline)
-        final_index = len(step_defs(pipeline)) - 1
+        profile = step_profile_from_request_params(
+            run.request_params, pipeline=pipeline
+        )
+        final_index = len(step_defs_for_profile(profile)) - 1
         await self._repo.update_progress(run_id, progress_step_index=final_index)
         await self._repo.complete_run(run_id)
 
@@ -75,17 +106,20 @@ class DbGenerationProgressStore:
             return None
 
         pipeline = GenerationPipeline(run.pipeline)
+        profile = step_profile_from_request_params(
+            run.request_params, pipeline=pipeline
+        )
         job_status = _status_from_run(run.status)
         active_index = run.progress_step_index
         if job_status == GenerationJobStatus.COMPLETED:
-            active_index = len(step_defs(pipeline)) - 1
+            active_index = len(step_defs_for_profile(profile)) - 1
 
         return GenerationProgressRecord(
             session_id=str(run.run_id),
             pipeline=pipeline,
             status=job_status,
             current_step_index=active_index,
-            steps=build_steps(pipeline, active_index),
+            steps=build_steps_for_profile(profile, active_index),
             error=run.error_message,
             started_at=run.created_at.timestamp(),
             updated_at=run.updated_at.timestamp(),

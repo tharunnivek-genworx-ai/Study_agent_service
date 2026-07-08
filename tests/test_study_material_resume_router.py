@@ -12,7 +12,26 @@ from src.api.control.study_agent.graph.resume_router import (
 )
 
 
-def test_resolve_resume_after_concept_checklist_skips_to_study_agent() -> None:
+def test_resolve_resume_after_concept_checklist_with_reference_goes_to_llamaparse() -> (
+    None
+):
+    state = {
+        "generation_mode": "generate",
+        "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
+        "has_reference_material": True,
+        "reference_file_path": "/tmp/ref.pdf",
+        "skip_llamaparse": False,
+        "parsed_reference_data": {},
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="concept_checklist")
+        == "llamaparse"
+    )
+
+
+def test_resolve_resume_after_concept_checklist_without_reference_goes_to_study_agent() -> (
+    None
+):
     state = {
         "generation_mode": "generate",
         "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
@@ -101,14 +120,15 @@ def test_resolve_resume_after_quality_check_section_patch_enters_study_agent() -
     )
 
 
-def test_resolve_resume_after_resolver_with_reference_goes_to_llamaparse() -> None:
+def test_resolve_resume_after_resolver_goes_to_concept_checklist() -> None:
     state = {
         "has_reference_material": True,
         "reference_file_path": "/tmp/ref.pdf",
         "skip_llamaparse": False,
     }
     assert (
-        resolve_resume_next_node(state, last_completed_node="resolver") == "llamaparse"
+        resolve_resume_next_node(state, last_completed_node="resolver")
+        == "concept_checklist"
     )
 
 

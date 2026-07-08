@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
+from src.api.core.exceptions import GenerationRunAborted
 from src.api.schemas import GenerationPipeline
 from src.api.utils.generation_progress.db_store import DbGenerationProgressStore
 
@@ -46,7 +47,6 @@ async def invoke_graph_with_progress(
     config: dict[str, Any],
     *,
     pipeline: GenerationPipeline,
-    progress_session_id: str | None = None,
     run_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Run a compiled LangGraph, updating progress and optional run checkpoints."""
@@ -69,6 +69,9 @@ async def invoke_graph_with_progress(
 
     try:
         async for chunk in graph.astream(initial_state, config, stream_mode="updates"):
+            if not await run_service.is_run_active(run_id):
+                raise GenerationRunAborted()
+
             for node_name, node_update in chunk.items():
                 # LangGraph emits None for nodes that return {} (no state
                 # changes).  Guard the merge so we never unpack a NoneType.
@@ -85,6 +88,8 @@ async def invoke_graph_with_progress(
                 elif node_update is not None:
                     await db_progress.on_node(run_id, pipeline, node_name)
 
+    except GenerationRunAborted:
+        raise
     except Exception as exc:
         next_retry = running_state.get("next_llm_retry_at")
         retry_at = next_retry if isinstance(next_retry, datetime) else None
