@@ -72,6 +72,26 @@ async def try_acquire_generation_lock(
     return acquired
 
 
+async def try_acquire_generation_xact_lock(
+    session: AsyncSession,
+    *,
+    pipeline: str,
+    resource_id: UUID,
+) -> bool:
+    """Try to acquire a transaction-scoped advisory lock.
+
+    Unlike session locks, these are released automatically on COMMIT/ROLLBACK and
+    cannot leak across connection-pool reuse. Prefer this for short coordinator
+    critical sections (batch enqueue / claim next item).
+    """
+    key1, key2 = _lock_keys(pipeline, resource_id)
+    result = await session.execute(
+        text("SELECT pg_try_advisory_xact_lock(:k1, :k2)"),
+        {"k1": key1, "k2": key2},
+    )
+    return bool(result.scalar())
+
+
 async def release_generation_lock(
     session: AsyncSession,
     *,

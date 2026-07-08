@@ -35,6 +35,18 @@ SQLALCHEMY_DATABASE_URL = build_database_url()
 engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
     echo=settings.database_echo,
+    # Cloud Run + managed Postgres can drop idle TCP connections.
+    # Pre-ping and recycle help avoid reusing dead sockets.
+    pool_pre_ping=True,
+    pool_recycle=900,
+    pool_timeout=30,
+    connect_args={
+        # Keep handshake bounded in constrained environments.
+        "timeout": 20,
+        # asyncpg statement cache can hold stale prepared statements
+        # across aggressive connection churn.
+        "statement_cache_size": 0,
+    },
 )
 
 Base = declarative_base()

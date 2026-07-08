@@ -27,6 +27,7 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialClearDraftsEligibilityOut,
     StudyMaterialClearDraftsOut,
     StudyMaterialGenerateRequest,
+    StudyMaterialGenerateResponse,
     StudyMaterialImproveRequest,
     StudyMaterialManualEditRequest,
     StudyMaterialMentorUiStateOut,
@@ -39,6 +40,7 @@ from src.api.schemas.study_material_schemas.study_material_schema import (
     StudyMaterialVersionOut,
 )
 from src.api.utils.generation_progress.generation_job_executor import (
+    run_generation_job,
     schedule_generation_job,
 )
 
@@ -70,6 +72,35 @@ async def generate_study_material(
         )
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
+
+
+@router.post(
+    "/nodes/{node_id}/study-material/generate-inline",
+    status_code=status.HTTP_200_OK,
+    response_model=StudyMaterialGenerateResponse,
+)
+async def generate_study_material_inline(
+    node_id: UUID,
+    payload: StudyMaterialGenerateRequest,
+    current_user: TokenPayload = Depends(get_current_user),
+) -> StudyMaterialGenerateResponse:
+    """Run first-time generation synchronously in this request (sequential generate-all).
+
+    Keeps Cloud Run CPU for the full graph and uses one advisory lock for create→
+    execute→persist so the next node cannot race lock re-acquisition.
+    """
+    user_id = current_user.sub
+    role = current_user.role
+
+    async def _job(session: AsyncSession) -> StudyMaterialGenerateResponse:
+        return await StudyMaterialService(session).generate_study_material_inline(
+            node_id,
+            payload,
+            user_id,
+            role,
+        )
+
+    return await run_generation_job(_job)
 
 
 @router.post(
