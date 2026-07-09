@@ -125,7 +125,7 @@ from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_DRAFT,
 )
 from src.api.utils.generation_progress.advisory_lock import (
-    release_generation_lock,
+    release_all_generation_locks,
     require_generation_lock,
 )
 from src.api.utils.generation_progress.store import study_step_profile_for_mode
@@ -948,6 +948,11 @@ class StudyMaterialService:
                 },
             )
             await self._persist_run_result(run_id, result)
+            await GenerationRunService(self.session).repo.supersede_other_active_runs(
+                resource_id=resource_id,
+                pipeline=pipeline,
+                except_run_id=run_id,
+            )
             return result
         except GenerationRunAborted:
             raise LLMGenerationFailedException(
@@ -958,11 +963,7 @@ class StudyMaterialService:
                 await self._fail_generation_run(run_id, exc=exc)
             raise
         finally:
-            await release_generation_lock(
-                self.session,
-                pipeline=pipeline,
-                resource_id=resource_id,
-            )
+            await release_all_generation_locks(self.session)
 
     # ── regenerate ─────────────────────────────────────────────────────
 

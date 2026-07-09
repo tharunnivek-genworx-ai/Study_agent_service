@@ -245,6 +245,38 @@ class GenerationRunRepository:
         )
         await self.db.commit()
 
+    async def supersede_other_active_runs(
+        self,
+        *,
+        resource_id: UUID,
+        pipeline: str,
+        except_run_id: UUID,
+    ) -> int:
+        """Mark other RUNNING/FAILED rows superseded after a successful inline run."""
+        result = await self.db.execute(
+            update(GenerationRun)
+            .where(
+                and_(
+                    GenerationRun.resource_id == resource_id,
+                    GenerationRun.pipeline == pipeline,
+                    GenerationRun.run_id != except_run_id,
+                    GenerationRun.status.in_(
+                        (
+                            GenerationRunStatus.RUNNING.value,
+                            GenerationRunStatus.FAILED.value,
+                        )
+                    ),
+                )
+            )
+            .values(
+                status=GenerationRunStatus.SUPERSEDED.value,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.flush()
+        rowcount = getattr(result, "rowcount", 0)
+        return int(rowcount or 0)
+
     async def supersede_stale_runs(
         self,
         *,

@@ -1,4 +1,20 @@
-"""Generate or surgically retry quiz questions based on qc_retry_mode."""
+"""Generate or surgically retry quiz questions based on qc_retry_mode.
+
+Graph node (generate/regenerate loop)
+-------------------------------------
+Central LLM node. On first pass builds a full quiz prompt; on QC/struct retries
+delegates to ``run_question_retry`` for patch/insert modes or regenerates with
+combined ``gen_feedback`` / ``qc_feedback``.
+
+Routing (via ``_route_after_quiz_generator``)
+---------------------------------------------
+- ``terminal_llm_failure`` → ``persist_quiz_draft``
+- ``error`` → END
+- ``parsed_questions`` set → ``deterministic_validate`` (else ``parse_quiz_output``)
+
+Key state fields written: ``raw_llm_output``, ``parsed_questions``,
+``validated_questions`` (retry path), ``quiz_title``, ``fixed_questions``.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
-    """Generate or surgically retry quiz questions based on qc_retry_mode."""
+    """Generate or surgically retry quiz questions based on ``qc_retry_mode``."""
     retry_mode = qc_retry_mode(state)
     previous_questions = (
         list(state.get("validated_questions") or state.get("parsed_questions") or [])
@@ -38,6 +54,7 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
     rewrite_question_ids = set(state.get("qc_reverify_question_ids") or [])
 
     if retry_mode in QUESTION_RETRY_MODES:
+        # Surgical retry: patch and/or insert without full regeneration.
         result = await run_question_retry(
             state,
             retry_mode,
@@ -142,6 +159,7 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
         and previous_questions
         and rewrite_question_ids
     ):
+        # Preserve passing questions; only replace those flagged for reverify.
         parsed = merge_full_regeneration_preserving_passing(
             parsed,
             previous_questions,

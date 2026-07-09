@@ -10,6 +10,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge
     merge_full_regeneration_preserving_passing,
     merge_section_field_patches,
     merge_section_patches,
+    merge_section_patches_scoped,
 )
 
 
@@ -131,6 +132,114 @@ class TestMergeSectionFieldPatches:
         assert subsection["content"] == "relocated subsection prose"
         assert subsection["formula_blocks"][0]["formula"] == "f'(x) = 2x"
         assert result.document["sections"][0]["heading"] == "Derivatives"
+
+
+class TestMergeSectionPatchesScoped:
+    def test_restores_untargeted_subsections_after_patch(self):
+        document = _doc(
+            {
+                "id": "ts_2",
+                "heading": "Rules",
+                "content": "stable section prose",
+                "subsections": [
+                    {"heading": "Intro", "content": "stable intro"},
+                    {"heading": "Examples", "content": "bad inline math"},
+                    {"heading": "Summary", "content": "stable summary"},
+                ],
+            }
+        )
+        patches = [
+            {
+                "id": "ts_2",
+                "heading": "Rules",
+                "content": "rewritten section prose",
+                "subsections": [
+                    {"heading": "Intro", "content": "accidentally rewritten intro"},
+                    {
+                        "heading": "Examples",
+                        "content": "fixed prose only",
+                        "formula_blocks": [
+                            {
+                                "notation": "plain-text",
+                                "formula": "f'(x)=2x",
+                                "explanation": "Power rule.",
+                            }
+                        ],
+                    },
+                    {"heading": "Summary", "content": "accidentally rewritten summary"},
+                ],
+            }
+        ]
+        section_failures = [
+            {
+                "section_id": "ts_2",
+                "failures": [
+                    {
+                        "category": "document_coherence",
+                        "evidence": (
+                            "Section 'Rules', subsection 'Examples': "
+                            "Prose contains display-math patterns"
+                        ),
+                        "corrective_hint": "Move equations into formula_blocks.",
+                    }
+                ],
+            }
+        ]
+
+        result = merge_section_patches_scoped(
+            document,
+            patches,
+            section_failures=section_failures,
+        )
+
+        section = result.document["sections"][0]
+        assert section["content"] == "stable section prose"
+        subsections = {
+            item["heading"]: item["content"] for item in section["subsections"]
+        }
+        assert subsections["Intro"] == "stable intro"
+        assert subsections["Examples"] == "fixed prose only"
+        assert subsections["Summary"] == "stable summary"
+
+    def test_falls_back_to_full_patch_without_subsection_targets(self):
+        document = _doc(
+            {
+                "id": "ts_2",
+                "heading": "Rules",
+                "content": "old section prose",
+                "subsections": [{"heading": "Intro", "content": "old intro"}],
+            }
+        )
+        patches = [
+            {
+                "id": "ts_2",
+                "heading": "Rules",
+                "content": "new section prose",
+                "subsections": [{"heading": "Intro", "content": "new intro"}],
+            }
+        ]
+        section_failures = [
+            {
+                "section_id": "ts_2",
+                "failures": [
+                    {
+                        "category": "content_accuracy",
+                        "evidence": "Section 'Rules': incoherent flow throughout.",
+                        "corrective_hint": "Rewrite the entire section.",
+                    }
+                ],
+            }
+        ]
+
+        result = merge_section_patches_scoped(
+            document,
+            patches,
+            section_failures=section_failures,
+        )
+
+        section = result.document["sections"][0]
+        assert section["content"] == "new section prose"
+        assert section["subsections"][0]["content"] == "new intro"
 
 
 class TestInsertSections:

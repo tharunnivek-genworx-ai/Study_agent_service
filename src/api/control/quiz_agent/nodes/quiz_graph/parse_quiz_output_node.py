@@ -1,4 +1,16 @@
-"""Parse raw LLM quiz output into structured question dicts."""
+"""Parse raw LLM quiz output into structured question dicts.
+
+Graph node (generate path)
+--------------------------
+Fallback parser when ``quiz_generator_node`` did not inline-parse. Skips work
+if ``parsed_questions`` is already set (e.g. resume or retry path).
+
+Inputs: ``raw_llm_output``.
+Outputs: ``parsed_questions``, ``hints_stale_question_ids``, ``quiz_title``;
+sets ``error`` when output is missing or malformed.
+
+Routing: error → END; success → ``deterministic_validate``.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +22,7 @@ from src.api.utils.quiz_utils.generation.question_parsing import (
 
 
 async def parse_quiz_output(state: QuizGraphState) -> QuizGraphState:
+    """Parse ``raw_llm_output`` into ``parsed_questions`` when not already present."""
     if state.get("parsed_questions") is not None:
         return state
 

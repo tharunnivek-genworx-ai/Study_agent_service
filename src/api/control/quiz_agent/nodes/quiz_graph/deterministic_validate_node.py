@@ -1,4 +1,17 @@
-"""Deterministic structural validation before LLM quality check."""
+"""Deterministic structural validation before LLM quality check.
+
+Graph node (pre-QC gate)
+------------------------
+Runs ``run_deterministic_quiz_checks`` on ``parsed_questions``. On pass, sets
+``validated_questions`` and ``struct_validation_passed=True`` for QC.
+
+On fail, increments ``gen_attempt`` and sets ``gen_feedback`` for the generator
+retry loop (max ``MAX_GEN_ATTEMPTS``). Permanent failure builds a synthetic
+``qc_result`` and routes to ``persist_quiz_draft``.
+
+Routing: struct pass → ``quality_check``; retry → ``quiz_generator``;
+permanent fail → ``persist_quiz_draft``.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +32,7 @@ from src.api.utils.quiz_utils.quality_check_utils.results.quiz_result_builder im
 
 
 async def deterministic_validate_node(state: QuizGraphState) -> dict[str, Any]:
+    """Validate parsed questions structurally; gate entry to QC or generator retry."""
     parsed = state.get("parsed_questions") or []
     gen_attempt = state.get("gen_attempt") or 0
     det_checks = run_deterministic_quiz_checks(
@@ -50,6 +64,7 @@ async def deterministic_validate_node(state: QuizGraphState) -> dict[str, Any]:
     permanently_failed = new_attempt >= MAX_GEN_ATTEMPTS
 
     if permanently_failed:
+        # Exhausted MAX_GEN_ATTEMPTS — synthesize QC result and persist as failed draft.
         qc_result = build_final_quiz_qc_result(
             None,
             det_checks,

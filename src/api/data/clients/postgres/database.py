@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from src.api.config import settings
 
@@ -49,7 +49,10 @@ engine = create_async_engine(
     },
 )
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
+
 
 SessionLocal = async_sessionmaker(
     bind=engine,
@@ -63,10 +66,12 @@ SessionLocal = async_sessionmaker(
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """Yield a request-scoped session; commit on success, rollback on error."""
     from src.api.utils.generation_progress.advisory_lock import (
+        prepare_session_for_generation,
         release_all_generation_locks,
     )
 
     async with SessionLocal() as session:
+        await prepare_session_for_generation(session)
         try:
             yield session
             await session.commit()

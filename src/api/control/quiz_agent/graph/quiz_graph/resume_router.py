@@ -1,4 +1,33 @@
-"""Resume entry routing for quiz generation graphs."""
+"""Resume entry routing for quiz generation graphs.
+
+Pipeline position
+-----------------
+Used by ``quiz_generation_graph._route_from_entry`` and the generation-progress
+service when restoring a failed run from a persisted checkpoint. Converts raw
+checkpoint dicts into ``QuizGraphState`` and decides which node to execute next.
+
+Inputs
+------
+- ``QuizGraphState`` with ``_is_resume=True`` and ``_last_completed_node`` set
+  by ``hydrate_checkpoint_state``.
+- Optional ``request_params`` to backfill IDs/counts not stored in the checkpoint.
+
+Outputs
+-------
+A target node name from ``QUIZ_GRAPH_NODES``, or ``"__end__"`` when the rework
+subgraph should terminate without further work.
+
+Routing logic
+-------------
+``resolve_resume_next_node`` delegates to one of two resolvers:
+
+- ``_resolve_generate_resume_next_node`` — full quiz generate/regenerate path.
+- ``_resolve_rework_resume_next_node`` — single-question mentor rework path.
+
+Each resolver inspects ``last_completed_node`` plus partial state artifacts
+(``raw_llm_output``, ``parsed_questions``, ``qc_result``, etc.) to infer the
+next safe step without re-running completed work.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +47,7 @@ from src.api.utils.quiz_utils.graph.constants import QUESTION_RETRY_MODES
 
 QUIZ_GRAPH_NODES = frozenset(
     {
+        # Generate/regenerate path
         "load_generation_context",
         "load_existing_quiz_if_regenerate",
         "quiz_generator",
@@ -25,6 +55,7 @@ QUIZ_GRAPH_NODES = frozenset(
         "deterministic_validate",
         "quality_check",
         "persist_quiz_draft",
+        # Single-question rework path
         "load_quiz_single_regen_context",
         "build_quiz_single_regen_prompt",
         "invoke_quiz_single_regen_llm",
@@ -36,6 +67,11 @@ QUIZ_GRAPH_NODES = frozenset(
 
 
 def is_question_rework_run(state: QuizGraphState) -> bool:
+    """Return True when the graph should run the single-question rework subgraph.
+
+    Triggered by ``mode="improve"`` or when ``question_ids`` is set without an
+    explicit generate/regenerate mode (mentor-initiated question patch flow).
+    """
     if state.get("mode") == "improve":
         return True
     return bool(state.get("question_ids")) and state.get("mode") not in (
@@ -56,6 +92,7 @@ def _resolve_generate_resume_next_node(
     if last_completed_node == "load_generation_context":
         if not state.get("study_material_content"):
             return "load_generation_context"
+        # Regenerate needs existing questions before calling the LLM.
         if state.get("mode") == "regenerate" and not state.get(
             "existing_quiz_questions"
         ):
@@ -69,6 +106,7 @@ def _resolve_generate_resume_next_node(
         if state.get("terminal_llm_failure"):
             return "persist_quiz_draft"
         if state.get("error"):
+            # Malformed JSON: retry parse if raw output exists; else regenerate.
             if state.get("raw_llm_output") and state.get("parsed_questions") is None:
                 return "parse_quiz_output"
             return "quiz_generator"
@@ -99,6 +137,7 @@ def _resolve_generate_resume_next_node(
             return "persist_quiz_draft"
 
         qc_result = state.get("qc_result") or {}
+        # Infra failure — re-enter QC without regenerating.
         if isinstance(qc_result, dict) and qc_result.get("qcInfraError"):
             return "quality_check"
 
@@ -171,7 +210,11 @@ def resolve_resume_next_node(
     *,
     last_completed_node: str | None,
 ) -> str:
-    """Return the next graph node after a cross-request resume."""
+    """Return the next graph node after a cross-request resume.
+
+    Chooses the generate/regenerate or rework resolver based on
+    ``is_question_rework_run(state)``.
+    """
     if is_question_rework_run(state):
         return _resolve_rework_resume_next_node(
             state, last_completed_node=last_completed_node
@@ -187,7 +230,12 @@ def hydrate_checkpoint_state(
     last_completed_node: str | None,
     request_params: dict[str, Any] | None = None,
 ) -> QuizGraphState:
-    """Build graph initial state from a persisted generation run checkpoint."""
+    """Build graph initial state from a persisted generation run checkpoint.
+
+    Coerces UUID/datetime fields, merges missing request params, and sets
+    ``_is_resume`` / ``_last_completed_node`` so ``entry_router`` can jump to the
+    correct node on the next ``ainvoke``.
+    """
     state: dict[str, Any] = dict(checkpoint_state)
     params = request_params or {}
 

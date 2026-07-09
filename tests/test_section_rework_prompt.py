@@ -60,6 +60,25 @@ class TestSectionReworkPrompt:
         assert '"sections"' in system
         assert "sections_to_fix" in system
         assert "document_context" not in system
+        assert "PATCH SCOPE" in system
+        assert (
+            "Every subsection, code_block, and formula_block not named by a failure's evidence"
+            in system
+        )
+
+    def test_user_message_closing_enforces_patch_scope(self):
+        msg = section_rework_prompt.build_user_message(
+            topic_title="OOPS",
+            teaching_instruction="Explain for beginners.",
+            document_outline=build_document_outline(_SAMPLE_DOC),
+            section_failures=_SECTION_FAILURES,
+            document=_SAMPLE_DOC,
+        )
+        assert (
+            "change only what each failure's evidence or corrective_hint names" in msg
+        )
+        assert "every other subsection" in msg
+        assert "exactly as given in current_section_json" in msg
 
     def test_stem_domain_includes_stem_rules_only(self):
         system = section_rework_prompt.build_system_prompt(

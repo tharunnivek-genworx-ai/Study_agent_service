@@ -1,4 +1,13 @@
-"""Invoke the LLM for single-question mentor rework."""
+"""Invoke the LLM for single-question mentor rework.
+
+Graph node (rework subgraph)
+----------------------------
+Calls Groq with ``prompt_input`` from the prior node. On success sets
+``raw_llm_output`` for parsing; on failure sets ``terminal_llm_failure`` or
+``error``.
+
+Routing: failure → END; success → ``parse_quiz_single_regen_output``.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +27,7 @@ logger = logging.getLogger(__name__)
 async def invoke_quiz_single_regen_llm(
     state: QuizGraphState,
 ) -> dict[str, Any]:
+    """Invoke the LLM to produce patched questions for mentor-requested rework."""
     prompt_input = state.get("prompt_input")
     if not prompt_input:
         return {

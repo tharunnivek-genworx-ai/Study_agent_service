@@ -90,6 +90,176 @@ def merge_section_patches(
 
 _BLOCK_PATCH_FIELDS = frozenset({"content", "formula_blocks", "code_blocks"})
 
+_SUBSECTION_EVIDENCE_PATTERN = re.compile(
+    r"subsection\s+['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+
+
+def subsection_headings_from_evidence(evidence: str) -> list[str]:
+    return [
+        match.group(1).strip()
+        for match in _SUBSECTION_EVIDENCE_PATTERN.finditer(str(evidence or ""))
+        if match.group(1).strip()
+    ]
+
+
+def subsection_targets_from_failures(
+    section_failures: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Map section_id → subsection headings parsed from failure evidence."""
+    targets: dict[str, list[str]] = {}
+    for bundle in section_failures:
+        if not isinstance(bundle, dict):
+            continue
+        section_id = str(bundle.get("section_id", "")).strip()
+        if not section_id:
+            continue
+        headings: list[str] = []
+        for failure in bundle.get("failures") or []:
+            if not isinstance(failure, dict):
+                continue
+            headings.extend(
+                subsection_headings_from_evidence(failure.get("evidence", ""))
+            )
+        if headings:
+            targets[section_id] = list(dict.fromkeys(headings))
+    return targets
+
+
+def _all_failures_subsection_localized(failures: list[Any]) -> bool:
+    if not failures:
+        return False
+    for failure in failures:
+        if not isinstance(failure, dict):
+            return False
+        if not subsection_headings_from_evidence(failure.get("evidence", "")):
+            return False
+    return True
+
+
+def _subsections_by_heading(subsections: list[Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(subsection.get("heading", "")).strip(): subsection
+        for subsection in subsections
+        if isinstance(subsection, dict) and str(subsection.get("heading", "")).strip()
+    }
+
+
+def _restore_untargeted_subsections(
+    merged_section: dict[str, Any],
+    original_section: dict[str, Any],
+    target_headings: set[str],
+) -> None:
+    """Keep patched subsections in scope; restore all others from the original."""
+    original_subsections = original_section.get("subsections")
+    if not isinstance(original_subsections, list) or not original_subsections:
+        return
+
+    patched_subsections = merged_section.get("subsections")
+    patched_by_heading = (
+        _subsections_by_heading(patched_subsections)
+        if isinstance(patched_subsections, list)
+        else {}
+    )
+    target_lower = {heading.lower() for heading in target_headings}
+
+    restored: list[dict[str, Any]] = []
+    original_headings_lower: set[str] = set()
+    for original_subsection in original_subsections:
+        if not isinstance(original_subsection, dict):
+            continue
+        heading = str(original_subsection.get("heading", "")).strip()
+        if not heading:
+            continue
+        original_headings_lower.add(heading.lower())
+        if heading.lower() in target_lower:
+            patched_subsection = patched_by_heading.get(heading)
+            restored.append(
+                copy.deepcopy(patched_subsection)
+                if patched_subsection is not None
+                else copy.deepcopy(original_subsection)
+            )
+        else:
+            restored.append(copy.deepcopy(original_subsection))
+
+    for heading, patched_subsection in patched_by_heading.items():
+        if (
+            heading.lower() not in original_headings_lower
+            and heading.lower() in target_lower
+        ):
+            restored.append(copy.deepcopy(patched_subsection))
+
+    merged_section["subsections"] = restored
+
+
+def _restore_section_level_block_fields(
+    merged_section: dict[str, Any],
+    original_section: dict[str, Any],
+) -> None:
+    for field_name in _BLOCK_PATCH_FIELDS:
+        if field_name in original_section:
+            merged_section[field_name] = copy.deepcopy(original_section[field_name])
+
+
+def merge_section_patches_scoped(
+    document: dict[str, Any],
+    patches: list[dict[str, Any]],
+    *,
+    section_failures: list[dict[str, Any]] | None = None,
+    subsection_targets: dict[str, list[str]] | None = None,
+) -> MergePatchesResult:
+    """Replace sections by id, then mechanically preserve untouched subsections.
+
+    When QC failures name specific subsection headings, subsections outside that
+    set are restored from the pre-patch document so LLM drift cannot rewrite
+    passing prose. Section-level block fields are also preserved when every
+    failure in the bundle is subsection-localized.
+    """
+    targets = subsection_targets or (
+        subsection_targets_from_failures(section_failures or [])
+        if section_failures
+        else {}
+    )
+    failures_by_section_id = {
+        str(bundle.get("section_id", "")).strip(): bundle.get("failures") or []
+        for bundle in (section_failures or [])
+        if isinstance(bundle, dict) and str(bundle.get("section_id", "")).strip()
+    }
+
+    result = merge_section_patches(document, patches)
+    if not targets:
+        return result
+
+    original_by_id = {
+        _section_id(section): section
+        for section in (document.get("sections") or [])
+        if isinstance(section, dict) and _section_id(section)
+    }
+
+    for section in result.document.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        section_id = _section_id(section)
+        target_headings = targets.get(section_id)
+        if not target_headings:
+            continue
+        original_section = original_by_id.get(section_id)
+        if not isinstance(original_section, dict):
+            continue
+
+        _restore_untargeted_subsections(
+            section,
+            original_section,
+            set(target_headings),
+        )
+        if _all_failures_subsection_localized(
+            failures_by_section_id.get(section_id, [])
+        ):
+            _restore_section_level_block_fields(section, original_section)
+
+    return result
+
 
 def _merge_subsection_block_fields(
     existing_subsections: list[Any],

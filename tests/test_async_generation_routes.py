@@ -85,6 +85,6 @@ def test_generation_job_executor_runs_coro_in_isolated_session() -> None:
 
         assert executed is True
         mock_session.commit.assert_awaited_once()
-        release_locks.assert_awaited_once_with(mock_session)
+        assert release_locks.await_count == 2
 
     asyncio.run(_run())

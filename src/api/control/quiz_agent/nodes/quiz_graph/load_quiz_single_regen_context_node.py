@@ -1,4 +1,17 @@
-"""Load quiz and question context for single-question mentor rework."""
+"""Load quiz and question context for single-question mentor rework.
+
+Graph node (rework subgraph — first step)
+-----------------------------------------
+Extends ``load_generation_context`` then loads the target draft quiz, validates
+``question_ids`` against active questions, and sets ``all_questions`` for the
+rework prompt.
+
+Inputs: ``quiz_id``, ``question_ids``, ``mentor_id``, ``node_id``.
+Outputs: ``all_questions``, ``difficulty_profile``, plus context fields from
+``load_generation_context``.
+
+Raises if quiz is missing, published, or question IDs are not found.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +33,7 @@ from src.api.utils.quiz_utils.graph.node_helpers import graph_session
 
 
 def _question_to_dict(question: Any) -> dict[str, Any]:
+    """Serialize a QuizQuestion ORM row to the dict shape used in graph state."""
     return {
         "question_id": str(question.question_id),
         "question_text": question.question_text,
@@ -36,6 +50,7 @@ def _question_to_dict(question: Any) -> dict[str, Any]:
 async def load_quiz_single_regen_context(
     state: QuizGraphState, config: RunnableConfig
 ) -> QuizGraphState:
+    """Load study material plus full quiz context for mentor single-question rework."""
     context_update = await load_generation_context(
         cast(Any, state),
         config,

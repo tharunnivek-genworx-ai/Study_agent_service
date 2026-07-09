@@ -93,6 +93,8 @@ Worked example:
 
 FAMILY B — IMPLEMENTATION
 Use for code, algorithms, data structures, APIs, frameworks, protocols — anything whose own correctness rests on syntax and runtime behaviour (this is the Programming standard).
+- Study material is one document with inline examples — never require a multi-file repo, starter project, or separate downloadable runnable project file.
+- For Family B depth_gates, the evidence is a single self-contained code block in the section text, not an external project package the learner must build or submit.
 requirement skeleton:
   "<Implement/Build/Write/Debug> <artifact> that <behaviour>, and explain what the code does/outputs and why, including <a named scenario or edge case>."
 depth_gate skeleton (fill only the brackets, keep the rest of the sentence exactly as written):

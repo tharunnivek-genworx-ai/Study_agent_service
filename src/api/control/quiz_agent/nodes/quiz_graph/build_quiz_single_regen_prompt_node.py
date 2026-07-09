@@ -1,4 +1,12 @@
-"""Build the LLM prompt for single-question mentor rework."""
+"""Build the LLM prompt for single-question mentor rework.
+
+Graph node (rework subgraph)
+----------------------------
+Assembles ``prompt_input`` (system + user messages) from ``all_questions``,
+``question_ids``, ``mentor_feedback``, and study material context.
+
+Outputs: ``prompt_input`` consumed by ``invoke_quiz_single_regen_llm``.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +19,7 @@ from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphSta
 async def build_quiz_single_regen_prompt_node(
     state: QuizGraphState,
 ) -> QuizGraphState:
+    """Build ``prompt_input`` for the single-question rework LLM call."""
     question_ids = [str(question_id) for question_id in state["question_ids"]]
     prompt_input = build_quiz_single_regen_prompt(
         topic_title=state.get("node_title") or str(state["node_id"]),

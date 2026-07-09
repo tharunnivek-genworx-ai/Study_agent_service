@@ -1,4 +1,13 @@
-"""Parse LLM output for single-question mentor rework."""
+"""Parse LLM output for single-question mentor rework.
+
+Graph node (rework subgraph)
+----------------------------
+Parses JSON patches or a ``rework_status: vague`` response when mentor feedback
+is too ambiguous. Validates that returned ``question_id`` set matches request.
+
+Outputs: ``parsed_patches`` or ``error`` / ``rework_status="vague"``.
+Routing: error → END; success → ``deterministic_validate_question_patches``.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +26,7 @@ def _restore_patch_order_indices(
     patches: list[dict[str, Any]],
     all_questions: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """Re-attach ``order_index`` from the live quiz so DB patch order is preserved."""
     order_by_id = {
         str(question.get("question_id", "")).strip(): question.get("order_index")
         for question in all_questions
@@ -33,6 +43,7 @@ def _restore_patch_order_indices(
 
 
 def _parse_vague_regen_response(raw: str) -> dict[str, Any] | None:
+    """Detect LLM ``rework_status: vague`` JSON when feedback cannot be applied."""
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else text
@@ -53,6 +64,7 @@ def _parse_vague_regen_response(raw: str) -> dict[str, Any] | None:
 async def parse_quiz_single_regen_output(
     state: QuizGraphState,
 ) -> QuizGraphState:
+    """Parse rework LLM output into ``parsed_patches`` with ID-set validation."""
     if state.get("parsed_patches") is not None:
         return state
 
@@ -62,6 +74,7 @@ async def parse_quiz_single_regen_output(
 
     vague = _parse_vague_regen_response(raw)
     if vague is not None:
+        # Mentor feedback too vague — surface message to API layer via error state.
         message = str(
             vague.get("message")
             or "Feedback too vague to apply. Specify what to change."

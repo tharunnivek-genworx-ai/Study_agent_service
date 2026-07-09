@@ -26,10 +26,12 @@ AfterCommitCallback = Callable[[], None]
 async def run_generation_job[T](job: JobCallable[T]) -> T:
     """Execute a generation job in an isolated DB session."""
     from src.api.utils.generation_progress.advisory_lock import (
+        prepare_session_for_generation,
         release_all_generation_locks,
     )
 
     async with SessionLocal() as session:
+        await prepare_session_for_generation(session)
         try:
             result = await job(session)
             await session.commit()

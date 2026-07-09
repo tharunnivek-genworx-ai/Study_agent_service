@@ -1,4 +1,20 @@
-"""Run deterministic + LLM quality check on the generated quiz."""
+"""Run deterministic + LLM quality check on the generated quiz.
+
+Graph node (QC loop)
+--------------------
+Evaluates ``validated_questions`` with deterministic checks plus an LLM
+verification pass. Supports full QC and targeted re-verification after
+patch/insert retries (``fixed_questions`` set).
+
+Writes ``qc_result``, ``qc_retry_mode``, ``qc_passed``, ``qc_feedback``, and
+routing fields consumed by ``quiz_generator_node`` on retry.
+
+Routing (via ``_route_after_quality_check``)
+--------------------------------------------
+- ``qc_passed`` or ``qc_failed_permanently`` → ``persist_quiz_draft``
+- ``qcInfraError`` with attempts remaining → re-enter ``quality_check``
+- otherwise → ``quiz_generator`` with updated ``qc_retry_mode``
+"""
 
 from __future__ import annotations
 
@@ -58,6 +74,7 @@ async def quality_check_node(
     current_attempt = state.get("qc_attempt") or 0
 
     if state.get("terminal_llm_failure"):
+        # LLM already failed upstream — skip QC and let persist handle diagnostics.
         logger.info("Skipping QC: terminal LLM failure")
         return {
             "qc_passed": True,
@@ -95,6 +112,7 @@ async def quality_check_node(
     questions_for_eval = questions_for_qc_payload
 
     if is_targeted:
+        # Post patch/insert: verify only revised questions, merge with prior checks.
         prior_qc_result = state.get("qc_result") or {}
         build_user = quiz_qc_retry_verification_prompt.build_user_message
         user_kwargs = {
@@ -111,6 +129,7 @@ async def quality_check_node(
         graph_node = "qc_retry_verification"
         pass_label = "Quiz targeted QC"
     else:
+        # Full QC; optionally exclude frozen (previously passing) question IDs.
         prior_qc_result = (
             state.get("qc_result") if state.get("qc_frozen_question_ids") else None
         )

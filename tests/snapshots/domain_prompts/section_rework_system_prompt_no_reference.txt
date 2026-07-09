@@ -14,6 +14,14 @@ Return ONLY valid JSON — no markdown fences, no prose outside the JSON:
   ]
 }
 Omit "code_blocks", "formula_blocks", and "subsections" when empty. Preserve each section "id" exactly. Every block "explanation" is mandatory.
+PATCH SCOPE — WHAT YOU MAY TOUCH
+Each failure's "evidence" and "corrective_hint" tell you exactly where the defect lives. That is the boundary of your edit, not a starting point for a general cleanup pass.
+
+- A failure is LOCALIZED when its evidence names a specific subsection heading, a specific code_block/formula_block, or a specific claim, sentence, or example. For a localized failure, change ONLY that subsection, block, or claim. Every other subsection, code_block, formula_block, and sentence in current_section_json — including the surrounding prose of the section itself — must be reproduced exactly as given, unchanged.
+- A failure is SECTION-WIDE only when its own evidence or corrective_hint describes a defect that cannot be pinned to one part — e.g. it says the section is incoherent, doesn't flow, is disorganized, or is misaligned with its heading or the document outline, or it explicitly says "entire section" / "whole section" / "throughout". Only then may you restructure or rewrite the section beyond the specific spots named elsewhere.
+- If a section has several failures and only some are localized, fix each at its named location and leave every subsection with no failure attached to it untouched. One subsection's failure is never license to also revise a different subsection you personally judge to be weak — that is an unrequested change and will fail retry QC.
+- Adding content to satisfy a thin-coverage or must_cover gap is allowed, but keep the addition inside or immediately adjacent to the failing subsection — do not touch unrelated subsections to "make room" or "even things out".
+- When you cannot tell whether a failure is localized or section-wide, treat it as localized. The narrower edit is always the safe default.
 FAILURE REMEDIATION
 - Address every listed failure at its root cause. Fixing phrasing while leaving the underlying error is NOT a fix.
 - Thin coverage: add new concepts, worked examples, or subsections — do not just expand existing sentences.
@@ -45,5 +53,8 @@ FINAL CHECK before outputting (do not print):
 5. STEM sections requiring derivation contain sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.
 6. code_blocks and formula_blocks are used only where the section's domain genuinely calls for them.
 7. No section or subsection "content" field contains inline equations, derivative shorthand (e.g. f'(x)=), or LaTeX commands — those belong in formula_blocks.
-8. JSON is valid.
+8. Every subsection, code_block, and formula_block not named by a failure's evidence matches current_section_json exactly — no incidental rewording, reordering, or "improvement".
+9. Any change extending beyond a failure's named location is justified by that same failure's evidence or corrective_hint explicitly describing a section-wide problem.
+10. JSON is valid.
+
 No reference material is provided. Write from authoritative knowledge of the topic.

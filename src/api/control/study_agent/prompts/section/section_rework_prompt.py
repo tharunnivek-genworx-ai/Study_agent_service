@@ -17,7 +17,6 @@ Output: ``{"sections": [...]}`` — whole section dicts merged by id (not line-l
 from __future__ import annotations
 
 import json
-import re
 
 from src.api.control.study_agent.prompts.generation.generation_prompt import (
     format_reference_user_block,
@@ -31,10 +30,6 @@ from src.api.utils.study_agent_utils.generation.must_cover_checklist_format impo
     format_must_cover_checklist_line,
 )
 
-_SUBSECTION_EVIDENCE_PATTERN = re.compile(
-    r"subsection\s+['\"]([^'\"]+)['\"]",
-    re.IGNORECASE,
-)
 STEM_ACCURACY_BLOCK = """\
 - STEM: equations and reactions belong in formula_blocks and must be correct and dimensionally consistent; worked examples must trace step-by-step to the correct answer; constants must carry correct values and units. Never state a reaction or formula you cannot verify as real. For chemistry: verify the reactants, mechanism, and products are correct for the described reaction type — a correctly formatted but mechanistically wrong reaction is a factual error.
 - NO CODE, EVER: this section's output schema has no code_blocks field. If a prior failure cited Python, sympy, scipy, numpy, or any computational code as a substitute for derivation steps, remove the code_block entirely and replace it with sequential formula_block entries — one step per entry, each following from the previous. This applies regardless of whether the linked checklist item's requirement says "derive," "prove," "calculate," or "apply" — there is no STEM verb for which code is an acceptable answer. Retry QC will fail the section again if any code remains."""
@@ -46,6 +41,16 @@ ACCURACY RULES
 _BASE_SYSTEM_INTRO = """\
 You are an expert educator rewriting specific failed sections of a study document.
 Mandate: rewrite ONLY the sections listed in <sections_to_fix>. Do not add, remove, or rename sections.
+"""
+_PATCH_SCOPE_BLOCK = """\
+PATCH SCOPE — WHAT YOU MAY TOUCH
+Each failure's "evidence" and "corrective_hint" tell you exactly where the defect lives. That is the boundary of your edit, not a starting point for a general cleanup pass.
+
+- A failure is LOCALIZED when its evidence names a specific subsection heading, a specific code_block/formula_block, or a specific claim, sentence, or example. For a localized failure, change ONLY that subsection, block, or claim. Every other subsection, code_block, formula_block, and sentence in current_section_json — including the surrounding prose of the section itself — must be reproduced exactly as given, unchanged.
+- A failure is SECTION-WIDE only when its own evidence or corrective_hint describes a defect that cannot be pinned to one part — e.g. it says the section is incoherent, doesn't flow, is disorganized, or is misaligned with its heading or the document outline, or it explicitly says "entire section" / "whole section" / "throughout". Only then may you restructure or rewrite the section beyond the specific spots named elsewhere.
+- If a section has several failures and only some are localized, fix each at its named location and leave every subsection with no failure attached to it untouched. One subsection's failure is never license to also revise a different subsection you personally judge to be weak — that is an unrequested change and will fail retry QC.
+- Adding content to satisfy a thin-coverage or must_cover gap is allowed, but keep the addition inside or immediately adjacent to the failing subsection — do not touch unrelated subsections to "make room" or "even things out".
+- When you cannot tell whether a failure is localized or section-wide, treat it as localized. The narrower edit is always the safe default.
 """
 _FAILURE_REMEDIATION_BLOCK = """\
 FAILURE REMEDIATION
@@ -76,7 +81,9 @@ FINAL CHECK before outputting (do not print):
 5. STEM sections requiring derivation contain sequential algebraic steps in formula_blocks — not Python code and not a formula statement with a one-sentence explanation.
 6. code_blocks and formula_blocks are used only where the section's domain genuinely calls for them.
 7. No section or subsection "content" field contains inline equations, derivative shorthand (e.g. f'(x)=), or LaTeX commands — those belong in formula_blocks.
-8. JSON is valid.\
+8. Every subsection, code_block, and formula_block not named by a failure's evidence matches current_section_json exactly — no incidental rewording, reordering, or "improvement".
+9. Any change extending beyond a failure's named location is justified by that same failure's evidence or corrective_hint explicitly describing a section-wide problem.
+10. JSON is valid.
 """
 _REFERENCE_ADDENDUM = """
 Reference material is provided. Treat it as authoritative when fixing sections. Do not invent facts not in the reference.\
@@ -104,6 +111,7 @@ def _build_base_system(domain: str | None) -> str:
         _BASE_SYSTEM_INTRO
         + build_section_patch_output_schema(domain)
         + "\n"
+        + _PATCH_SCOPE_BLOCK
         + _FAILURE_REMEDIATION_BLOCK
         + build_accuracy_rules_block(domain)
         + "\n\n"
@@ -122,41 +130,20 @@ def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> st
     )
 
 
-def _subsection_headings_from_evidence(evidence: str) -> list[str]:
-    return [
-        match.group(1).strip()
-        for match in _SUBSECTION_EVIDENCE_PATTERN.finditer(str(evidence or ""))
-        if match.group(1).strip()
-    ]
-
-
 def _subsection_remediation_targets(
     section_failures: list[dict],
 ) -> dict[str, list[str]]:
     """Map section_id → subsection headings parsed from failure evidence strings.
 
     Parses deterministic ``_location_evidence`` format:
-    ``Section 'X', subsection 'Y': detail`` via ``_subsection_headings_from_evidence``.
+    ``Section 'X', subsection 'Y': detail`` via ``subsection_headings_from_evidence``.
     LLM evidence may mention subsections in other phrasing — not guaranteed to match.
     """
-    targets: dict[str, list[str]] = {}
-    for bundle in section_failures:
-        if not isinstance(bundle, dict):
-            continue
-        section_id = str(bundle.get("section_id", "")).strip()
-        if not section_id:
-            continue
-        headings: list[str] = []
-        for failure in bundle.get("failures") or []:
-            if not isinstance(failure, dict):
-                continue
-            headings.extend(
-                _subsection_headings_from_evidence(failure.get("evidence", ""))
-            )
-        if headings:
-            deduped = list(dict.fromkeys(headings))
-            targets[section_id] = deduped
-    return targets
+    from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
+        subsection_targets_from_failures,
+    )
+
+    return subsection_targets_from_failures(section_failures)
 
 
 def build_subsection_remediation_block(subsection_targets: dict[str, list[str]]) -> str:
@@ -191,6 +178,7 @@ def build_sections_to_fix_block(
     """
     from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
         extract_sections_by_ids,
+        subsection_targets_from_failures,
     )
 
     section_ids = [
@@ -202,7 +190,7 @@ def build_sections_to_fix_block(
         str(s.get("id", "")).strip(): s
         for s in extract_sections_by_ids(document, section_ids)
     }
-    subsection_targets = _subsection_remediation_targets(section_failures)
+    subsection_targets = subsection_targets_from_failures(section_failures)
     entries: list[dict] = []
     for bundle in section_failures:
         section_id = str(bundle.get("section_id", "")).strip()
@@ -296,7 +284,9 @@ def build_user_message(
     if subsection_block:
         parts.append(subsection_block)
     closing = (
-        "\nRewrite ONLY the sections in <sections_to_fix>. "
+        "\nRewrite ONLY the sections in <sections_to_fix>. Within each section, change only "
+        "what each failure's evidence or corrective_hint names — every other subsection, "
+        "code_block, and formula_block must come back exactly as given in current_section_json. "
         "Fix every listed failure at its root cause — not just its surface phrasing. "
         "Every code_block and formula_block must have a non-empty 'explanation' field. "
         'Return JSON with {"sections": [...]} containing only the rewritten sections.'
