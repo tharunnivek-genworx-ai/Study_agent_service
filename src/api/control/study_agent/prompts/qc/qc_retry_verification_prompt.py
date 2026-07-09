@@ -163,7 +163,9 @@ def _build_evaluation_standard_block(domain: str | None) -> str:
         parts.append(QC_RETRY_PROGRAMMING_RULES_BLOCK)
     if "Conceptual" in included:
         parts.append(QC_RETRY_CONCEPTUAL_RULES_BLOCK)
-    parts.append(QC_GLOBAL_SCAN_BLOCK)
+    # Programming-only topics require code_blocks; skip STEM-oriented global scan.
+    if included != frozenset({"Programming"}):
+        parts.append(QC_GLOBAL_SCAN_BLOCK)
     return "".join(parts)
 
 

@@ -728,9 +728,8 @@ async def run_pipeline(
 
     # ── Step 4: Final generation ──────────────────────────────────────────────
     effective_instruction = teaching_instruction.strip() or (
-        "No specific instruction provided. "
-        "Write for a new IT hire with basic programming knowledge "
-        "who is unfamiliar with this specific topic."
+        "No specific teaching instruction provided. Write clear, accurate introductory "
+        "study material for a learner who is new to this topic."
     )
 
     gen_user_msg = AGGREGATE_GENERATION_USER_TEMPLATE.format(
@@ -892,7 +891,7 @@ def parse_args() -> argparse.Namespace:
         "--instruction",
         default="",
         metavar="TEXT",
-        help="Teaching instruction for the final generator. Defaults to new IT hire audience.",
+        help="Teaching instruction for the final generator. Defaults to a neutral learner-new-to-topic audience.",
     )
     parser.add_argument(
         "--pages-per-chunk",
