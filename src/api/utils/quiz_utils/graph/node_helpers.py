@@ -43,7 +43,7 @@ from src.api.utils.quiz_utils.generation.question_parsing import (
 from src.api.utils.quiz_utils.graph.constants import MAX_QC_ATTEMPTS
 from src.api.utils.quiz_utils.quality_check_utils.document.question_merge import (
     insert_questions,
-    merge_question_patches,
+    prepare_question_patches_for_merge,
 )
 from src.api.utils.quiz_utils.quality_check_utils.infra.artifact_logging import (
     log_qc_agent,
@@ -240,15 +240,28 @@ async def run_question_retry(
                 user_message=user_message,
                 generation_type="question_patch",
             )
-            fixed_questions.extend(patch_questions)
+            target_question_ids = list(state.get("qc_reverify_question_ids") or [])
+            merged_questions = prepare_question_patches_for_merge(
+                merged_questions,
+                patch_questions,
+                target_question_ids=target_question_ids,
+            )
+            applied_ids = {
+                str(question_id).strip()
+                for question_id in target_question_ids
+                if str(question_id).strip()
+            }
+            fixed_questions.extend(
+                question
+                for question in merged_questions
+                if str(question.get("question_id", "")).strip() in applied_ids
+            )
             hints_stale_ids.extend(patch_stale)
+            hints_stale_ids.extend(applied_ids)
             last_result = patch_result
             llm_model_used = patch_model
             if patch_tokens is not None:
                 token_usage = (token_usage or 0) + patch_tokens
-
-            merge_result = merge_question_patches(merged_questions, patch_questions)
-            merged_questions = merge_result.questions
 
         if retry_mode in ("question_insert", "question_patch_then_insert"):
             system_prompt, user_message = build_question_insert_messages(
@@ -288,6 +301,8 @@ async def run_question_retry(
         "llm_model_used": llm_model_used,
         "token_usage": token_usage,
         "quiz_title": f"{state.get('node_title') or 'Quiz'} — Quiz",
+        "gen_attempt": 0,
+        "gen_feedback": "",
         "error": None,
     }
 

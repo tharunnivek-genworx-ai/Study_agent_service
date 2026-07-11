@@ -255,6 +255,38 @@ def test_get_active_run_for_resource_returns_running_run() -> None:
     asyncio.run(_run())
 
 
+def test_get_active_run_for_resource_returns_failed_resumable_run() -> None:
+    async def _run() -> None:
+        mentor_id = uuid4()
+        resource_id = uuid4()
+        run = _make_running_run(resource_id=resource_id)
+        run.mentor_id = mentor_id
+        run.status = GenerationRunStatus.FAILED.value
+        run.error_message = "LLM unavailable"
+        run.error_type = "terminal_llm_failure"
+        run.request_params = {"step_profile": "study_generate_with_ref"}
+
+        session = MagicMock()
+        session.commit = AsyncMock()
+        service = GenerationRunService(session)
+        service.repo = MagicMock()
+        service.repo.get_active_run = AsyncMock(return_value=run)
+
+        result = await service.get_active_run_for_resource(
+            resource_id=resource_id,
+            pipeline="study_material",
+            mentor_id=mentor_id,
+        )
+
+        assert result is not None
+        assert result.run_id == run.run_id
+        assert result.status == GenerationRunStatus.FAILED.value
+        assert result.resumable is True
+        assert result.step_profile == "study_generate_with_ref"
+
+    asyncio.run(_run())
+
+
 def test_get_active_run_for_resource_hides_other_mentor() -> None:
     async def _run() -> None:
         resource_id = uuid4()

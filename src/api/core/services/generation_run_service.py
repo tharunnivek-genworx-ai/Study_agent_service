@@ -225,16 +225,29 @@ class GenerationRunService:
         )
         if run is None or run.mentor_id != mentor_id:
             return None
-        if run.status != GenerationRunStatus.RUNNING.value:
-            return None
         params: dict[str, Any] = run.request_params or {}
-        return GenerationRunActiveOut(
-            run_id=run.run_id,
-            pipeline=run.pipeline,
-            status=run.status,
-            step_profile=params.get("step_profile"),
-            generation_mode=run.generation_mode,
-        )
+        run_out = GenerationRunOut.from_orm_run(run)
+        if run.status == GenerationRunStatus.RUNNING.value:
+            return GenerationRunActiveOut(
+                run_id=run.run_id,
+                pipeline=run.pipeline,
+                status=run.status,
+                step_profile=params.get("step_profile"),
+                generation_mode=run.generation_mode,
+                resumable=False,
+                seconds_until_retry=None,
+            )
+        if run.status == GenerationRunStatus.FAILED.value and run_out.resumable:
+            return GenerationRunActiveOut(
+                run_id=run.run_id,
+                pipeline=run.pipeline,
+                status=run.status,
+                step_profile=params.get("step_profile"),
+                generation_mode=run.generation_mode,
+                resumable=True,
+                seconds_until_retry=run_out.seconds_until_retry,
+            )
+        return None
 
     async def store_run_result(
         self,

@@ -666,7 +666,8 @@ class QuizService:
                 created_quiz_id = UUID(created_quiz_id)
             quiz_out = await self._build_quiz_out(created_quiz_id, run_id=run_id)
             await self._persist_quiz_result(run_id, quiz_out)
-        except QuizGenerationFailedException:
+        except QuizGenerationFailedException as exc:
+            await self._fail_generation_run(run_id, exc=exc)
             return
         except GenerationRunAborted:
             return

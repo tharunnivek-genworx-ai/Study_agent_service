@@ -87,11 +87,13 @@ async def kick_space_queue(
                             },
                         )
                         await run_generation_job(
-                            lambda sess,
-                            rid=run_id,
-                            uid=mentor_id: StudyMaterialService(
-                                sess
-                            ).execute_generate_study_material(run_id=rid, user_id=uid),
+                            lambda sess, rid=run_id, uid=mentor_id: (
+                                StudyMaterialService(
+                                    sess
+                                ).execute_generate_study_material(
+                                    run_id=rid, user_id=uid
+                                )
+                            ),
                         )
                         async with SessionLocal() as after_session:
                             snapshot = await StudyMaterialBatchService(
