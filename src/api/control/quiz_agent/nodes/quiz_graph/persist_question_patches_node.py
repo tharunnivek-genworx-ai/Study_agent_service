@@ -1,4 +1,14 @@
-"""Persist validated question patches from single-question mentor rework."""
+"""Persist validated question patches from single-question mentor rework.
+
+Graph node (terminal — rework path)
+-----------------------------------
+Applies ``validated_patches`` to the draft quiz via ``patch_questions_from_ai``.
+Updates ``hints_stale_question_ids`` to the patched IDs for downstream hint
+regeneration.
+
+Outputs: patched question IDs in ``hints_stale_question_ids``; ``error`` on
+empty patches or DB failure.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +27,7 @@ from src.api.utils.quiz_utils.graph.node_helpers import (
 async def persist_question_patches(
     state: QuizGraphState, config: RunnableConfig
 ) -> QuizGraphState:
+    """Write validated patches to the quiz and record patched question IDs."""
     session = graph_session(config)
     repo = QuizRepository(session)
     patches = state.get("validated_patches") or []

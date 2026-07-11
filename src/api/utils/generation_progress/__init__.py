@@ -1,5 +1,6 @@
 from src.api.schemas import GenerationPipeline
 from src.api.utils.generation_progress.advisory_lock import (
+    prepare_session_for_generation,
     release_all_generation_locks,
     release_generation_lock,
     require_generation_lock,
@@ -17,6 +18,7 @@ __all__ = [
     "invoke_graph_with_progress",
     "node_succeeded",
     "release_all_generation_locks",
+    "prepare_session_for_generation",
     "release_generation_lock",
     "require_generation_lock",
     "try_acquire_generation_lock",

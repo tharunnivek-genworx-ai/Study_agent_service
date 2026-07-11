@@ -1,3 +1,9 @@
+"""Public exports for quiz generation graph nodes.
+
+Re-exports all LangGraph node callables registered in
+``quiz_generation_graph.build_quiz_generation_graph`` plus ``MAX_QC_ATTEMPTS``.
+"""
+
 from src.api.control.quiz_agent.nodes.quiz_graph.build_quiz_single_regen_prompt_node import (
     build_quiz_single_regen_prompt_node,
 )

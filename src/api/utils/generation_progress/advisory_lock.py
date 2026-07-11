@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from uuid import UUID
 
@@ -72,6 +73,26 @@ async def try_acquire_generation_lock(
     return acquired
 
 
+async def try_acquire_generation_xact_lock(
+    session: AsyncSession,
+    *,
+    pipeline: str,
+    resource_id: UUID,
+) -> bool:
+    """Try to acquire a transaction-scoped advisory lock.
+
+    Unlike session locks, these are released automatically on COMMIT/ROLLBACK and
+    cannot leak across connection-pool reuse. Prefer this for short coordinator
+    critical sections (batch enqueue / claim next item).
+    """
+    key1, key2 = _lock_keys(pipeline, resource_id)
+    result = await session.execute(
+        text("SELECT pg_try_advisory_xact_lock(:k1, :k2)"),
+        {"k1": key1, "k2": key2},
+    )
+    return bool(result.scalar())
+
+
 async def release_generation_lock(
     session: AsyncSession,
     *,
@@ -97,10 +118,17 @@ async def release_generation_lock(
 
 async def release_all_generation_locks(session: AsyncSession) -> None:
     """Release every session-level advisory lock held by this connection."""
-    locks = session.info.pop(_LOCKS_INFO_KEY, None)
-    if not locks:
-        return
+    session.info.pop(_LOCKS_INFO_KEY, None)
     await session.execute(text("SELECT pg_advisory_unlock_all()"))
+
+
+async def prepare_session_for_generation(session: AsyncSession) -> None:
+    """Clear any advisory locks left on a pooled DB connection before use."""
+    await release_all_generation_locks(session)
+
+
+_LOCK_REQUIRE_MAX_ATTEMPTS = 12
+_LOCK_REQUIRE_BASE_DELAY_SECONDS = 0.08
 
 
 async def require_generation_lock(
@@ -110,7 +138,11 @@ async def require_generation_lock(
     resource_id: UUID,
 ) -> None:
     """Acquire lock or raise 409 if another session holds it."""
-    if not await try_acquire_generation_lock(
-        session, pipeline=pipeline, resource_id=resource_id
-    ):
-        raise GenerationAdvisoryLockUnavailableException()
+    for attempt in range(_LOCK_REQUIRE_MAX_ATTEMPTS):
+        if await try_acquire_generation_lock(
+            session, pipeline=pipeline, resource_id=resource_id
+        ):
+            return
+        if attempt < _LOCK_REQUIRE_MAX_ATTEMPTS - 1:
+            await asyncio.sleep(_LOCK_REQUIRE_BASE_DELAY_SECONDS * (attempt + 1))
+    raise GenerationAdvisoryLockUnavailableException()

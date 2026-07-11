@@ -52,7 +52,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.core.constants import (
 from src.api.utils.study_agent_utils.quality_check_utils.document.document_merge import (
     insert_sections,
     merge_section_field_patches,
-    merge_section_patches,
+    merge_section_patches_scoped,
 )
 from src.api.utils.study_agent_utils.quality_check_utils.infra.qc_retry_audit import (
     build_study_retry_input_audit,
@@ -580,7 +580,11 @@ async def run_section_retry(
                         patch_sections,
                     )
                 else:
-                    merge_result = merge_section_patches(merged_doc, patch_sections)
+                    merge_result = merge_section_patches_scoped(
+                        merged_doc,
+                        patch_sections,
+                        section_failures=section_failures,
+                    )
                 merged_doc = merge_result.document
                 if merge_result.unmatched_patch_ids:
                     logger.warning(

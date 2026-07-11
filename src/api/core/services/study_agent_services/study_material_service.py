@@ -14,7 +14,7 @@ unpublish, or retire quizzes.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +31,9 @@ from src.api.control.study_agent.utils.instructions.instruction_snapshot import 
     extract_effective_instruction_snapshot,
 )
 from src.api.core.exceptions import GenerationRunAborted
+from src.api.core.exceptions.generation_run_exceptions import (
+    GenerationRunConflictException,
+)
 from src.api.core.exceptions.study_material_exceptions.study_material_exceptions import (
     LLMGenerationFailedException,
     StudyMaterialCannotArchiveNonDraftException,
@@ -79,6 +82,7 @@ from src.api.schemas.generation_run_schema import (
     GenerationRunMode,
     GenerationRunPipeline,
     GenerationRunResumeResult,
+    GenerationRunStatus,
 )
 from src.api.schemas.qc_schemas.qc_check_schema import parse_qc_check_item
 from src.api.schemas.study_material_schemas.study_material_schema import (
@@ -119,6 +123,10 @@ from src.api.utils.content_lifecycle import (
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ARCHIVED,
     LIFECYCLE_DRAFT,
+)
+from src.api.utils.generation_progress.advisory_lock import (
+    release_all_generation_locks,
+    require_generation_lock,
 )
 from src.api.utils.generation_progress.store import study_step_profile_for_mode
 from src.api.utils.space_node_utils.build_node import (
@@ -823,6 +831,139 @@ class StudyMaterialService:
             return
         except Exception as exc:
             await self._fail_generation_run(run_id, exc=exc)
+
+    async def _create_durable_run_without_advisory_lock(
+        self,
+        *,
+        node_id: UUID,
+        space_id: UUID,
+        mentor_id: UUID,
+        generation_mode: GenerationRunMode,
+        request_params: dict[str, Any],
+    ) -> UUID:
+        """Persist a RUNNING generation row (caller must hold the advisory lock)."""
+        has_reference = bool(request_params.get("reference_material_id"))
+        request_params = {
+            **request_params,
+            "node_id": str(node_id),
+            "step_profile": study_step_profile_for_mode(
+                generation_mode=generation_mode.value,
+                has_reference_material=has_reference,
+            ).value,
+        }
+        resource_type, resource_id = GenerationRunService.resource_for_study_material(
+            node_id
+        )
+        run_service = GenerationRunService(self.session)
+        await run_service.repo.supersede_stale_runs(
+            resource_id=resource_id,
+            pipeline=GenerationRunPipeline.STUDY_MATERIAL.value,
+        )
+        active = await run_service.repo.get_active_run(
+            resource_id=resource_id,
+            pipeline=GenerationRunPipeline.STUDY_MATERIAL.value,
+        )
+        if active is not None and active.status == GenerationRunStatus.RUNNING.value:
+            raise GenerationRunConflictException(str(active.run_id))
+
+        run = await run_service.repo.create(
+            GenerationRunCreate(
+                pipeline=GenerationRunPipeline.STUDY_MATERIAL,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                node_id=node_id,
+                space_id=space_id,
+                mentor_id=mentor_id,
+                generation_mode=generation_mode,
+                request_params=request_params,
+            )
+        )
+        await run_service.progress.start(
+            run.run_id, GenerationRunPipeline.STUDY_MATERIAL
+        )
+        return cast(UUID, run.run_id)
+
+    async def generate_study_material_inline(
+        self,
+        node_id: UUID,
+        request: StudyMaterialGenerateRequest,
+        user_id: UUID,
+        role: str,
+    ) -> StudyMaterialGenerateResponse:
+        """Create and run generation under one advisory lock (sequential generate-all).
+
+        Unlike the async ``/generate`` path (start → release lock → background
+        re-acquire), this holds the per-node lock for the full graph so the next
+        node cannot race a stale or leaked lock on Cloud Run.
+        """
+        _assert_mentor(role)
+        node = await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        resource_type, resource_id = GenerationRunService.resource_for_study_material(
+            node_id
+        )
+        pipeline = GenerationRunPipeline.STUDY_MATERIAL.value
+
+        await require_generation_lock(
+            self.session,
+            pipeline=pipeline,
+            resource_id=resource_id,
+        )
+        run_id: UUID | None = None
+        try:
+            run_id = await self._create_durable_run_without_advisory_lock(
+                node_id=node_id,
+                space_id=node.space_id,
+                mentor_id=user_id,
+                generation_mode=GenerationRunMode.GENERATE,
+                request_params={
+                    "reference_material_id": _request_param_uuid(
+                        request.reference_material_id
+                    ),
+                },
+            )
+            ref_raw = request.reference_material_id
+            reference_material_id = UUID(str(ref_raw)) if ref_raw else None
+            graph_result = await run_study_material_generation(
+                session=self.session,
+                node_id=node_id,
+                reference_material_id=reference_material_id,
+                user_id=user_id,
+                run_id=run_id,
+            )
+            graph_result["node_title"] = node.title
+            result = await self._finalize_generation_run(
+                run_id=run_id,
+                node_id=node_id,
+                space_id=node.space_id,
+                graph_result=graph_result,
+                generation_mode="generate",
+                user_id=user_id,
+                request_params={
+                    "reference_material_id": _request_param_uuid(
+                        request.reference_material_id
+                    ),
+                    "node_id": str(node_id),
+                },
+            )
+            await self._persist_run_result(run_id, result)
+            await GenerationRunService(self.session).repo.supersede_other_active_runs(
+                resource_id=resource_id,
+                pipeline=pipeline,
+                except_run_id=run_id,
+            )
+            return result
+        except GenerationRunAborted:
+            raise LLMGenerationFailedException(
+                detail="Generation was cancelled."
+            ) from None
+        except Exception as exc:
+            if run_id is not None:
+                await self._fail_generation_run(run_id, exc=exc)
+            raise
+        finally:
+            await release_all_generation_locks(self.session)
 
     # ── regenerate ─────────────────────────────────────────────────────
 

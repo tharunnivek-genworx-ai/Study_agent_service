@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from src.api.config import settings
 
@@ -35,9 +35,24 @@ SQLALCHEMY_DATABASE_URL = build_database_url()
 engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
     echo=settings.database_echo,
+    # Cloud Run + managed Postgres can drop idle TCP connections.
+    # Pre-ping and recycle help avoid reusing dead sockets.
+    pool_pre_ping=True,
+    pool_recycle=900,
+    pool_timeout=30,
+    connect_args={
+        # Keep handshake bounded in constrained environments.
+        "timeout": 20,
+        # asyncpg statement cache can hold stale prepared statements
+        # across aggressive connection churn.
+        "statement_cache_size": 0,
+    },
 )
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
+
 
 SessionLocal = async_sessionmaker(
     bind=engine,
@@ -51,10 +66,12 @@ SessionLocal = async_sessionmaker(
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """Yield a request-scoped session; commit on success, rollback on error."""
     from src.api.utils.generation_progress.advisory_lock import (
+        prepare_session_for_generation,
         release_all_generation_locks,
     )
 
     async with SessionLocal() as session:
+        await prepare_session_for_generation(session)
         try:
             yield session
             await session.commit()

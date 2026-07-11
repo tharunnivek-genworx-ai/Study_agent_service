@@ -1,4 +1,12 @@
-"""Deterministic validation for single-question mentor rework patches."""
+"""Deterministic validation for single-question mentor rework patches.
+
+Graph node (rework subgraph)
+----------------------------
+Structural checks on ``parsed_patches`` before DB write. Unlike the full-quiz
+validator, there is no retry loop — failure sets ``error`` and routes to END.
+
+Outputs: ``validated_patches`` and ``struct_validation_passed`` on success.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +25,7 @@ from src.api.utils.quiz_utils.quality_check_utils.checks.deterministic import (
 async def deterministic_validate_question_patches(
     state: QuizGraphState,
 ) -> dict[str, Any]:
+    """Validate parsed question patches structurally before persistence."""
     parsed = state.get("parsed_patches") or []
     expected_count = len(state.get("question_ids") or [])
     det_checks = run_deterministic_quiz_checks(

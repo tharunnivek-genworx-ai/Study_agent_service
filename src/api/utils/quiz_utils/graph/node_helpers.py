@@ -1,4 +1,17 @@
-"""Helpers for quiz generation graph nodes — parsing, LLM calls, and QC state."""
+"""Helpers for quiz generation graph nodes — parsing, LLM calls, and QC state.
+
+Pipeline position
+-----------------
+Shared utilities imported by quiz graph nodes (``quiz_generator_node``,
+``quality_check_node``, rework nodes, etc.). Not graph nodes themselves.
+
+Responsibilities
+----------------
+- Extract ``AsyncSession`` from LangGraph ``RunnableConfig``.
+- Groq LLM calls and JSON question parsing with failure payloads.
+- QC retry orchestration (patch/insert prompts, merge logic).
+- Artifact logging and QC pass/fail decision shaping for persistence.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +43,7 @@ from src.api.utils.quiz_utils.generation.question_parsing import (
 from src.api.utils.quiz_utils.graph.constants import MAX_QC_ATTEMPTS
 from src.api.utils.quiz_utils.quality_check_utils.document.question_merge import (
     insert_questions,
-    merge_question_patches,
+    prepare_question_patches_for_merge,
 )
 from src.api.utils.quiz_utils.quality_check_utils.infra.artifact_logging import (
     log_qc_agent,
@@ -52,10 +65,12 @@ def graph_session(config: RunnableConfig) -> AsyncSession:
 
 
 def qc_retry_mode(state: QuizGraphState) -> str:
+    """Return the active QC retry mode from state (defaults to ``"none"``)."""
     return state.get("qc_retry_mode") or "none"
 
 
 def format_gen_feedback_from_checks(failed_checks: list[dict[str, Any]]) -> str:
+    """Format deterministic check failures into feedback for the generator retry prompt."""
     lines: list[str] = []
     for check in failed_checks:
         lines.append(
@@ -66,6 +81,7 @@ def format_gen_feedback_from_checks(failed_checks: list[dict[str, Any]]) -> str:
 
 
 async def call_quiz_llm(*, system_prompt: str, user_message: str) -> Any:
+    """Invoke the configured Groq model for quiz generation with rotation/retry."""
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_message),
@@ -80,6 +96,11 @@ async def call_quiz_llm(*, system_prompt: str, user_message: str) -> Any:
 
 
 class QuestionCallError(Exception):
+    """Raised internally when an LLM call or parse fails during question retry.
+
+    ``payload`` is a partial state dict returned directly to the graph.
+    """
+
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
         super().__init__("question LLM call failed")
@@ -93,6 +114,10 @@ async def call_and_parse_questions(
     user_message: str,
     generation_type: str,
 ) -> tuple[list[dict[str, Any]], Any, str, int | None, list[str]]:
+    """Call LLM, parse JSON array, normalize items; raise ``QuestionCallError`` on failure.
+
+    Returns ``(parsed_questions, raw_result, model_name, token_usage, hints_stale_ids)``.
+    """
     result = await call_llm(system_prompt=system_prompt, user_message=user_message)
     if not result.ok:
         raise QuestionCallError(
@@ -136,6 +161,7 @@ def build_question_patch_messages(
     state: QuizGraphState,
     questions: list[dict[str, Any]],
 ) -> tuple[str, str]:
+    """Build system/user messages for QC-driven question patch retry."""
     user_message = question_rework_prompt.build_user_message(
         topic_title=state.get("node_title") or "",
         study_material_content=state.get("study_material_content") or "",
@@ -155,6 +181,7 @@ def build_question_insert_messages(
     state: QuizGraphState,
     questions: list[dict[str, Any]],
 ) -> tuple[str, str]:
+    """Build system/user messages for inserting questions to cover missing concepts."""
     user_message = question_insert_prompt.build_user_message(
         topic_title=state.get("node_title") or "",
         study_material_content=state.get("study_material_content") or "",
@@ -176,6 +203,12 @@ async def run_question_retry(
     *,
     call_llm: LlmCall,
 ) -> dict[str, Any]:
+    """Run surgical QC retry (patch and/or insert) without full regeneration.
+
+    Called from ``quiz_generator_node`` when ``qc_retry_mode`` is in
+    ``QUESTION_RETRY_MODES``. Updates ``parsed_questions``, ``validated_questions``,
+    and ``fixed_questions`` for targeted QC on the next pass.
+    """
     questions = list(
         state.get("validated_questions") or state.get("parsed_questions") or []
     )
@@ -207,15 +240,28 @@ async def run_question_retry(
                 user_message=user_message,
                 generation_type="question_patch",
             )
-            fixed_questions.extend(patch_questions)
+            target_question_ids = list(state.get("qc_reverify_question_ids") or [])
+            merged_questions = prepare_question_patches_for_merge(
+                merged_questions,
+                patch_questions,
+                target_question_ids=target_question_ids,
+            )
+            applied_ids = {
+                str(question_id).strip()
+                for question_id in target_question_ids
+                if str(question_id).strip()
+            }
+            fixed_questions.extend(
+                question
+                for question in merged_questions
+                if str(question.get("question_id", "")).strip() in applied_ids
+            )
             hints_stale_ids.extend(patch_stale)
+            hints_stale_ids.extend(applied_ids)
             last_result = patch_result
             llm_model_used = patch_model
             if patch_tokens is not None:
                 token_usage = (token_usage or 0) + patch_tokens
-
-            merge_result = merge_question_patches(merged_questions, patch_questions)
-            merged_questions = merge_result.questions
 
         if retry_mode in ("question_insert", "question_patch_then_insert"):
             system_prompt, user_message = build_question_insert_messages(
@@ -255,6 +301,8 @@ async def run_question_retry(
         "llm_model_used": llm_model_used,
         "token_usage": token_usage,
         "quiz_title": f"{state.get('node_title') or 'Quiz'} — Quiz",
+        "gen_attempt": 0,
+        "gen_feedback": "",
         "error": None,
     }
 
@@ -264,6 +312,7 @@ def log_quiz_artifact(
     agent: str,
     payload: dict[str, Any],
 ) -> None:
+    """Log a quiz pipeline artifact when ``artifact_run_id`` is present in state."""
     run_id = state.get("artifact_run_id")
     if not run_id:
         return
@@ -285,6 +334,7 @@ def build_qc_pass_decision(
     routing_mode: str,
     det_checks: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Summarize QC outcome for artifact logs and downstream routing decisions."""
     failed_checks = extract_failed_checks(qc_result.get("checks") or [])
     failed_det = [c for c in det_checks if not c.get("passed", True)]
     retry_recommendation = qc_result.get("retry_recommendation") or {}
@@ -381,6 +431,7 @@ def log_qc_artifacts(
     qc_pass_decision: dict[str, Any],
     routing: QuizRetryRoutingResult,
 ) -> None:
+    """Write QC verification and result artifacts for the current pipeline attempt."""
     attempt = quiz_pipeline_attempt(state)
     log_qc_agent(
         state,

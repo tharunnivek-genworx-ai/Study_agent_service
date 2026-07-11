@@ -26,6 +26,7 @@ from src.api.rest.routes.progress_routes import (
 from src.api.rest.routes.quiz_routes import hint_route, quiz_route
 from src.api.rest.routes.study_agent_routes import (
     reference_material_route,
+    study_material_batch_route,
     study_material_route,
 )
 from src.api.rest.routes.trainee_quiz_routes import trainee_quiz_routes
@@ -40,6 +41,7 @@ app.include_router(media_access_router)
 app.include_router(generation_progress_router)
 app.include_router(generation_run_router)
 app.include_router(study_material_route.router)
+app.include_router(study_material_batch_route.router)
 app.include_router(reference_material_route.router)
 app.include_router(quiz_route.router)
 app.include_router(hint_route.router)

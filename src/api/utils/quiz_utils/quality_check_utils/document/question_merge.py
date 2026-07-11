@@ -30,6 +30,208 @@ def _reindex_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return reindexed
 
 
+def bind_patch_question_ids(
+    patches: list[dict[str, Any]],
+    target_question_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Attach ``question_id`` values to patch objects when the LLM omitted them.
+
+    When the patch count matches the failed-question count (or there is a single
+    patch for a single failure), ids are assigned in ``target_question_ids`` order.
+    """
+    bound: list[dict[str, Any]] = [
+        copy.deepcopy(patch) for patch in patches if isinstance(patch, dict)
+    ]
+    if not bound or not target_question_ids:
+        return bound
+
+    normalized_targets = [
+        str(question_id).strip()
+        for question_id in target_question_ids
+        if str(question_id).strip()
+    ]
+    if not normalized_targets:
+        return bound
+
+    existing_patch_ids = {_question_id(patch) for patch in bound if _question_id(patch)}
+    if existing_patch_ids.intersection(normalized_targets):
+        return bound
+
+    if len(bound) == len(normalized_targets):
+        for patch, target_id in zip(bound, normalized_targets, strict=False):
+            patch["question_id"] = target_id
+    elif len(bound) == 1 and len(normalized_targets) == 1:
+        bound[0]["question_id"] = normalized_targets[0]
+
+    return bound
+
+
+def bind_patches_by_order_index(
+    patches: list[dict[str, Any]],
+    existing_questions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Map a full-quiz patch response onto existing ids by ``order_index``."""
+    sorted_existing = sorted(
+        existing_questions,
+        key=lambda question: question.get("order_index", 0),
+    )
+    sorted_patches = sorted(
+        patches,
+        key=lambda question: question.get("order_index", 0),
+    )
+    if len(sorted_patches) != len(sorted_existing):
+        return [copy.deepcopy(patch) for patch in sorted_patches]
+
+    bound: list[dict[str, Any]] = []
+    for patch, existing in zip(sorted_patches, sorted_existing, strict=False):
+        updated = copy.deepcopy(patch)
+        updated["question_id"] = _question_id(existing)
+        updated["order_index"] = existing.get("order_index")
+        bound.append(updated)
+    return bound
+
+
+def _existing_question_ids(questions: list[dict[str, Any]]) -> set[str]:
+    return {_question_id(question) for question in questions if _question_id(question)}
+
+
+def _strip_unrecognized_patch_ids(
+    patches: list[dict[str, Any]],
+    existing_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Remove parser-assigned ids that do not belong to the live quiz."""
+    stripped: list[dict[str, Any]] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        updated = copy.deepcopy(patch)
+        patch_id = _question_id(updated)
+        if patch_id and patch_id not in existing_ids:
+            updated.pop("question_id", None)
+        stripped.append(updated)
+    return stripped
+
+
+def _normalize_patch_payload(
+    patches: list[dict[str, Any]],
+    *,
+    existing_questions: list[dict[str, Any]],
+    ordered_targets: list[str],
+    id_set: set[str],
+) -> list[dict[str, Any]]:
+    """Bind patch objects to quiz ids before merge."""
+    existing_ids = _existing_question_ids(existing_questions)
+    bound = bind_patch_question_ids(patches, ordered_targets)
+    patch_ids = {_question_id(patch) for patch in bound if _question_id(patch)}
+
+    if patch_ids and patch_ids.issubset(existing_ids):
+        if ordered_targets:
+            targeted = [patch for patch in bound if _question_id(patch) in id_set]
+            return targeted or bound
+        return bound
+
+    stripped = _strip_unrecognized_patch_ids(patches, existing_ids)
+
+    if len(ordered_targets) == 1 and len(stripped) > 1:
+        failed_id = ordered_targets[0]
+        sorted_existing = sorted(
+            existing_questions,
+            key=lambda question: question.get("order_index", 0),
+        )
+        failed_index = next(
+            (
+                index
+                for index, question in enumerate(sorted_existing)
+                if _question_id(question) == failed_id
+            ),
+            None,
+        )
+        sorted_patches = sorted(
+            stripped,
+            key=lambda question: question.get("order_index", 0),
+        )
+        if failed_index is not None and failed_index < len(sorted_patches):
+            return bind_patch_question_ids(
+                [sorted_patches[failed_index]],
+                ordered_targets,
+            )
+
+    rebound = bind_patch_question_ids(stripped, ordered_targets)
+    rebound_ids = {_question_id(patch) for patch in rebound if _question_id(patch)}
+    if rebound_ids and rebound_ids.issubset(existing_ids):
+        if ordered_targets:
+            targeted = [patch for patch in rebound if _question_id(patch) in id_set]
+            return targeted or rebound
+        return rebound
+
+    if len(stripped) == len(existing_questions):
+        positional = bind_patches_by_order_index(stripped, existing_questions)
+        if ordered_targets:
+            return [patch for patch in positional if _question_id(patch) in id_set]
+        return positional
+
+    return rebound
+
+
+def prepare_question_patches_for_merge(
+    existing_questions: list[dict[str, Any]],
+    patches: list[dict[str, Any]],
+    *,
+    target_question_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Normalize patch payloads so ``merge_question_patches`` can apply them.
+
+    Handles the common LLM failure modes:
+    - patch objects missing ``question_id`` (bound to QC failure targets)
+    - full-quiz rewrite returned when only targeted fixes were requested
+    """
+    if not patches:
+        return copy.deepcopy(existing_questions)
+
+    id_set = {
+        str(question_id).strip()
+        for question_id in target_question_ids
+        if str(question_id).strip()
+    }
+    sorted_existing = sorted(
+        existing_questions,
+        key=lambda item: item.get("order_index", 0),
+    )
+    ordered_targets = [
+        _question_id(question)
+        for question in sorted_existing
+        if _question_id(question) in id_set
+    ]
+
+    prepared = _normalize_patch_payload(
+        patches,
+        existing_questions=sorted_existing,
+        ordered_targets=ordered_targets,
+        id_set=id_set,
+    )
+    if not prepared:
+        logger.warning("Question patch payload could not be bound to quiz ids")
+        return copy.deepcopy(existing_questions)
+
+    if (
+        len(patches) == len(existing_questions)
+        and ordered_targets
+        and len(ordered_targets) < len(existing_questions)
+    ):
+        logger.warning(
+            "Patch response matched full quiz length; applying only targeted ids: %s",
+            ", ".join(ordered_targets),
+        )
+
+    merge_result = merge_question_patches(existing_questions, prepared)
+    if merge_result.unmatched_patch_ids:
+        logger.warning(
+            "Unmatched question patch ids after binding: %s",
+            ", ".join(merge_result.unmatched_patch_ids),
+        )
+    return merge_result.questions
+
+
 def merge_question_patches(
     questions: list[dict[str, Any]],
     patches: list[dict[str, Any]],
@@ -120,6 +322,63 @@ def extract_questions_by_ids(
     return ordered
 
 
+def _merge_full_regeneration_positional(
+    new_questions: list[dict[str, Any]],
+    previous_questions: list[dict[str, Any]],
+    *,
+    rewrite_ids: set[str],
+) -> list[dict[str, Any]] | None:
+    """Splice new questions onto rewrite slots when ids are not preserved."""
+    sorted_previous = sorted(
+        previous_questions,
+        key=lambda question: question.get("order_index", 0),
+    )
+    sorted_new = sorted(
+        new_questions,
+        key=lambda question: question.get("order_index", 0),
+    )
+    if not sorted_previous or not sorted_new:
+        return None
+
+    if len(sorted_new) == len(sorted_previous):
+        merged: list[dict[str, Any]] = []
+        for index, previous in enumerate(sorted_previous):
+            previous_id = _question_id(previous)
+            if previous_id in rewrite_ids and index < len(sorted_new):
+                updated = copy.deepcopy(sorted_new[index])
+                updated["question_id"] = previous_id
+                updated["order_index"] = previous.get("order_index", index)
+                merged.append(updated)
+            else:
+                merged.append(copy.deepcopy(previous))
+        return _reindex_questions(merged)
+
+    if len(sorted_new) == len(rewrite_ids):
+        rewrite_ordered = [
+            _question_id(question)
+            for question in sorted_previous
+            if _question_id(question) in rewrite_ids
+        ]
+        merged = copy.deepcopy(sorted_previous)
+        for question_id, new_question in zip(
+            rewrite_ordered,
+            sorted_new,
+            strict=False,
+        ):
+            index = next(
+                idx
+                for idx, question in enumerate(merged)
+                if _question_id(question) == question_id
+            )
+            updated = copy.deepcopy(new_question)
+            updated["question_id"] = question_id
+            updated["order_index"] = merged[index].get("order_index", index)
+            merged[index] = updated
+        return _reindex_questions(merged)
+
+    return None
+
+
 def merge_full_regeneration_preserving_passing(
     new_questions: list[dict[str, Any]],
     previous_questions: list[dict[str, Any]],
@@ -143,6 +402,22 @@ def merge_full_regeneration_preserving_passing(
         if _question_id(question)
     }
 
+    previous_ids = set(previous_by_id.keys())
+    new_ids = set(new_by_id.keys())
+    if new_ids.isdisjoint(previous_ids):
+        positional = _merge_full_regeneration_positional(
+            new_questions,
+            previous_questions,
+            rewrite_ids=rewrite_ids,
+        )
+        if positional is not None:
+            return positional
+        logger.warning(
+            "Full-regeneration output used fresh question_ids; replacing quiz "
+            "by order_index to avoid duplicate accumulation"
+        )
+        return bind_patches_by_order_index(new_questions, previous_questions)
+
     ordered_ids: list[str] = []
     seen: set[str] = set()
     for question in previous_questions:
@@ -163,11 +438,6 @@ def merge_full_regeneration_preserving_passing(
         else:
             question = previous_by_id.get(question_id) or new_by_id.get(question_id)
         if question is not None:
-            merged.append(question)
-
-    merged_ids = {_question_id(question) for question in merged}
-    for question_id, question in new_by_id.items():
-        if question_id not in merged_ids:
             merged.append(question)
 
     return _reindex_questions(merged)

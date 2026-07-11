@@ -102,6 +102,7 @@ def _should_force_full_regeneration(
     failed_question_ids: set[str],
     wrong_answer_risk: str,
     unmapped_count: int,
+    total_questions: int,
 ) -> tuple[bool, str]:
     if len(failed_question_ids) >= _FULL_REGEN_FAILED_QUESTION_THRESHOLD:
         return (
@@ -125,17 +126,8 @@ def _should_force_full_regeneration(
         if str(check.get("category", "")) == "answer_correctness"
         and not check.get("passed", True)
     )
-    total_questions = max(
-        1,
-        len(
-            {
-                str(check.get("question_id", "")).strip()
-                for check in failed
-                if str(check.get("question_id", "")).strip()
-            }
-        ),
-    )
-    if answer_correctness_failures > total_questions / 3:
+    quiz_size = max(1, total_questions)
+    if answer_correctness_failures > quiz_size / 3:
         return (
             True,
             "answer_correctness fails on more than a third of questions",
@@ -202,8 +194,6 @@ def _reconcile_mode(
         and has_missing
     ):
         return "question_patch_then_insert"
-    if llm_recommendation_mode == "full_regeneration":
-        return "full_regeneration"
 
     return deterministic
 
@@ -252,6 +242,7 @@ def classify_quiz_retry_routing(
         failed_question_ids=failed_question_ids,
         wrong_answer_risk=wrong_answer_risk,
         unmapped_count=unmapped_count,
+        total_questions=len(questions),
     )
 
     deterministic = _deterministic_mode(

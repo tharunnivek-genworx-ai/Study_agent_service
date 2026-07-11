@@ -18,9 +18,9 @@ class EffectiveInstructionPart:
     label: str
 
 
-_NO_INSTRUCTION_FALLBACK = (
-    "No specific teaching instruction provided. Write for a new IT hire "
-    "who knows basic programming but is unfamiliar with the topic."
+NO_INSTRUCTION_FALLBACK = (
+    "No specific teaching instruction provided. Write clear, accurate introductory "
+    "study material for a learner who is new to this topic."
 )
 
 
@@ -40,7 +40,7 @@ def format_effective_instruction(parts: list[EffectiveInstructionPart]) -> str:
     false positives on every reload/navigation.
     """
     if not parts:
-        return _NO_INSTRUCTION_FALLBACK
+        return NO_INSTRUCTION_FALLBACK
     return "\n\n".join(f"{part.label}\n{part.text}" for part in parts)
 
 

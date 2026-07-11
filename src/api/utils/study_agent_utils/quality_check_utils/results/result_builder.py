@@ -86,6 +86,29 @@ def qc_models_used(
     return {"prose": prose_model, "code": code_model}
 
 
+def _is_no_action_needed_hint(corrective_hint: Any) -> bool:
+    hint = str(corrective_hint or "").strip().lower()
+    return hint.startswith("no action needed")
+
+
+def reconcile_no_action_needed_checks(
+    checks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flip passed=true when the LLM corrective_hint explicitly says no fix is required."""
+    reconciled: list[dict[str, Any]] = []
+    for check in checks:
+        if not check.get("passed", True) and _is_no_action_needed_hint(
+            check.get("corrective_hint")
+        ):
+            updated = dict(check)
+            updated["passed"] = True
+            updated["corrective_hint"] = ""
+            reconciled.append(updated)
+        else:
+            reconciled.append(check)
+    return reconciled
+
+
 def build_final_qc_result(
     verification: dict[str, Any] | None,
     structure_checks: list[dict[str, Any]],
@@ -113,7 +136,9 @@ def build_final_qc_result(
     prose_checks, code_checks = split_verification_checks(verification)
     prose_checks = normalize_checklist_ids(prose_checks, checklist)
     prose_checks = normalize_must_cover_section_ids(prose_checks, checklist)
+    prose_checks = reconcile_no_action_needed_checks(prose_checks)
     code_checks = attach_code_artifact_ids_from_document(code_checks, document)
+    code_checks = reconcile_no_action_needed_checks(code_checks)
 
     all_checks = dedup_document_level_checks(
         structure_checks + prose_checks + code_checks

@@ -165,13 +165,15 @@ class GenerationJobStartResponse(BaseModel):
 
 
 class GenerationRunActiveOut(BaseModel):
-    """Active generation run for a resource, if any."""
+    """Active or resumable generation run for a resource, if any."""
 
     run_id: UUID
     pipeline: str
     status: str
     step_profile: str | None = None
     generation_mode: str | None = None
+    resumable: bool = False
+    seconds_until_retry: int | None = None
 
 
 class GenerationRunResultOut(BaseModel):

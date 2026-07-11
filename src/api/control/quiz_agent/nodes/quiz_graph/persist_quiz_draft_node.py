@@ -1,4 +1,13 @@
-"""Persist validated quiz questions as a draft in the database."""
+"""Persist validated quiz questions as a draft in the database.
+
+Graph node (terminal — generate/regenerate path)
+------------------------------------------------
+Creates a new draft quiz or replaces an existing one when ``quiz_id`` is set
+(regenerate). Attaches QC diagnostics via ``resolve_qc_result_for_persist``.
+
+Outputs: ``created_quiz_id``. Always reached on success, terminal LLM failure,
+or permanent QC/struct failure (draft saved with flags).
+"""
 
 from __future__ import annotations
 
@@ -16,6 +25,7 @@ from src.api.utils.quiz_utils.graph.node_helpers import (
 async def persist_quiz_draft(
     state: QuizGraphState, config: RunnableConfig
 ) -> QuizGraphState:
+    """Write validated questions to DB as a draft quiz and set ``created_quiz_id``."""
     session = graph_session(config)
     repo = QuizRepository(session)
     validated = state.get("validated_questions") or []

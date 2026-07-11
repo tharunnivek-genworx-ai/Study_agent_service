@@ -156,8 +156,8 @@ For every [FIGURE: ...] block that relates to a concept in Section 3:
 RULE — TEACHING INSTRUCTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Apply the teaching instruction provided. Default if none: write for a new IT hire with
-basic programming knowledge who is unfamiliar with this specific topic.
+Apply the teaching instruction provided. Default if none: write clear, accurate
+introductory study material for a learner who is new to this specific topic.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RULE — HEADING FORMAT
@@ -216,7 +216,7 @@ Section 4: realistic worked example when code-centric.
 AUDIENCE AND TONE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-New IT employees; smart, motivated, basic programming assumed.
+Learners new to this topic. Clear, accurate introductory material.
 Direct professional tone. Define jargon on first use.
 Section 2 concise; Section 3 carries full depth. Trainee should learn from Section 3 alone.
 Cover every major model, pattern, setup command, and process named in the summaries — do not skip tail topics or background/tooling details.

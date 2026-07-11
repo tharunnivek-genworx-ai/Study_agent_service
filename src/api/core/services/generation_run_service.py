@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -40,6 +42,13 @@ from src.api.utils.generation_progress.store import (
     node_to_step_for_profile,
     step_profile_from_request_params,
 )
+
+logger = logging.getLogger(__name__)
+
+# Background jobs can start microseconds after start_run releases the HTTP-session
+# lock; brief backoff avoids failing the run on a transient advisory-lock race.
+_LOCK_ACQUIRE_MAX_ATTEMPTS = 25
+_LOCK_ACQUIRE_BASE_DELAY_SECONDS = 0.08
 
 
 class GenerationRunService:
@@ -97,19 +106,45 @@ class GenerationRunService:
             return None
         if run.status != GenerationRunStatus.RUNNING.value:
             return None
-        acquired = await try_acquire_generation_lock(
-            self.session,
-            pipeline=run.pipeline,
-            resource_id=run.resource_id,
-        )
-        if not acquired:
-            await self.fail_run(
-                run_id,
-                error_message="Could not acquire generation lock for this resource.",
-                error_type="lock_unavailable",
+
+        for attempt in range(_LOCK_ACQUIRE_MAX_ATTEMPTS):
+            acquired = await try_acquire_generation_lock(
+                self.session,
+                pipeline=run.pipeline,
+                resource_id=run.resource_id,
             )
-            return None
-        return run
+            if acquired:
+                if attempt > 0:
+                    logger.info(
+                        "Generation lock acquired after retry",
+                        extra={
+                            "run_id": str(run_id),
+                            "resource_id": str(run.resource_id),
+                            "attempt": attempt + 1,
+                        },
+                    )
+                return run
+
+            if attempt < _LOCK_ACQUIRE_MAX_ATTEMPTS - 1:
+                run = await self.repo.get_by_id(run_id)
+                if run is None or run.status != GenerationRunStatus.RUNNING.value:
+                    return None
+                await asyncio.sleep(_LOCK_ACQUIRE_BASE_DELAY_SECONDS * (attempt + 1))
+
+        await self.fail_run(
+            run_id,
+            error_message="Could not acquire generation lock for this resource.",
+            error_type="lock_unavailable",
+        )
+        logger.warning(
+            "Generation lock unavailable after retries",
+            extra={
+                "run_id": str(run_id),
+                "resource_id": str(run.resource_id),
+                "attempts": _LOCK_ACQUIRE_MAX_ATTEMPTS,
+            },
+        )
+        return None
 
     async def checkpoint_after_node(
         self,
@@ -190,16 +225,29 @@ class GenerationRunService:
         )
         if run is None or run.mentor_id != mentor_id:
             return None
-        if run.status != GenerationRunStatus.RUNNING.value:
-            return None
         params: dict[str, Any] = run.request_params or {}
-        return GenerationRunActiveOut(
-            run_id=run.run_id,
-            pipeline=run.pipeline,
-            status=run.status,
-            step_profile=params.get("step_profile"),
-            generation_mode=run.generation_mode,
-        )
+        run_out = GenerationRunOut.from_orm_run(run)
+        if run.status == GenerationRunStatus.RUNNING.value:
+            return GenerationRunActiveOut(
+                run_id=run.run_id,
+                pipeline=run.pipeline,
+                status=run.status,
+                step_profile=params.get("step_profile"),
+                generation_mode=run.generation_mode,
+                resumable=False,
+                seconds_until_retry=None,
+            )
+        if run.status == GenerationRunStatus.FAILED.value and run_out.resumable:
+            return GenerationRunActiveOut(
+                run_id=run.run_id,
+                pipeline=run.pipeline,
+                status=run.status,
+                step_profile=params.get("step_profile"),
+                generation_mode=run.generation_mode,
+                resumable=True,
+                seconds_until_retry=run_out.seconds_until_retry,
+            )
+        return None
 
     async def store_run_result(
         self,

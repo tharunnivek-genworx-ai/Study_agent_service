@@ -91,3 +91,41 @@ class TestClassifyQuizRetryRouting:
         }
         result = classify_quiz_retry_routing(qc_result, questions)
         assert result.mode == "full_regeneration"
+
+    def test_single_answer_correctness_failure_on_ten_question_quiz_patches(self):
+        questions = [_question(f"q{i}") for i in range(1, 11)]
+        qc_result = {
+            "checks": [_failed_check(category="answer_correctness", question_id="q7")],
+            "failed_checks": [
+                _failed_check(category="answer_correctness", question_id="q7")
+            ],
+            "wrong_answer_risk": "low",
+            "retry_recommendation": {
+                "mode": "question_patch",
+                "failed_question_ids": ["q7"],
+                "missing_concepts": [],
+                "rationale": "One question has an incorrect answer",
+            },
+        }
+        result = classify_quiz_retry_routing(qc_result, questions)
+        assert result.mode == "question_patch"
+        assert result.failed_question_ids == ["q7"]
+
+    def test_llm_full_regeneration_does_not_override_question_patch(self):
+        questions = [_question(f"q{i}") for i in range(1, 11)]
+        qc_result = {
+            "checks": [_failed_check(category="answer_correctness", question_id="q7")],
+            "failed_checks": [
+                _failed_check(category="answer_correctness", question_id="q7")
+            ],
+            "wrong_answer_risk": "low",
+            "retry_recommendation": {
+                "mode": "full_regeneration",
+                "failed_question_ids": ["q7"],
+                "missing_concepts": [],
+                "rationale": "Rewrite the whole quiz",
+            },
+        }
+        result = classify_quiz_retry_routing(qc_result, questions)
+        assert result.mode == "question_patch"
+        assert result.failed_question_ids == ["q7"]

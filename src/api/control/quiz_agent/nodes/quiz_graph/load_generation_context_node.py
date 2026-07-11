@@ -1,4 +1,16 @@
-"""Load study material and node context for quiz generation."""
+"""Load study material and node context for quiz generation.
+
+Graph nodes (generate/regenerate path)
+--------------------------------------
+- ``load_generation_context`` — first node on fresh runs; loads node, study
+  material, domain/topic_split, and ``artifact_run_id``.
+- ``load_existing_quiz_if_regenerate`` — only when ``mode=="regenerate"``;
+  populates ``existing_quiz_questions`` before ``quiz_generator``.
+
+Inputs: ``node_id``, ``mentor_id`` (required in state).
+Outputs: ``study_material_content``, ``node_title``, ``space_id``,
+``study_material_version_id``, optional ``domain`` / ``topic_split``.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +38,11 @@ from src.api.utils.space_node_utils.node_role_assert import (
 async def load_generation_context(
     state: QuizGraphState, config: RunnableConfig
 ) -> QuizGraphState:
+    """Load node metadata and linked study material for quiz generation.
+
+    Asserts mentor owns the node, resolves the quiz study-material version,
+    and assigns a new ``artifact_run_id`` when not already set (resume runs).
+    """
     session = graph_session(config)
 
     node = await _get_node_and_assert_space_access(
@@ -60,6 +77,12 @@ async def load_generation_context(
 async def load_existing_quiz_if_regenerate(
     state: QuizGraphState, config: RunnableConfig
 ) -> QuizGraphState:
+    """Load active questions from an existing draft quiz when ``mode=="regenerate"``.
+
+    No-op when mode is not regenerate. Sets ``existing_quiz_questions`` for the
+    generator prompt. Raises ``QuizNotFoundException`` if quiz is missing or
+    belongs to another node.
+    """
     if state.get("mode") != "regenerate":
         return state
 
