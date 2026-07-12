@@ -20,6 +20,8 @@ dependencies = [
     "reportlab>=4.2.0",
     "langsmith>=0.8.14",
     "google-cloud-storage>=2.19.0",
+    "procrastinate>=3.9.0,<4",
+    "psycopg[binary]>=3.3",
 ]
 
 [dependency-groups]
@@ -83,6 +85,7 @@ module = [
     "src.api.core.*",
     "src.api.data.*",
     "src.api.utils.*",
+    "src.api.batch.*",
 ]
 disable_error_code = [
     "arg-type",

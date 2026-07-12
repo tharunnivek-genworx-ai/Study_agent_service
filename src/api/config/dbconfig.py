@@ -29,11 +29,22 @@ class Settings(BaseSettings):
     gcs_bucket: str = ""
     gcs_prefix: str = "studyguru/tharun"
     gcs_signed_url_expiry_minutes: int = 60
+    batch_dispatch_mode: Literal["procrastinate", "inline"] = "inline"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def storage_backend(self) -> Literal["local", "gcs"]:
         return "gcs" if self.gcs_bucket.strip() else "local"
+
+
+def build_procrastinate_conninfo() -> str:
+    """Libpq connection string for the Procrastinate psycopg connector."""
+    from src.api.data.clients.postgres.database import build_database_url
+
+    conninfo = build_database_url(drivername="postgresql").render_as_string(
+        hide_password=False
+    )
+    return str(conninfo)
 
 
 settings = Settings()
