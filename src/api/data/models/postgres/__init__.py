@@ -18,8 +18,8 @@ from src.api.data.models.postgres.e_spaces_trees import (  # noqa: F401
     topic_nodes,
 )
 from src.api.data.models.postgres.generation import (  # noqa: F401
+    batch_jobs,
     generation_runs,
-    study_material_batches,
 )
 from src.api.data.models.postgres.identity_refs import (  # noqa: F401
     departments,
