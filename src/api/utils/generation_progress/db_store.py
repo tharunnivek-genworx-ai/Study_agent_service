@@ -25,9 +25,12 @@ from src.api.utils.generation_progress.store import (
 def _status_from_run(run_status: str) -> GenerationJobStatus:
     if run_status == GenerationRunStatus.COMPLETED.value:
         return GenerationJobStatus.COMPLETED
+    if run_status == GenerationRunStatus.PAUSED.value:
+        return GenerationJobStatus.PAUSED
     if run_status in (
         GenerationRunStatus.FAILED.value,
         GenerationRunStatus.CANCELLED.value,
+        GenerationRunStatus.ABANDONED.value,
         GenerationRunStatus.SUPERSEDED.value,
     ):
         return GenerationJobStatus.FAILED
@@ -87,7 +90,7 @@ class DbGenerationProgressStore:
 
     async def complete(self, run_id: UUID) -> None:
         run = await self._repo.get_by_id(run_id)
-        if run is None:
+        if run is None or run.status != GenerationRunStatus.RUNNING.value:
             return
         pipeline = GenerationPipeline(run.pipeline)
         profile = step_profile_from_request_params(

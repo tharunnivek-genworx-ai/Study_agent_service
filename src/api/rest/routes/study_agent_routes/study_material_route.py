@@ -67,7 +67,9 @@ async def generate_study_material(
         lambda session: StudyMaterialService(session).execute_generate_study_material(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
 
@@ -94,7 +96,9 @@ async def regenerate_study_material(
         lambda session: StudyMaterialService(session).execute_regenerate_study_material(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
 
@@ -121,7 +125,9 @@ async def improve_study_material(
         lambda session: StudyMaterialService(session).execute_improve_study_material(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="study_material")
 

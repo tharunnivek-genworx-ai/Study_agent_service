@@ -129,6 +129,31 @@ async def _execute_generation_run(*, run_id: UUID, mentor_id: UUID) -> None:
     await run_generation_job(job)
 
 
+@app.task(name="execute_generation_run", retry=0)
+async def execute_generation_run_job(
+    run_id: str,
+    mentor_id: str,
+    role: str = "mentor",
+    *,
+    is_resume: bool = False,
+) -> None:
+    """Durable worker entrypoint for single-node and resume generation runs."""
+    from src.api.utils.generation_progress.generation_run_dispatch import (
+        execute_scheduled_generation_run,
+    )
+
+    async def job(session: AsyncSession) -> None:
+        await execute_scheduled_generation_run(
+            session,
+            run_id=UUID(run_id),
+            mentor_id=UUID(mentor_id),
+            role=role,
+            is_resume=is_resume,
+        )
+
+    await run_generation_job(job)
+
+
 async def _reconcile_running_step(
     session: AsyncSession,
     *,

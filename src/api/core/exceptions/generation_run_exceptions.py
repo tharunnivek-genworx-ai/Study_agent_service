@@ -80,3 +80,42 @@ class GenerationRunNotCancellableException(HTTPException):
             status_code=status.HTTP_409_CONFLICT,
             detail=detail,
         )
+
+
+class GenerationRunNotPausableException(HTTPException):
+    """Raised when a generation run cannot be paused in its current status."""
+
+    def __init__(
+        self,
+        detail: str = "This generation run cannot be paused.",
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=detail,
+        )
+
+
+class GenerationRunNotAbandonableException(HTTPException):
+    """Raised when a generation run cannot be abandoned in its current status."""
+
+    def __init__(
+        self,
+        detail: str = "This generation run cannot be abandoned.",
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=detail,
+        )
+
+
+class GenerationRunInputsChangedException(HTTPException):
+    """Raised when resume is blocked because reference or settings changed."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Reference or generation settings changed since this run was paused. "
+                "Delete this run and start a new generation."
+            ),
+        )

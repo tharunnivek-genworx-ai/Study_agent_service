@@ -41,6 +41,7 @@ def _make_run(
         error_type="terminal_llm_failure",
         next_llm_retry_at=next_llm_retry_at,
         attempt_count=attempt_count,
+        request_params={},
         created_at=now,
         updated_at=now,
         completed_at=None,

@@ -19,11 +19,15 @@ from src.api.schemas.common import (
 __all__ = [
     "ACTIVE_RUN_STATUSES",
     "GenerationJobStartResponse",
+    "GenerationRunAbandonResponse",
+    "GenerationRunActionsOut",
     "GenerationRunActiveOut",
     "GenerationRunCancelResponse",
     "GenerationRunCreate",
     "GenerationRunMode",
     "GenerationRunOut",
+    "GenerationRunPauseContextOut",
+    "GenerationRunPauseResponse",
     "GenerationRunPipeline",
     "GenerationRunResourceType",
     "GenerationRunResultOut",
@@ -41,9 +45,15 @@ class GenerationRunResourceType(StrEnum):
 
 
 ACTIVE_RUN_STATUSES = frozenset(
-    {GenerationRunStatus.RUNNING, GenerationRunStatus.FAILED}
+    {
+        GenerationRunStatus.RUNNING,
+        GenerationRunStatus.PAUSED,
+        GenerationRunStatus.FAILED,
+    }
 )
-RESUMABLE_RUN_STATUSES = frozenset({GenerationRunStatus.FAILED})
+RESUMABLE_RUN_STATUSES = frozenset(
+    {GenerationRunStatus.PAUSED, GenerationRunStatus.FAILED}
+)
 MAX_RESUME_ATTEMPTS = 5
 
 
@@ -58,6 +68,19 @@ class GenerationRunCreate(BaseModel):
     request_params: dict[str, Any] = Field(default_factory=dict)
     artifact_run_id: str | None = None
     run_id: UUID | None = None
+
+
+class GenerationRunPauseContextOut(BaseModel):
+    headline: str
+    interrupted_step_label: str | None = None
+    last_completed_node: str | None = None
+
+
+class GenerationRunActionsOut(BaseModel):
+    can_pause: bool = False
+    can_resume: bool = False
+    can_abandon: bool = False
+    pause_context: GenerationRunPauseContextOut | None = None
 
 
 class GenerationRunOut(BaseModel):
@@ -80,24 +103,51 @@ class GenerationRunOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
+    paused_at: datetime | None = None
+    abandoned_at: datetime | None = None
+    pause_reason: str | None = None
+    abandon_reason: str | None = None
     resumable: bool = False
     seconds_until_retry: int | None = None
+    fingerprint_mismatch: bool = False
+    actions: GenerationRunActionsOut | None = None
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_run(cls, run: Any) -> GenerationRunOut:
+    def from_orm_run(
+        cls,
+        run: Any,
+        *,
+        actions: GenerationRunActionsOut | None = None,
+        fingerprint_mismatch: bool = False,
+    ) -> GenerationRunOut:
+        from src.api.utils.generation_progress.request_fingerprint import (
+            fingerprints_match,
+        )
+
         now = datetime.now(UTC)
         cooldown_active = (
             run.next_llm_retry_at is not None and now < run.next_llm_retry_at
         )
+        is_paused = run.status == GenerationRunStatus.PAUSED.value
+        is_failed = run.status == GenerationRunStatus.FAILED.value
+        inputs_match = fingerprints_match(
+            getattr(run, "request_fingerprint", None),
+            pipeline=run.pipeline,
+            node_id=run.node_id,
+            generation_mode=run.generation_mode,
+            request_params=getattr(run, "request_params", None),
+        )
         resumable = (
-            run.status == GenerationRunStatus.FAILED.value
+            run.status in {s.value for s in RESUMABLE_RUN_STATUSES}
             and run.attempt_count < MAX_RESUME_ATTEMPTS
-            and not cooldown_active
+            and (is_paused or not cooldown_active)
+            and inputs_match
+            and not fingerprint_mismatch
         )
         seconds_until_retry: int | None = None
-        if cooldown_active and run.next_llm_retry_at is not None:
+        if is_failed and cooldown_active and run.next_llm_retry_at is not None:
             seconds_until_retry = max(
                 0, int((run.next_llm_retry_at - now).total_seconds())
             )
@@ -121,8 +171,14 @@ class GenerationRunOut(BaseModel):
             created_at=run.created_at,
             updated_at=run.updated_at,
             completed_at=run.completed_at,
+            paused_at=getattr(run, "paused_at", None),
+            abandoned_at=getattr(run, "abandoned_at", None),
+            pause_reason=getattr(run, "pause_reason", None),
+            abandon_reason=getattr(run, "abandon_reason", None),
             resumable=resumable,
             seconds_until_retry=seconds_until_retry,
+            fingerprint_mismatch=not inputs_match or fingerprint_mismatch,
+            actions=actions,
         )
 
 
@@ -139,11 +195,25 @@ class GenerationRunResumeResponse(BaseModel):
     status: str = GenerationRunStatus.RUNNING.value
 
 
+class GenerationRunPauseResponse(BaseModel):
+    """Response after pausing a generation run."""
+
+    run_id: UUID
+    status: str = GenerationRunStatus.PAUSED.value
+
+
+class GenerationRunAbandonResponse(BaseModel):
+    """Response after abandoning a generation run."""
+
+    run_id: UUID
+    status: str = GenerationRunStatus.ABANDONED.value
+
+
 class GenerationRunCancelResponse(BaseModel):
     """Response after cancelling a generation run."""
 
     run_id: UUID
-    status: str = GenerationRunStatus.CANCELLED.value
+    status: str = GenerationRunStatus.ABANDONED.value
 
 
 class GenerationRunResumeResult(BaseModel):
@@ -154,6 +224,7 @@ class GenerationRunResumeResult(BaseModel):
     request_params: dict[str, Any]
     last_completed_node: str | None = None
     artifact_run_id: str | None = None
+    execution_token: UUID | None = None
 
 
 class GenerationJobStartResponse(BaseModel):

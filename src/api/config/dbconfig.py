@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     gcs_prefix: str = "studyguru/tharun"
     gcs_signed_url_expiry_minutes: int = 60
     batch_dispatch_mode: Literal["procrastinate", "inline"] = "inline"
+    generation_stale_threshold_minutes: int = 20
 
     @computed_field  # type: ignore[prop-decorator]
     @property

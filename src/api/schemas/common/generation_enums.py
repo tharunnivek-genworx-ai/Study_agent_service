@@ -18,6 +18,7 @@ class GenerationJobStatus(StrEnum):
     """Ephemeral progress-store job status (polling UI)."""
 
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -35,6 +36,8 @@ class GenerationRunStatus(StrEnum):
     COMPLETED = "completed"
     SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
+    PAUSED = "paused"
+    ABANDONED = "abandoned"
 
 
 class GenerationRunMode(StrEnum):

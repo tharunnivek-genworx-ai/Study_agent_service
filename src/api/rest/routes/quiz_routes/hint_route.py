@@ -48,7 +48,9 @@ async def generate_hints(
         lambda session: HintService(session).execute_generate_hints(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="hint")
 
@@ -76,7 +78,9 @@ async def regenerate_hints(
         lambda session: HintService(session).execute_regenerate_hints(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="hint")
 

@@ -6,24 +6,30 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.config.dbconfig import settings
 from src.api.core.exceptions import (
     GenerationPipelineResumeNotImplementedException,
     GenerationResumeTooEarlyException,
     GenerationRunConflictException,
-    GenerationRunNotCancellableException,
+    GenerationRunInputsChangedException,
+    GenerationRunNotAbandonableException,
     GenerationRunNotFoundException,
+    GenerationRunNotPausableException,
     GenerationRunNotResumableException,
 )
 from src.api.data.repositories import GenerationRunRepository
 from src.api.schemas import (
     MAX_RESUME_ATTEMPTS,
+    RESUMABLE_RUN_STATUSES,
+    GenerationRunActionsOut,
     GenerationRunActiveOut,
     GenerationRunCreate,
     GenerationRunOut,
+    GenerationRunPauseContextOut,
     GenerationRunPipeline,
     GenerationRunResourceType,
     GenerationRunResultOut,
@@ -38,8 +44,13 @@ from src.api.utils.generation_progress.advisory_lock import (
     try_acquire_generation_lock,
 )
 from src.api.utils.generation_progress.db_store import DbGenerationProgressStore
+from src.api.utils.generation_progress.request_fingerprint import (
+    compute_request_fingerprint,
+    fingerprints_match,
+)
 from src.api.utils.generation_progress.store import (
     node_to_step_for_profile,
+    step_defs_for_profile,
     step_profile_from_request_params,
 )
 
@@ -49,6 +60,14 @@ logger = logging.getLogger(__name__)
 # lock; brief backoff avoids failing the run on a transient advisory-lock race.
 _LOCK_ACQUIRE_MAX_ATTEMPTS = 25
 _LOCK_ACQUIRE_BASE_DELAY_SECONDS = 0.08
+
+_ABANDONABLE_STATUSES = frozenset(
+    {
+        GenerationRunStatus.RUNNING.value,
+        GenerationRunStatus.PAUSED.value,
+        GenerationRunStatus.FAILED.value,
+    }
+)
 
 
 class GenerationRunService:
@@ -76,16 +95,23 @@ class GenerationRunService:
         if active is not None and active.status == GenerationRunStatus.RUNNING.value:
             raise GenerationRunConflictException(str(active.run_id))
 
+        execution_token = uuid4()
+        request_fingerprint = compute_request_fingerprint(payload)
+
         await require_generation_lock(
             self.session,
             pipeline=payload.pipeline.value,
             resource_id=payload.resource_id,
         )
         try:
-            run = await self.repo.create(payload)
+            run = await self.repo.create(
+                payload,
+                execution_token=execution_token,
+                request_fingerprint=request_fingerprint,
+            )
             await self.progress.start(run.run_id, payload.pipeline)
             await self.session.commit()
-            return GenerationRunOut.from_orm_run(run)
+            return self._run_out(run)
         finally:
             # Release before the HTTP handler returns 202. The background job
             # re-acquires on its own DB session for the graph duration.
@@ -98,6 +124,35 @@ class GenerationRunService:
     async def is_run_active(self, run_id: UUID) -> bool:
         run = await self.repo.get_by_id(run_id)
         return run is not None and run.status == GenerationRunStatus.RUNNING.value
+
+    async def should_continue_execution(
+        self,
+        run_id: UUID,
+        job_token: UUID,
+    ) -> bool:
+        """Token-aware check for background jobs (LlamaParse poll loops, graph)."""
+        run = await self.repo.get_by_id(run_id)
+        if run is None:
+            return False
+        if run.status != GenerationRunStatus.RUNNING.value:
+            return False
+        if run.execution_token is None:
+            return False
+        return bool(run.execution_token == job_token)
+
+    async def store_llamaparse_job_ids(
+        self,
+        run_id: UUID,
+        *,
+        extract_id: str | None = None,
+        parse_id: str | None = None,
+    ) -> None:
+        """Persist LlamaCloud job IDs on the run row for audit (no remote delete)."""
+        await self.repo.store_llamaparse_job_ids(
+            run_id,
+            extract_id=extract_id,
+            parse_id=parse_id,
+        )
 
     async def acquire_lock_for_run(self, run_id: UUID) -> Any | None:
         """Acquire the advisory lock for an existing run (background job entry)."""
@@ -208,9 +263,15 @@ class GenerationRunService:
                 resource_id=run.resource_id,
             )
 
+    def _run_out(self, run: Any) -> GenerationRunOut:
+        return GenerationRunOut.from_orm_run(
+            run,
+            actions=self.build_run_actions(run),
+        )
+
     async def get_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
         run = await self._get_run_for_mentor(run_id, mentor_id)
-        return GenerationRunOut.from_orm_run(run)
+        return self._run_out(run)
 
     async def get_active_run_for_resource(
         self,
@@ -226,7 +287,7 @@ class GenerationRunService:
         if run is None or run.mentor_id != mentor_id:
             return None
         params: dict[str, Any] = run.request_params or {}
-        run_out = GenerationRunOut.from_orm_run(run)
+        run_out = self._run_out(run)
         if run.status == GenerationRunStatus.RUNNING.value:
             return GenerationRunActiveOut(
                 run_id=run.run_id,
@@ -237,7 +298,10 @@ class GenerationRunService:
                 resumable=False,
                 seconds_until_retry=None,
             )
-        if run.status == GenerationRunStatus.FAILED.value and run_out.resumable:
+        if (
+            run.status in {s.value for s in RESUMABLE_RUN_STATUSES}
+            and run_out.resumable
+        ):
             return GenerationRunActiveOut(
                 run_id=run.run_id,
                 pipeline=run.pipeline,
@@ -286,20 +350,70 @@ class GenerationRunService:
             raise GenerationRunNotFoundException()
         return run
 
+    def build_run_actions(self, run: Any) -> GenerationRunActionsOut:
+        run_out = GenerationRunOut.from_orm_run(run)
+        status = run.status
+        can_pause = status == GenerationRunStatus.RUNNING.value
+        can_resume = run_out.resumable
+        can_abandon = status in _ABANDONABLE_STATUSES
+
+        pause_context: GenerationRunPauseContextOut | None = None
+        if status == GenerationRunStatus.PAUSED.value:
+            pause_context = self._build_pause_context(run)
+
+        return GenerationRunActionsOut(
+            can_pause=can_pause,
+            can_resume=can_resume,
+            can_abandon=can_abandon,
+            pause_context=pause_context,
+        )
+
+    @staticmethod
+    def _build_pause_context(run: Any) -> GenerationRunPauseContextOut:
+        params = run.request_params or {}
+        pipeline = GenerationPipeline(run.pipeline)
+        profile = step_profile_from_request_params(params, pipeline=pipeline)
+        step_index = int(run.progress_step_index or 0)
+        step_defs = step_defs_for_profile(profile)
+        interrupted_label: str | None = None
+        if 0 <= step_index < len(step_defs):
+            interrupted_label = step_defs[step_index].label
+
+        return GenerationRunPauseContextOut(
+            headline="Generation paused",
+            interrupted_step_label=interrupted_label,
+            last_completed_node=run.last_completed_node,
+        )
+
+    def _validate_fingerprint(self, run: Any) -> None:
+        if not fingerprints_match(
+            getattr(run, "request_fingerprint", None),
+            pipeline=run.pipeline,
+            node_id=run.node_id,
+            generation_mode=run.generation_mode,
+            request_params=run.request_params,
+        ):
+            raise GenerationRunInputsChangedException()
+
     def _validate_resumable(self, run: Any, *, run_id: UUID) -> None:
-        if run.status != GenerationRunStatus.FAILED.value:
+        if run.status not in {s.value for s in RESUMABLE_RUN_STATUSES}:
             raise GenerationRunNotResumableException(
-                "Only failed generation runs can be resumed."
+                "Only paused or failed generation runs can be resumed."
             )
+
+        self._validate_fingerprint(run)
 
         if run.attempt_count >= MAX_RESUME_ATTEMPTS:
             raise GenerationRunNotResumableException(
                 "Maximum resume attempts reached for this generation run."
             )
 
-        now = datetime.now(UTC)
-        if run.next_llm_retry_at is not None and now < run.next_llm_retry_at:
-            raise GenerationResumeTooEarlyException(retry_after=run.next_llm_retry_at)
+        if run.status == GenerationRunStatus.FAILED.value:
+            now = datetime.now(UTC)
+            if run.next_llm_retry_at is not None and now < run.next_llm_retry_at:
+                raise GenerationResumeTooEarlyException(
+                    retry_after=run.next_llm_retry_at
+                )
 
     async def _assert_no_resume_conflict(self, run: Any, *, run_id: UUID) -> None:
         active = await self.repo.get_active_run(
@@ -329,6 +443,8 @@ class GenerationRunService:
             resource_id=run.resource_id,
         )
 
+        execution_token = uuid4()
+
         # Snapshot ORM attrs before writes that may commit — callers resume from
         # these values rather than re-reading the run row after mark_running.
         checkpoint = run.checkpoint_state or {}
@@ -340,7 +456,7 @@ class GenerationRunService:
 
         try:
             await self.repo.increment_attempt_count(run_id)
-            await self.repo.mark_running(run_id)
+            await self.repo.mark_running(run_id, execution_token=execution_token)
 
             return GenerationRunResumeResult(
                 run_id=run_id,
@@ -350,6 +466,7 @@ class GenerationRunService:
                 request_params=request_params,
                 last_completed_node=last_completed_node,
                 artifact_run_id=artifact_run_id,
+                execution_token=execution_token,
             )
         finally:
             await release_generation_lock(
@@ -364,7 +481,7 @@ class GenerationRunService:
         *,
         mentor_id: UUID,
     ) -> GenerationRunResumeResult:
-        """Validate and mark a failed run as running; returns resume payload."""
+        """Validate and mark a paused or failed run as running; returns resume payload."""
         run = await self._get_run_for_mentor(run_id, mentor_id)
         self._validate_resumable(run, run_id=run_id)
 
@@ -407,6 +524,112 @@ class GenerationRunService:
             status=GenerationRunStatus.RUNNING.value,
         )
 
+    async def pause_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
+        """Cooperatively pause a running generation run (idempotent)."""
+        run = await self._get_run_for_mentor(run_id, mentor_id)
+        if run.status == GenerationRunStatus.PAUSED.value:
+            return self._run_out(run)
+        if run.status != GenerationRunStatus.RUNNING.value:
+            raise GenerationRunNotPausableException(
+                f"Generation run cannot be paused while status is '{run.status}'."
+            )
+
+        paused = await self.repo.pause_run(run_id, reason="user")
+        if not paused:
+            updated = await self.repo.get_by_id(run_id)
+            if (
+                updated is not None
+                and updated.status == GenerationRunStatus.PAUSED.value
+            ):
+                return self._run_out(updated)
+            raise GenerationRunNotPausableException()
+
+        updated = await self.repo.get_by_id(run_id)
+        if updated is None:
+            raise GenerationRunNotFoundException()
+        return self._run_out(updated)
+
+    async def abandon_run(
+        self,
+        run_id: UUID,
+        *,
+        mentor_id: UUID,
+        reason: str = "user",
+    ) -> GenerationRunOut:
+        """Terminal abandon — row retained for audit (idempotent)."""
+        run = await self._get_run_for_mentor(run_id, mentor_id)
+        if run.status == GenerationRunStatus.ABANDONED.value:
+            return self._run_out(run)
+        if run.status not in _ABANDONABLE_STATUSES:
+            raise GenerationRunNotAbandonableException(
+                f"Generation run cannot be abandoned while status is '{run.status}'."
+            )
+
+        if run.pipeline == GenerationRunPipeline.STUDY_MATERIAL.value:
+            from src.api.core.services.study_agent_services.study_material_service import (  # noqa: PLC0415
+                StudyMaterialService,
+            )
+
+            await StudyMaterialService(
+                self.session
+            ).discard_artifacts_for_generation_run(
+                run_id,
+                user_id=mentor_id,
+            )
+
+        abandoned = await self.repo.abandon_run(run_id, reason=reason)
+        if not abandoned:
+            updated = await self.repo.get_by_id(run_id)
+            if (
+                updated is not None
+                and updated.status == GenerationRunStatus.ABANDONED.value
+            ):
+                return self._run_out(updated)
+            raise GenerationRunNotAbandonableException()
+
+        await release_generation_lock(
+            self.session,
+            pipeline=run.pipeline,
+            resource_id=run.resource_id,
+        )
+
+        updated = await self.repo.get_by_id(run_id)
+        if updated is None:
+            raise GenerationRunNotFoundException()
+        return self._run_out(updated)
+
+    async def recover_stale_runs(
+        self,
+        threshold_minutes: int | None = None,
+    ) -> int:
+        """Mark stale running runs as failed with resumable stale_worker error."""
+        minutes = threshold_minutes or settings.generation_stale_threshold_minutes
+        threshold = GenerationRunRepository.stale_threshold(minutes)
+        stale_runs = await self.repo.find_stale_running_runs(threshold)
+        recovered = 0
+        for run in stale_runs:
+            marked = await self.repo.mark_stale_failed(run.run_id)
+            if marked:
+                recovered += 1
+                stale_minutes = int(
+                    (datetime.now(UTC) - run.updated_at).total_seconds() // 60
+                )
+                logger.warning(
+                    "generation.run.stale_recovered",
+                    extra={
+                        "run_id": str(run.run_id),
+                        "stale_minutes": stale_minutes,
+                        "pipeline": run.pipeline,
+                        "resource_id": str(run.resource_id),
+                    },
+                )
+                await release_generation_lock(
+                    self.session,
+                    pipeline=run.pipeline,
+                    resource_id=run.resource_id,
+                )
+        return recovered
+
     @staticmethod
     def resource_for_study_material(
         node_id: UUID,
@@ -433,30 +656,12 @@ class GenerationRunService:
         return GenerationRunResourceType.QUIZ, quiz_id
 
     async def cancel_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
-        """Cancel a running or failed generation run."""
-        run = await self._get_run_for_mentor(run_id, mentor_id)
-        if run.status not in (
-            GenerationRunStatus.RUNNING.value,
-            GenerationRunStatus.FAILED.value,
-        ):
-            raise GenerationRunNotCancellableException(
-                f"Generation run cannot be cancelled while status is '{run.status}'."
-            )
-
-        cancelled = await self.repo.cancel_run(run_id)
-        if not cancelled:
-            raise GenerationRunNotCancellableException()
-
-        await release_generation_lock(
-            self.session,
-            pipeline=run.pipeline,
-            resource_id=run.resource_id,
+        """Deprecated alias for abandon_run."""
+        logger.warning(
+            "POST /generation-runs/{id}/cancel is deprecated; use /abandon instead.",
+            extra={"run_id": str(run_id)},
         )
-
-        updated = await self.repo.get_by_id(run_id)
-        if updated is None:
-            raise GenerationRunNotFoundException()
-        return GenerationRunOut.from_orm_run(updated)
+        return await self.abandon_run(run_id, mentor_id=mentor_id, reason="user")
 
 
 PipelineResumeHandler = Any

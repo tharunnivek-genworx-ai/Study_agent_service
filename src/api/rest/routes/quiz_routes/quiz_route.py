@@ -82,7 +82,9 @@ async def generate_quiz(
         lambda session: QuizService(session).execute_generate_quiz(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="quiz")
 
@@ -264,7 +266,9 @@ async def regenerate_quiz_questions(
         lambda session: QuizService(session).execute_regenerate_questions(
             run_id=run_id,
             user_id=user_id,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=user_id,
     )
     return GenerationJobStartResponse(run_id=run_id, pipeline="quiz")
 

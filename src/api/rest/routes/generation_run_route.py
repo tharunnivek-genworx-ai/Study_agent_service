@@ -70,6 +70,38 @@ async def get_generation_run_result(
 
 
 @router.post(
+    "/generation-runs/{run_id}/pause",
+    response_model=GenerationRunOut,
+)
+async def pause_generation_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> GenerationRunOut:
+    """Cooperatively pause a running generation run (checkpoint preserved)."""
+    service = GenerationRunService(db)
+    result = await service.pause_run(run_id, mentor_id=current_user.sub)
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/generation-runs/{run_id}/abandon",
+    response_model=GenerationRunOut,
+)
+async def abandon_generation_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> GenerationRunOut:
+    """Abandon a generation run (terminal; row retained for audit)."""
+    service = GenerationRunService(db)
+    result = await service.abandon_run(run_id, mentor_id=current_user.sub)
+    await db.commit()
+    return result
+
+
+@router.post(
     "/generation-runs/{run_id}/resume",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=GenerationRunResumeResponse,
@@ -79,7 +111,7 @@ async def resume_generation_run(
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> GenerationRunResumeResponse:
-    """Resume a failed generation run from its last checkpoint (async)."""
+    """Resume a paused or failed generation run from its last checkpoint (async)."""
     service = GenerationRunService(db)
     resume_result = await service.begin_resume(run_id, mentor_id=current_user.sub)
     await db.commit()
@@ -90,7 +122,11 @@ async def resume_generation_run(
             resume_result,
             mentor_id=mentor_id,
             role=role,
-        )
+        ),
+        run_id=run_id,
+        mentor_id=mentor_id,
+        role=role,
+        is_resume=True,
     )
     return GenerationRunResumeResponse(
         run_id=run_id,
@@ -103,12 +139,15 @@ async def resume_generation_run(
 @router.post(
     "/generation-runs/{run_id}/cancel",
     response_model=GenerationRunOut,
+    deprecated=True,
 )
 async def cancel_generation_run(
     run_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> GenerationRunOut:
-    """Cancel an in-flight generation run."""
+    """Deprecated: abandons the generation run. Prefer POST /abandon."""
     service = GenerationRunService(db)
-    return await service.cancel_run(run_id, mentor_id=current_user.sub)
+    result = await service.cancel_run(run_id, mentor_id=current_user.sub)
+    await db.commit()
+    return result

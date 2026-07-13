@@ -64,12 +64,20 @@ async def invoke_graph_with_progress(
     run_service = GenerationRunService(session)
     db_progress = DbGenerationProgressStore(session)
 
+    run_row = await run_service.repo.get_by_id(run_id)
+    job_token = run_row.execution_token if run_row is not None else None
+
+    async def _should_continue() -> bool:
+        if job_token is not None:
+            return await run_service.should_continue_execution(run_id, job_token)
+        return await run_service.is_run_active(run_id)
+
     running_state: dict[str, Any] = dict(initial_state)
     final_state: dict[str, Any] | None = None
 
     try:
         async for chunk in graph.astream(initial_state, config, stream_mode="updates"):
-            if not await run_service.is_run_active(run_id):
+            if not await _should_continue():
                 raise GenerationRunAborted()
 
             for node_name, node_update in chunk.items():

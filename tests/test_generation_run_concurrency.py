@@ -149,7 +149,7 @@ def test_start_run_supersedes_failed_before_create() -> None:
     asyncio.run(_run())
 
 
-def test_cancel_run_marks_running_as_cancelled() -> None:
+def test_cancel_run_marks_running_as_abandoned() -> None:
     async def _run() -> None:
         mentor_id = uuid4()
         run_id = uuid4()
@@ -158,20 +158,30 @@ def test_cancel_run_marks_running_as_cancelled() -> None:
         run.mentor_id = mentor_id
         run.status = GenerationRunStatus.RUNNING.value
 
-        cancelled = SimpleNamespace(**vars(run))
-        cancelled.status = GenerationRunStatus.CANCELLED.value
+        abandoned = SimpleNamespace(**vars(run))
+        abandoned.status = GenerationRunStatus.ABANDONED.value
 
         session = MagicMock()
         session.execute = AsyncMock()
         service = GenerationRunService(session)
         service.repo = MagicMock()
-        service.repo.get_by_id = AsyncMock(side_effect=[run, cancelled])
-        service.repo.cancel_run = AsyncMock(return_value=True)
+        service.repo.get_by_id = AsyncMock(side_effect=[run, abandoned])
+        service.repo.abandon_run = AsyncMock(return_value=True)
 
-        result = await service.cancel_run(run_id, mentor_id=mentor_id)
+        with (
+            patch(
+                "src.api.core.services.generation_run_service.release_generation_lock",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.api.core.services.study_agent_services.study_material_service.StudyMaterialService.discard_artifacts_for_generation_run",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await service.cancel_run(run_id, mentor_id=mentor_id)
 
-        assert result.status == GenerationRunStatus.CANCELLED.value
-        service.repo.cancel_run.assert_awaited_once_with(run_id)
+        assert result.status == GenerationRunStatus.ABANDONED.value
+        service.repo.abandon_run.assert_awaited_once_with(run_id, reason="user")
 
     asyncio.run(_run())
 
