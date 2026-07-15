@@ -55,8 +55,15 @@ if "procrastinate" not in sys.modules:
                         return await fn(*args, **kwargs)
 
                     wrapper.defer_async = lambda **kwargs: None
+                    wrapper.configure = lambda **kwargs: wrapper
                     wrapper.__name__ = fn.__name__
                     return wrapper
+
+                return decorator
+
+            def periodic(self, *, cron: str, periodic_id: str = ""):
+                def decorator(task):
+                    return task
 
                 return decorator
 

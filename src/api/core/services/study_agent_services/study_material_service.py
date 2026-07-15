@@ -13,6 +13,7 @@ the node — publishing or superseding study material does not auto-publish,
 unpublish, or retire quizzes.
 """
 
+import logging
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -167,6 +168,8 @@ from src.api.utils.study_agent_utils.version.version_actions import (
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _request_param_uuid(value: UUID | None) -> str | None:
@@ -522,12 +525,28 @@ class StudyMaterialService:
             error_message = str(graph_result.get("error") or error_message)
             if graph_result.get("terminal_llm_failure"):
                 error_type = str(graph_result.get("llm_error_type") or error_type)
-        await GenerationRunService(self.session).fail_run(
-            run_id,
-            error_message=error_message,
-            error_type=error_type,
-            next_llm_retry_at=next_retry,
-        )
+        try:
+            await GenerationRunService(self.session).fail_run(
+                run_id,
+                error_message=error_message,
+                error_type=error_type,
+                next_llm_retry_at=next_retry,
+            )
+        except Exception:
+            # The original failure may have poisoned the session (e.g. a flush
+            # error during finalize). Roll back to a clean state and retry once
+            # so the run is recorded as FAILED instead of stranded in RUNNING.
+            logger.exception(
+                "fail_run failed; rolling back poisoned session and retrying",
+                extra={"run_id": str(run_id)},
+            )
+            await self.session.rollback()
+            await GenerationRunService(self.session).fail_run(
+                run_id,
+                error_message=error_message,
+                error_type=error_type,
+                next_llm_retry_at=next_retry,
+            )
 
     async def _persist_run_result(
         self,
@@ -673,6 +692,16 @@ class StudyMaterialService:
         initial_state["generation_mode"] = generation_mode
 
         try:
+            # Idempotency guard (mirrors the execute_* fresh paths). A previous job for
+            # this run may have already persisted a draft before a worker interruption.
+            # Settle from that draft instead of re-running the graph, inserting a
+            # duplicate version, and burning extra LLM calls.
+            if await self._settle_run_if_output_already_persisted(
+                run_id=run_id,
+                node_id=node_id,
+                generation_mode=generation_mode,
+            ):
+                return None
             graph_result = await run_study_material_from_checkpoint(
                 session=self.session,
                 initial_state=initial_state,
@@ -912,6 +941,8 @@ class StudyMaterialService:
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
+        node_title = node.title
+        space_id = node.space_id
         try:
             if await self._settle_run_if_output_already_persisted(
                 run_id=run_id,
@@ -928,11 +959,11 @@ class StudyMaterialService:
                 request_params=params,
                 generation_mode="generate",
             )
-            graph_result["node_title"] = node.title
+            graph_result["node_title"] = node_title
             await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=space_id,
                 graph_result=graph_result,
                 generation_mode="generate",
                 user_id=user_id,
@@ -1007,6 +1038,8 @@ class StudyMaterialService:
         reference_material_id = active.reference_material_id
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
         mentor_goal = str(params.get("mentor_regeneration_goal") or "")
+        node_title = node.title
+        space_id = node.space_id
         try:
             if await self._settle_run_if_output_already_persisted(
                 run_id=run_id,
@@ -1026,11 +1059,11 @@ class StudyMaterialService:
                 run_id=run_id,
                 execution_token=run.execution_token,
             )
-            graph_result["node_title"] = node.title
+            graph_result["node_title"] = node_title
             await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=space_id,
                 graph_result=graph_result,
                 generation_mode="regenerate",
                 user_id=user_id,
@@ -1105,6 +1138,8 @@ class StudyMaterialService:
         reference_material_id = active.reference_material_id
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
         mentor_feedback = str(params.get("mentor_feedback") or "")
+        node_title = node.title
+        space_id = node.space_id
         try:
             if await self._settle_run_if_output_already_persisted(
                 run_id=run_id,
@@ -1124,11 +1159,11 @@ class StudyMaterialService:
                 run_id=run_id,
                 execution_token=run.execution_token,
             )
-            graph_result["node_title"] = node.title
+            graph_result["node_title"] = node_title
             await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=space_id,
                 graph_result=graph_result,
                 generation_mode="improve",
                 user_id=user_id,

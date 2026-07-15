@@ -129,6 +129,7 @@ async def prepare_session_for_generation(session: AsyncSession) -> None:
 
 _LOCK_REQUIRE_MAX_ATTEMPTS = 12
 _LOCK_REQUIRE_BASE_DELAY_SECONDS = 0.08
+_COORDINATOR_LOCK_PREFIX = "coordinator"
 
 
 async def require_generation_lock(
@@ -141,6 +142,32 @@ async def require_generation_lock(
     for attempt in range(_LOCK_REQUIRE_MAX_ATTEMPTS):
         if await try_acquire_generation_lock(
             session, pipeline=pipeline, resource_id=resource_id
+        ):
+            return
+        if attempt < _LOCK_REQUIRE_MAX_ATTEMPTS - 1:
+            await asyncio.sleep(_LOCK_REQUIRE_BASE_DELAY_SECONDS * (attempt + 1))
+    raise GenerationAdvisoryLockUnavailableException()
+
+
+async def require_generation_coordinator_lock(
+    session: AsyncSession,
+    *,
+    pipeline: str,
+    resource_id: UUID,
+) -> None:
+    """Serialize short start/resume decisions without waiting on a worker lock.
+
+    The execution lock is intentionally session-scoped and remains owned by an
+    old worker while it cooperatively stops after pause/abandon. API requests
+    use this separate transaction-scoped namespace so a replacement run can be
+    recorded immediately; its worker still waits for exclusive execution.
+    """
+    coordinator_pipeline = f"{_COORDINATOR_LOCK_PREFIX}:{pipeline}"
+    for attempt in range(_LOCK_REQUIRE_MAX_ATTEMPTS):
+        if await try_acquire_generation_xact_lock(
+            session,
+            pipeline=coordinator_pipeline,
+            resource_id=resource_id,
         ):
             return
         if attempt < _LOCK_REQUIRE_MAX_ATTEMPTS - 1:

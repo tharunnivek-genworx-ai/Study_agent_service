@@ -21,6 +21,16 @@ from src.api.schemas.generation_run_schema import (
 )
 
 
+def test_coordinator_and_worker_locks_use_separate_namespaces() -> None:
+    from src.api.utils.generation_progress.advisory_lock import _lock_keys
+
+    resource_id = uuid4()
+    assert _lock_keys("study_material", resource_id) != _lock_keys(
+        "coordinator:study_material",
+        resource_id,
+    )
+
+
 def _make_running_run(
     *, resource_id=None, pipeline="study_material"
 ) -> SimpleNamespace:
@@ -73,11 +83,41 @@ def test_start_run_raises_409_when_running_exists() -> None:
             generation_mode=GenerationRunMode.GENERATE,
         )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await service.start_run(payload)
+        with patch(
+            "src.api.core.services.generation_run_service.require_generation_coordinator_lock",
+            new_callable=AsyncMock,
+        ) as coordinator_lock:
+            with pytest.raises(HTTPException) as exc_info:
+                await service.start_run(payload)
 
         assert exc_info.value.status_code == 409
         service.repo.create.assert_not_called()
+        coordinator_lock.assert_awaited_once_with(
+            session,
+            pipeline=GenerationRunPipeline.STUDY_MATERIAL.value,
+            resource_id=resource_id,
+        )
+
+    asyncio.run(_run())
+
+
+def test_should_continue_requires_current_running_execution_token() -> None:
+    async def _run() -> None:
+        service = GenerationRunService(MagicMock())
+        service.repo = MagicMock()
+        run_id = uuid4()
+        current_token = uuid4()
+
+        service.repo.get_live_status_and_token = AsyncMock(
+            return_value=(GenerationRunStatus.RUNNING.value, current_token)
+        )
+        assert await service.should_continue_execution(run_id, current_token) is True
+        assert await service.should_continue_execution(run_id, uuid4()) is False
+
+        service.repo.get_live_status_and_token = AsyncMock(
+            return_value=(GenerationRunStatus.PAUSED.value, current_token)
+        )
+        assert await service.should_continue_execution(run_id, current_token) is False
 
     asyncio.run(_run())
 
@@ -126,19 +166,17 @@ def test_start_run_supersedes_failed_before_create() -> None:
             generation_mode=GenerationRunMode.GENERATE,
         )
 
-        with (
-            patch(
-                "src.api.core.services.generation_run_service.require_generation_lock",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "src.api.core.services.generation_run_service.release_generation_lock",
-                new_callable=AsyncMock,
-            ) as release_lock,
-        ):
+        with patch(
+            "src.api.core.services.generation_run_service.require_generation_coordinator_lock",
+            new_callable=AsyncMock,
+        ) as coordinator_lock:
             await service.start_run(payload)
 
-        release_lock.assert_awaited_once()
+        coordinator_lock.assert_awaited_once_with(
+            session,
+            pipeline=GenerationRunPipeline.STUDY_MATERIAL.value,
+            resource_id=resource_id,
+        )
 
         service.repo.supersede_stale_runs.assert_awaited_once_with(
             resource_id=resource_id,
@@ -149,7 +187,7 @@ def test_start_run_supersedes_failed_before_create() -> None:
     asyncio.run(_run())
 
 
-def test_cancel_run_marks_running_as_abandoned() -> None:
+def test_abandon_run_marks_running_as_abandoned() -> None:
     async def _run() -> None:
         mentor_id = uuid4()
         run_id = uuid4()
@@ -178,7 +216,7 @@ def test_cancel_run_marks_running_as_abandoned() -> None:
                 new_callable=AsyncMock,
             ),
         ):
-            result = await service.cancel_run(run_id, mentor_id=mentor_id)
+            result = await service.abandon_run(run_id, mentor_id=mentor_id)
 
         assert result.status == GenerationRunStatus.ABANDONED.value
         service.repo.abandon_run.assert_awaited_once_with(run_id, reason="user")
@@ -186,7 +224,7 @@ def test_cancel_run_marks_running_as_abandoned() -> None:
     asyncio.run(_run())
 
 
-def test_cancel_run_rejects_completed_status() -> None:
+def test_abandon_run_rejects_completed_status() -> None:
     async def _run() -> None:
         mentor_id = uuid4()
         run_id = uuid4()
@@ -202,7 +240,7 @@ def test_cancel_run_rejects_completed_status() -> None:
         service.repo.get_by_id = AsyncMock(return_value=run)
 
         with pytest.raises(HTTPException) as exc_info:
-            await service.cancel_run(run_id, mentor_id=mentor_id)
+            await service.abandon_run(run_id, mentor_id=mentor_id)
 
         assert exc_info.value.status_code == 409
 
@@ -320,12 +358,12 @@ def test_get_active_run_for_resource_hides_other_mentor() -> None:
     asyncio.run(_run())
 
 
-def test_acquire_lock_for_run_skips_cancelled_run() -> None:
+def test_acquire_lock_for_run_skips_abandoned_run() -> None:
     async def _run() -> None:
         run_id = uuid4()
         run = _make_running_run()
         run.run_id = run_id
-        run.status = GenerationRunStatus.CANCELLED.value
+        run.status = GenerationRunStatus.ABANDONED.value
 
         session = MagicMock()
         service = GenerationRunService(session)
@@ -356,10 +394,16 @@ def test_acquire_lock_for_run_fails_run_when_lock_unavailable() -> None:
         service.repo.get_by_id = AsyncMock(return_value=run)
         service.fail_run = AsyncMock()
 
-        with patch(
-            "src.api.core.services.generation_run_service.try_acquire_generation_lock",
-            new_callable=AsyncMock,
-            return_value=False,
+        with (
+            patch(
+                "src.api.core.services.generation_run_service.try_acquire_generation_lock",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.api.core.services.generation_run_service.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await service.acquire_lock_for_run(run_id)
 

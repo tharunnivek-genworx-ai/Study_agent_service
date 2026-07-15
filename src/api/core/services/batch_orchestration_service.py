@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.core.exceptions import (
-    GenerationRunNotCancellableException,
+    GenerationRunNotAbandonableException,
     GenerationRunNotFoundException,
 )
 from src.api.core.services.generation_run_service import GenerationRunService
@@ -245,19 +245,25 @@ class BatchOrchestrationService:
             if step.status == "running":
                 if step.generation_run_id is not None:
                     try:
-                        await GenerationRunService(self.session).cancel_run(
+                        await GenerationRunService(self.session).abandon_run(
                             step.generation_run_id,
                             mentor_id=mentor_id,
+                            reason="batch_cancelled",
                         )
                     except (
                         GenerationRunNotFoundException,
-                        GenerationRunNotCancellableException,
+                        GenerationRunNotAbandonableException,
                     ):
                         pass
                 step.status = "failed"
                 step.error_message = "Cancelled by mentor."
                 step.completed_at = now
                 batch.failed_steps += 1
+            elif step.status == "pending":
+                step.status = "skipped"
+                step.error_message = "Skipped because the batch was cancelled."
+                step.completed_at = now
+                batch.skipped_steps += 1
 
         await self.session.flush()
         return BatchCancelResponse(batch_id=batch.batch_id, status="cancelled")
@@ -349,7 +355,7 @@ class BatchOrchestrationService:
         if run_status == GenerationRunStatus.COMPLETED.value:
             step.status = "completed"
             batch.completed_steps += 1
-        elif run_status == GenerationRunStatus.CANCELLED.value:
+        elif run_status == GenerationRunStatus.ABANDONED.value:
             step.status = "failed"
             step.error_message = error_message or "Cancelled."
             batch.failed_steps += 1

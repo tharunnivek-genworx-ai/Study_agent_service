@@ -106,7 +106,7 @@ async def soft_delete_reference_materials(
     return ids
 
 
-async def cancel_generation_runs(session, runs: list[GenerationRun]) -> list[UUID]:
+async def abandon_generation_runs(session, runs: list[GenerationRun]) -> list[UUID]:
     if not runs:
         return []
     now = datetime.now(UTC)
@@ -115,11 +115,12 @@ async def cancel_generation_runs(session, runs: list[GenerationRun]) -> list[UUI
         update(GenerationRun)
         .where(GenerationRun.run_id.in_(ids))
         .values(
-            status=GenerationRunStatus.CANCELLED.value,
-            error_message="Cancelled by cleanup_reference_materials_and_generation_runs.py",
-            error_type="cancelled",
+            status=GenerationRunStatus.ABANDONED.value,
+            error_message="Abandoned by cleanup_reference_materials_and_generation_runs.py",
+            error_type="abandoned",
+            abandoned_at=now,
+            abandon_reason="cleanup_script",
             updated_at=now,
-            completed_at=now,
         )
     )
     return ids
@@ -202,17 +203,17 @@ async def run(args: argparse.Namespace) -> int:
                 session, materials, keep_latest=False
             )
 
-        cancelled_run_ids = await cancel_generation_runs(session, runs)
+        abandoned_run_ids = await abandon_generation_runs(session, runs)
 
-        if deleted_material_ids or cancelled_run_ids:
+        if deleted_material_ids or abandoned_run_ids:
             await session.commit()
             if deleted_material_ids:
                 print(
                     f"Soft-deleted reference_materials: {', '.join(map(str, deleted_material_ids))}"
                 )
-            if cancelled_run_ids:
+            if abandoned_run_ids:
                 print(
-                    f"Cancelled generation_runs: {', '.join(map(str, cancelled_run_ids))}"
+                    f"Abandoned generation_runs: {', '.join(map(str, abandoned_run_ids))}"
                 )
         else:
             print("Nothing to clean up.")

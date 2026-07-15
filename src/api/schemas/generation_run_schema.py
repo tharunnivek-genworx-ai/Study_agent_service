@@ -19,15 +19,12 @@ from src.api.schemas.common import (
 __all__ = [
     "ACTIVE_RUN_STATUSES",
     "GenerationJobStartResponse",
-    "GenerationRunAbandonResponse",
     "GenerationRunActionsOut",
     "GenerationRunActiveOut",
-    "GenerationRunCancelResponse",
     "GenerationRunCreate",
     "GenerationRunMode",
     "GenerationRunOut",
     "GenerationRunPauseContextOut",
-    "GenerationRunPauseResponse",
     "GenerationRunPipeline",
     "GenerationRunResourceType",
     "GenerationRunResultOut",
@@ -186,34 +183,8 @@ class GenerationRunResumeResponse(BaseModel):
     """Response after a successful resume request starts pipeline execution."""
 
     run_id: UUID
-    progress_session_id: UUID = Field(
-        description=(
-            "Deprecated alias for run_id. Poll GET /generation-progress/{run_id}."
-        ),
-    )
     pipeline: str
     status: str = GenerationRunStatus.RUNNING.value
-
-
-class GenerationRunPauseResponse(BaseModel):
-    """Response after pausing a generation run."""
-
-    run_id: UUID
-    status: str = GenerationRunStatus.PAUSED.value
-
-
-class GenerationRunAbandonResponse(BaseModel):
-    """Response after abandoning a generation run."""
-
-    run_id: UUID
-    status: str = GenerationRunStatus.ABANDONED.value
-
-
-class GenerationRunCancelResponse(BaseModel):
-    """Response after cancelling a generation run."""
-
-    run_id: UUID
-    status: str = GenerationRunStatus.ABANDONED.value
 
 
 class GenerationRunResumeResult(BaseModel):

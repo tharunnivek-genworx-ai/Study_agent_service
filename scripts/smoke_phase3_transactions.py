@@ -105,7 +105,7 @@ class Smoke:
                 DELETE FROM generationruns
                 WHERE resourceid = :node_id
                   AND pipeline = 'study_material'
-                  AND status IN ('running', 'failed', 'cancelled')
+                  AND status IN ('running', 'paused', 'failed', 'abandoned')
                 """
             ),
             {"node_id": str(NODE_WATERFALL)},
@@ -126,7 +126,7 @@ class Smoke:
         try:
             with (
                 patch(
-                    "src.api.core.services.generation_run_service.require_generation_lock",
+                    "src.api.core.services.generation_run_service.require_generation_coordinator_lock",
                     new_callable=AsyncMock,
                 ),
                 patch(
@@ -153,11 +153,11 @@ class Smoke:
                 "src.api.core.services.generation_run_service.release_generation_lock",
                 new_callable=AsyncMock,
             ):
-                cancelled = await service.cancel_run(run_id, mentor_id=MENTOR_ID)
+                abandoned = await service.abandon_run(run_id, mentor_id=MENTOR_ID)
             self.check(
-                "gen_run: cancel committed",
-                cancelled.status == GenerationRunStatus.CANCELLED.value,
-                cancelled.status,
+                "gen_run: abandon committed",
+                abandoned.status == GenerationRunStatus.ABANDONED.value,
+                abandoned.status,
             )
         except Exception as exc:
             await session.rollback()

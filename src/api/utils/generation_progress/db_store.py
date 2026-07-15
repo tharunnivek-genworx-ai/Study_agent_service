@@ -29,7 +29,6 @@ def _status_from_run(run_status: str) -> GenerationJobStatus:
         return GenerationJobStatus.PAUSED
     if run_status in (
         GenerationRunStatus.FAILED.value,
-        GenerationRunStatus.CANCELLED.value,
         GenerationRunStatus.ABANDONED.value,
         GenerationRunStatus.SUPERSEDED.value,
     ):
@@ -90,7 +89,13 @@ class DbGenerationProgressStore:
 
     async def complete(self, run_id: UUID) -> None:
         run = await self._repo.get_by_id(run_id)
-        if run is None or run.status != GenerationRunStatus.RUNNING.value:
+        # Allow RUNNING or PAUSED: a pause that raced into the finalize tail (after the
+        # graph already produced durable output) must still settle as COMPLETED, not be
+        # left PAUSED with a committed draft. FAILED / ABANDONED / COMPLETED stay put.
+        if run is None or run.status not in (
+            GenerationRunStatus.RUNNING.value,
+            GenerationRunStatus.PAUSED.value,
+        ):
             return
         pipeline = GenerationPipeline(run.pipeline)
         profile = step_profile_from_request_params(

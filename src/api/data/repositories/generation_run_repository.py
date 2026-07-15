@@ -55,6 +55,29 @@ class GenerationRunRepository:
         )
         return cast(GenerationRun | None, result.scalars().first())
 
+    async def get_live_status_and_token(
+        self, run_id: UUID
+    ) -> tuple[str, UUID | None] | None:
+        """Read the run's live status + execution token, bypassing the identity map.
+
+        The worker session uses ``expire_on_commit=False``, so a full-entity
+        ``select(GenerationRun)`` returns the identity-mapped instance whose
+        attributes were loaded when the graph started — it never reflects a status
+        flipped by another session (e.g. a pause from the API). A column-only SELECT
+        does not go through the identity map, so under Postgres READ COMMITTED it
+        always returns the latest committed value. This is what lets the cooperative
+        pause check actually observe a PAUSED run mid-graph.
+        """
+        result = await self.db.execute(
+            select(GenerationRun.status, GenerationRun.execution_token).where(
+                GenerationRun.run_id == run_id
+            )
+        )
+        row = result.first()
+        if row is None:
+            return None
+        return (row[0], row[1])
+
     async def get_active_run(
         self,
         *,
@@ -71,31 +94,6 @@ class GenerationRunRepository:
                 )
             )
             .order_by(GenerationRun.created_at.desc())
-            .limit(1)
-        )
-        return cast(GenerationRun | None, result.scalars().first())
-
-    async def get_resumable_run(
-        self,
-        *,
-        resource_id: UUID,
-        pipeline: str,
-    ) -> GenerationRun | None:
-        result = await self.db.execute(
-            select(GenerationRun)
-            .where(
-                and_(
-                    GenerationRun.resource_id == resource_id,
-                    GenerationRun.pipeline == pipeline,
-                    GenerationRun.status.in_(
-                        (
-                            GenerationRunStatus.PAUSED.value,
-                            GenerationRunStatus.FAILED.value,
-                        )
-                    ),
-                )
-            )
-            .order_by(GenerationRun.updated_at.desc())
             .limit(1)
         )
         return cast(GenerationRun | None, result.scalars().first())
@@ -158,10 +156,17 @@ class GenerationRunRepository:
         error_message: str,
         error_type: str | None = None,
         next_llm_retry_at: datetime | None = None,
-    ) -> None:
-        await self.db.execute(
+        expected_execution_token: UUID | None = None,
+    ) -> bool:
+        conditions = [
+            GenerationRun.run_id == run_id,
+            GenerationRun.status == GenerationRunStatus.RUNNING.value,
+        ]
+        if expected_execution_token is not None:
+            conditions.append(GenerationRun.execution_token == expected_execution_token)
+        result = await self.db.execute(
             update(GenerationRun)
-            .where(GenerationRun.run_id == run_id)
+            .where(and_(*conditions))
             .values(
                 status=GenerationRunStatus.FAILED.value,
                 error_message=error_message,
@@ -171,16 +176,31 @@ class GenerationRunRepository:
             )
         )
         await self.db.commit()
+        rowcount = getattr(result, "rowcount", 0)
+        return int(rowcount or 0) > 0
 
     async def complete_run(self, run_id: UUID) -> bool:
-        """Mark a run completed only while it is still running."""
+        """Mark a run completed.
+
+        Matches RUNNING *or* PAUSED. Completion is only ever invoked after the graph
+        fully succeeds and the output is durably persisted (finalize/settle), so a
+        pause request that raced into the finalize tail must not strand a run in
+        PAUSED with a committed draft — that state is what triggers a duplicate draft
+        on resume. A cooperative pause that lands mid-graph never reaches here (it
+        aborts before finalize), so RUNNING/PAUSED are the only valid pre-states.
+        """
         now = datetime.now(UTC)
         result = await self.db.execute(
             update(GenerationRun)
             .where(
                 and_(
                     GenerationRun.run_id == run_id,
-                    GenerationRun.status == GenerationRunStatus.RUNNING.value,
+                    GenerationRun.status.in_(
+                        [
+                            GenerationRunStatus.RUNNING.value,
+                            GenerationRunStatus.PAUSED.value,
+                        ]
+                    ),
                 )
             )
             .values(
@@ -213,17 +233,6 @@ class GenerationRunRepository:
             values["execution_token"] = execution_token
         await self.db.execute(
             update(GenerationRun).where(GenerationRun.run_id == run_id).values(**values)
-        )
-        await self.db.flush()
-
-    async def assign_execution_token(self, run_id: UUID, token: UUID) -> None:
-        await self.db.execute(
-            update(GenerationRun)
-            .where(GenerationRun.run_id == run_id)
-            .values(
-                execution_token=token,
-                updated_at=datetime.now(UTC),
-            )
         )
         await self.db.flush()
 
@@ -289,16 +298,25 @@ class GenerationRunRepository:
         )
         return list(result.scalars().all())
 
-    async def mark_stale_failed(self, run_id: UUID) -> bool:
-        """Mark a stale running run as failed with resumable stale_worker error."""
+    async def mark_stale_failed(
+        self,
+        run_id: UUID,
+        *,
+        stale_before: datetime | None = None,
+        expected_execution_token: UUID | None = None,
+    ) -> bool:
+        """Atomically fail only the running attempt selected by the caller."""
+        conditions = [
+            GenerationRun.run_id == run_id,
+            GenerationRun.status == GenerationRunStatus.RUNNING.value,
+        ]
+        if stale_before is not None:
+            conditions.append(GenerationRun.updated_at < stale_before)
+        if expected_execution_token is not None:
+            conditions.append(GenerationRun.execution_token == expected_execution_token)
         result = await self.db.execute(
             update(GenerationRun)
-            .where(
-                and_(
-                    GenerationRun.run_id == run_id,
-                    GenerationRun.status == GenerationRunStatus.RUNNING.value,
-                )
-            )
+            .where(and_(*conditions))
             .values(
                 status=GenerationRunStatus.FAILED.value,
                 error_type="stale_worker",
@@ -349,10 +367,6 @@ class GenerationRunRepository:
         await self.db.flush()
         return new_count
 
-    async def cancel_run(self, run_id: UUID) -> bool:
-        """Deprecated: mark run as abandoned for backward compatibility."""
-        return await self.abandon_run(run_id, reason="user")
-
     async def update_request_params(
         self,
         run_id: UUID,
@@ -367,39 +381,6 @@ class GenerationRunRepository:
             )
         )
         await self.db.commit()
-
-    async def supersede_other_active_runs(
-        self,
-        *,
-        resource_id: UUID,
-        pipeline: str,
-        except_run_id: UUID,
-    ) -> int:
-        """Mark other active rows superseded after a successful inline run."""
-        result = await self.db.execute(
-            update(GenerationRun)
-            .where(
-                and_(
-                    GenerationRun.resource_id == resource_id,
-                    GenerationRun.pipeline == pipeline,
-                    GenerationRun.run_id != except_run_id,
-                    GenerationRun.status.in_(
-                        (
-                            GenerationRunStatus.RUNNING.value,
-                            GenerationRunStatus.PAUSED.value,
-                            GenerationRunStatus.FAILED.value,
-                        )
-                    ),
-                )
-            )
-            .values(
-                status=GenerationRunStatus.SUPERSEDED.value,
-                updated_at=datetime.now(UTC),
-            )
-        )
-        await self.db.flush()
-        rowcount = getattr(result, "rowcount", 0)
-        return int(rowcount or 0) > 0
 
     async def supersede_stale_runs(
         self,

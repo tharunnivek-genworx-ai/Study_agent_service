@@ -33,14 +33,13 @@ from src.api.schemas import (
     GenerationRunPipeline,
     GenerationRunResourceType,
     GenerationRunResultOut,
-    GenerationRunResumeResponse,
     GenerationRunResumeResult,
     GenerationRunStatus,
 )
 from src.api.schemas.common import GenerationPipeline
 from src.api.utils.generation_progress.advisory_lock import (
     release_generation_lock,
-    require_generation_lock,
+    require_generation_coordinator_lock,
     try_acquire_generation_lock,
 )
 from src.api.utils.generation_progress.db_store import DbGenerationProgressStore
@@ -56,8 +55,9 @@ from src.api.utils.generation_progress.store import (
 
 logger = logging.getLogger(__name__)
 
-# Background jobs can start microseconds after start_run releases the HTTP-session
-# lock; brief backoff avoids failing the run on a transient advisory-lock race.
+# With a single durable worker, the previous task has exited before its
+# replacement starts. Retries only cover brief connection/dispatch overlap;
+# a long wait would hide a leaked lock behind an indefinite "Starting…" UI.
 _LOCK_ACQUIRE_MAX_ATTEMPTS = 25
 _LOCK_ACQUIRE_BASE_DELAY_SECONDS = 0.08
 
@@ -82,6 +82,12 @@ class GenerationRunService:
         *,
         supersede_existing: bool = True,
     ) -> GenerationRunOut:
+        await require_generation_coordinator_lock(
+            self.session,
+            pipeline=payload.pipeline.value,
+            resource_id=payload.resource_id,
+        )
+
         if supersede_existing:
             await self.repo.supersede_stale_runs(
                 resource_id=payload.resource_id,
@@ -98,47 +104,45 @@ class GenerationRunService:
         execution_token = uuid4()
         request_fingerprint = compute_request_fingerprint(payload)
 
-        await require_generation_lock(
-            self.session,
-            pipeline=payload.pipeline.value,
-            resource_id=payload.resource_id,
+        run = await self.repo.create(
+            payload,
+            execution_token=execution_token,
+            request_fingerprint=request_fingerprint,
         )
-        try:
-            run = await self.repo.create(
-                payload,
-                execution_token=execution_token,
-                request_fingerprint=request_fingerprint,
-            )
-            await self.progress.start(run.run_id, payload.pipeline)
-            await self.session.commit()
-            return self._run_out(run)
-        finally:
-            # Release before the HTTP handler returns 202. The background job
-            # re-acquires on its own DB session for the graph duration.
-            await release_generation_lock(
-                self.session,
-                pipeline=payload.pipeline.value,
-                resource_id=payload.resource_id,
-            )
+        # Materialize the response before progress.start commits. This remains safe
+        # if a caller supplies an AsyncSession with expire_on_commit=True.
+        run_out = self._run_out(run)
+        await self.progress.start(run.run_id, payload.pipeline)
+        await self.session.commit()
+        return run_out
 
     async def is_run_active(self, run_id: UUID) -> bool:
-        run = await self.repo.get_by_id(run_id)
-        return run is not None and run.status == GenerationRunStatus.RUNNING.value
+        # Live read (bypasses the identity map) so a pause committed by the API session
+        # is observed by the worker despite expire_on_commit=False.
+        live = await self.repo.get_live_status_and_token(run_id)
+        return live is not None and live[0] == GenerationRunStatus.RUNNING.value
 
     async def should_continue_execution(
         self,
         run_id: UUID,
         job_token: UUID,
     ) -> bool:
-        """Token-aware check for background jobs (LlamaParse poll loops, graph)."""
-        run = await self.repo.get_by_id(run_id)
-        if run is None:
+        """Token-aware check for background jobs (LlamaParse poll loops, graph).
+
+        Reads the live status/token directly from the DB (not the identity-mapped
+        instance): with expire_on_commit=False the worker session would otherwise keep
+        seeing the stale RUNNING status it loaded when the graph started and never
+        observe a cooperative pause, so the graph would run to completion.
+        """
+        live = await self.repo.get_live_status_and_token(run_id)
+        if live is None:
             return False
-        if run.status != GenerationRunStatus.RUNNING.value:
+        status, execution_token = live
+        if status != GenerationRunStatus.RUNNING.value:
             return False
-        if run.execution_token is None:
+        if execution_token is None:
             return False
-        return bool(run.execution_token == job_token)
+        return bool(execution_token == job_token)
 
     async def store_llamaparse_job_ids(
         self,
@@ -240,27 +244,31 @@ class GenerationRunService:
         next_llm_retry_at: datetime | None = None,
     ) -> None:
         run = await self.repo.get_by_id(run_id)
+        lock_identity = (run.pipeline, run.resource_id) if run is not None else None
+        execution_token = run.execution_token if run is not None else None
         await self.repo.fail_run(
             run_id,
             error_message=error_message,
             error_type=error_type,
             next_llm_retry_at=next_llm_retry_at,
+            expected_execution_token=execution_token,
         )
-        if run is not None:
+        if lock_identity is not None:
             await release_generation_lock(
                 self.session,
-                pipeline=run.pipeline,
-                resource_id=run.resource_id,
+                pipeline=lock_identity[0],
+                resource_id=lock_identity[1],
             )
 
     async def complete_run(self, run_id: UUID) -> None:
         run = await self.repo.get_by_id(run_id)
+        lock_identity = (run.pipeline, run.resource_id) if run is not None else None
         await self.progress.complete(run_id)
-        if run is not None:
+        if lock_identity is not None:
             await release_generation_lock(
                 self.session,
-                pipeline=run.pipeline,
-                resource_id=run.resource_id,
+                pipeline=lock_identity[0],
+                resource_id=lock_identity[1],
             )
 
     def _run_out(self, run: Any) -> GenerationRunOut:
@@ -437,7 +445,7 @@ class GenerationRunService:
         self._validate_resumable(run, run_id=run_id)
         await self._assert_no_resume_conflict(run, run_id=run_id)
 
-        await require_generation_lock(
+        await require_generation_coordinator_lock(
             self.session,
             pipeline=run.pipeline,
             resource_id=run.resource_id,
@@ -454,26 +462,19 @@ class GenerationRunService:
         last_completed_node = run.last_completed_node
         artifact_run_id = run.artifact_run_id
 
-        try:
-            await self.repo.increment_attempt_count(run_id)
-            await self.repo.mark_running(run_id, execution_token=execution_token)
+        await self.repo.increment_attempt_count(run_id)
+        await self.repo.mark_running(run_id, execution_token=execution_token)
 
-            return GenerationRunResumeResult(
-                run_id=run_id,
-                pipeline=run_pipeline,
-                generation_mode=run_generation_mode,
-                checkpoint_state=checkpoint,
-                request_params=request_params,
-                last_completed_node=last_completed_node,
-                artifact_run_id=artifact_run_id,
-                execution_token=execution_token,
-            )
-        finally:
-            await release_generation_lock(
-                self.session,
-                pipeline=run.pipeline,
-                resource_id=run.resource_id,
-            )
+        return GenerationRunResumeResult(
+            run_id=run_id,
+            pipeline=run_pipeline,
+            generation_mode=run_generation_mode,
+            checkpoint_state=checkpoint,
+            request_params=request_params,
+            last_completed_node=last_completed_node,
+            artifact_run_id=artifact_run_id,
+            execution_token=execution_token,
+        )
 
     async def begin_resume(
         self,
@@ -505,24 +506,6 @@ class GenerationRunService:
                 resume_result.pipeline
             )
         await handler(self.session, resume_result, mentor_id=mentor_id, role=role)
-
-    async def execute_resume(
-        self,
-        run_id: UUID,
-        *,
-        mentor_id: UUID,
-        role: str,
-    ) -> GenerationRunResumeResponse:
-        """Validate, mark running, and dispatch to the pipeline resume executor."""
-        resume_result = await self.begin_resume(run_id, mentor_id=mentor_id)
-        await self.run_resume_pipeline(resume_result, mentor_id=mentor_id, role=role)
-
-        return GenerationRunResumeResponse(
-            run_id=run_id,
-            progress_session_id=run_id,
-            pipeline=resume_result.pipeline,
-            status=GenerationRunStatus.RUNNING.value,
-        )
 
     async def pause_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
         """Cooperatively pause a running generation run (idempotent)."""
@@ -608,7 +591,11 @@ class GenerationRunService:
         stale_runs = await self.repo.find_stale_running_runs(threshold)
         recovered = 0
         for run in stale_runs:
-            marked = await self.repo.mark_stale_failed(run.run_id)
+            marked = await self.repo.mark_stale_failed(
+                run.run_id,
+                stale_before=threshold,
+                expected_execution_token=run.execution_token,
+            )
             if marked:
                 recovered += 1
                 stale_minutes = int(
@@ -654,14 +641,6 @@ class GenerationRunService:
     @staticmethod
     def resource_for_hint(quiz_id: UUID) -> tuple[GenerationRunResourceType, UUID]:
         return GenerationRunResourceType.QUIZ, quiz_id
-
-    async def cancel_run(self, run_id: UUID, *, mentor_id: UUID) -> GenerationRunOut:
-        """Deprecated alias for abandon_run."""
-        logger.warning(
-            "POST /generation-runs/{id}/cancel is deprecated; use /abandon instead.",
-            extra={"run_id": str(run_id)},
-        )
-        return await self.abandon_run(run_id, mentor_id=mentor_id, reason="user")
 
 
 PipelineResumeHandler = Any

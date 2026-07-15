@@ -84,7 +84,7 @@ class StudyMaterialVersion(Base):
     qc_attempt_count = Column(
         "qcattemptcount", Integer, nullable=False, server_default="0", default=0
     )
-    generation_run_id = Column("generationrunid", String(32), nullable=True)
+    generation_run_id = Column("generationrunid", String(64), nullable=True)
     concept_plan = Column("conceptplan", JSONB, nullable=True)
     checklist_llm_model_used = Column(
         "checklistllmmodelused", String(100), nullable=True

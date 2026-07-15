@@ -167,6 +167,7 @@ def download_figures(
 
     raw_records: list[ParseImageRecord] = []
     for img_meta in images_meta.images:
+        _abort_if_should_stop(should_continue)
         filename = img_meta.filename
         presigned_url = img_meta.presigned_url
         if not presigned_url:
@@ -178,6 +179,7 @@ def download_figures(
         except OSError:
             continue
 
+        _abort_if_should_stop(should_continue)
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         if use_gcs:
             object_key = build_llamaparse_image_key(

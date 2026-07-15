@@ -130,24 +130,6 @@ async def resume_generation_run(
     )
     return GenerationRunResumeResponse(
         run_id=run_id,
-        progress_session_id=run_id,
         pipeline=resume_result.pipeline,
         status="running",
     )
-
-
-@router.post(
-    "/generation-runs/{run_id}/cancel",
-    response_model=GenerationRunOut,
-    deprecated=True,
-)
-async def cancel_generation_run(
-    run_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: TokenPayload = Depends(get_current_user),
-) -> GenerationRunOut:
-    """Deprecated: abandons the generation run. Prefer POST /abandon."""
-    service = GenerationRunService(db)
-    result = await service.cancel_run(run_id, mentor_id=current_user.sub)
-    await db.commit()
-    return result

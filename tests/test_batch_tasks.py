@@ -204,6 +204,109 @@ async def test_maybe_chain_next_step_skips_terminal_batch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_generation_run_job_reconciles_on_success() -> None:
+    from src.api.batch import tasks
+
+    run_id = uuid4()
+    with (
+        patch(
+            "src.api.batch.tasks.run_generation_job",
+            new_callable=AsyncMock,
+        ) as run_job,
+        patch(
+            "src.api.batch.tasks._fail_run_if_left_running",
+            new_callable=AsyncMock,
+        ) as reconcile,
+    ):
+        await tasks.execute_generation_run_job(str(run_id), str(uuid4()))
+
+    run_job.assert_awaited_once()
+    reconcile.assert_awaited_once_with(
+        run_id,
+        expected_execution_token=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_generation_run_job_reconciles_when_job_raises() -> None:
+    from src.api.batch import tasks
+
+    run_id = uuid4()
+    with (
+        patch(
+            "src.api.batch.tasks.run_generation_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("worker died mid-finalize"),
+        ),
+        patch(
+            "src.api.batch.tasks._fail_run_if_left_running",
+            new_callable=AsyncMock,
+        ) as reconcile,
+    ):
+        with pytest.raises(RuntimeError):
+            await tasks.execute_generation_run_job(str(run_id), str(uuid4()))
+
+    reconcile.assert_awaited_once_with(
+        run_id,
+        expected_execution_token=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_run_if_left_running_marks_failed_and_commits() -> None:
+    from src.api.batch import tasks
+
+    run_id = uuid4()
+    execution_token = uuid4()
+    session = _session_context(MagicMock())
+    session.commit = AsyncMock()
+    repo = MagicMock()
+    repo.mark_stale_failed = AsyncMock(return_value=True)
+
+    with (
+        patch("src.api.batch.tasks.SessionLocal", return_value=session),
+        patch(
+            "src.api.data.repositories.GenerationRunRepository",
+            return_value=repo,
+        ),
+    ):
+        await tasks._fail_run_if_left_running(
+            run_id,
+            expected_execution_token=execution_token,
+        )
+
+    repo.mark_stale_failed.assert_awaited_once_with(
+        run_id,
+        expected_execution_token=execution_token,
+    )
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fail_run_if_left_running_swallows_errors() -> None:
+    from src.api.batch import tasks
+
+    run_id = uuid4()
+    session = _session_context(MagicMock())
+    session.commit = AsyncMock(side_effect=RuntimeError("db down"))
+    repo = MagicMock()
+    repo.mark_stale_failed = AsyncMock(return_value=True)
+
+    with (
+        patch("src.api.batch.tasks.SessionLocal", return_value=session),
+        patch(
+            "src.api.data.repositories.GenerationRunRepository",
+            return_value=repo,
+        ),
+    ):
+        # Reconciliation must never raise out of the task's finally block.
+        await tasks._fail_run_if_left_running(
+            run_id,
+            expected_execution_token=uuid4(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_reconcile_running_step_finalizes_terminal_run() -> None:
     from src.api.batch import tasks
 

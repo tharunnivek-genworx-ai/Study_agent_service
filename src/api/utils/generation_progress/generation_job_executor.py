@@ -11,18 +11,16 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.config import settings
-from src.api.data.clients.postgres.database import SessionLocal
+from src.api.data.clients.postgres.database import SessionLocal, engine
 
 logger = logging.getLogger(__name__)
 
-# Let the HTTP handler return its request-scoped DB session before the worker
-# tries to acquire the per-node advisory lock (avoids transient lock races).
+# Let the HTTP handler commit the run row before the worker tries to load it.
 _JOB_START_DELAY_SECONDS = 0.05
 
 T = TypeVar("T")
 
 JobCallable = Callable[[AsyncSession], Awaitable[T]]
-AfterCommitCallback = Callable[[], None]
 
 
 async def run_generation_job[T](job: JobCallable[T]) -> T:
@@ -32,17 +30,21 @@ async def run_generation_job[T](job: JobCallable[T]) -> T:
         release_all_generation_locks,
     )
 
-    async with SessionLocal() as session:
-        await prepare_session_for_generation(session)
-        try:
-            result = await job(session)
-            await session.commit()
-            return result
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await release_all_generation_locks(session)
+    # Session-level PostgreSQL advisory locks belong to one physical connection.
+    # Bind the session to a checked-out connection for the entire job so commits
+    # cannot return the lock-owning connection to the pool before final cleanup.
+    async with engine.connect() as connection:
+        async with SessionLocal(bind=connection) as session:
+            await prepare_session_for_generation(session)
+            try:
+                result = await job(session)
+                await session.commit()
+                return result
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await release_all_generation_locks(session)
 
 
 async def _defer_generation_run_job(
@@ -75,7 +77,6 @@ def schedule_generation_job(
     mentor_id: UUID | None = None,
     role: str = "mentor",
     is_resume: bool = False,
-    after_commit: AfterCommitCallback | None = None,
 ) -> asyncio.Task[Any]:
     """Fire-and-forget a generation job on the event loop or Procrastinate worker.
 
@@ -103,11 +104,5 @@ def schedule_generation_job(
         except Exception:
             logger.exception("Background generation job failed")
             return None
-        finally:
-            if after_commit is not None:
-                try:
-                    after_commit()
-                except Exception:
-                    logger.exception("after_commit callback failed")
 
     return asyncio.create_task(_wrapper())
