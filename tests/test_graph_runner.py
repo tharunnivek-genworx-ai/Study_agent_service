@@ -17,6 +17,20 @@ from src.api.utils.generation_progress.graph_runner import (
 from src.api.utils.generation_progress.reporter import report_node_enter
 
 
+def _configure_run_service_mock(
+    service_cls: MagicMock,
+    *,
+    active: bool = True,
+    execution_token: Any = None,
+) -> None:
+    service_cls.return_value.repo = MagicMock()
+    service_cls.return_value.repo.get_by_id = AsyncMock(
+        return_value=SimpleNamespace(execution_token=execution_token)
+    )
+    service_cls.return_value.should_continue_execution = AsyncMock(return_value=active)
+    service_cls.return_value.is_run_active = AsyncMock(return_value=active)
+
+
 def test_node_succeeded_false_on_error() -> None:
     assert node_succeeded({"error": "boom"}) is False
 
@@ -53,7 +67,7 @@ async def test_invoke_graph_checkpoints_after_successful_nodes() -> None:
     ) as service_cls:
         service_cls.return_value.checkpoint_after_node = checkpoint
         service_cls.return_value.fail_run = AsyncMock()
-        service_cls.return_value.is_run_active = AsyncMock(return_value=True)
+        _configure_run_service_mock(service_cls)
 
         result = await invoke_graph_with_progress(
             graph,
@@ -107,7 +121,7 @@ async def test_invoke_graph_skips_checkpoint_on_node_error() -> None:
     ):
         service_cls.return_value.checkpoint_after_node = checkpoint
         service_cls.return_value.fail_run = AsyncMock()
-        service_cls.return_value.is_run_active = AsyncMock(return_value=True)
+        _configure_run_service_mock(service_cls)
         db_store_cls.return_value.on_node = on_node
 
         result = await invoke_graph_with_progress(
@@ -149,7 +163,7 @@ async def test_invoke_graph_fail_run_on_exception() -> None:
     ) as service_cls:
         service_cls.return_value.checkpoint_after_node = AsyncMock()
         service_cls.return_value.fail_run = fail_run
-        service_cls.return_value.is_run_active = AsyncMock(return_value=True)
+        _configure_run_service_mock(service_cls)
 
         with pytest.raises(RuntimeError, match="stream crashed"):
             await invoke_graph_with_progress(
@@ -174,6 +188,7 @@ async def test_invoke_graph_uses_profile_aware_checkpoint_step() -> None:
     run = SimpleNamespace(
         request_params={"step_profile": "study_generate_with_ref"},
         pipeline="study_material",
+        execution_token=None,
     )
 
     async def fake_astream(
@@ -194,8 +209,7 @@ async def test_invoke_graph_uses_profile_aware_checkpoint_step() -> None:
     ) as service_cls:
         service_cls.return_value.checkpoint_after_node = checkpoint
         service_cls.return_value.fail_run = AsyncMock()
-        service_cls.return_value.is_run_active = AsyncMock(return_value=True)
-        service_cls.return_value.repo = MagicMock()
+        _configure_run_service_mock(service_cls)
         service_cls.return_value.repo.get_by_id = AsyncMock(return_value=run)
 
         await invoke_graph_with_progress(
@@ -233,7 +247,10 @@ async def test_invoke_graph_aborts_when_run_no_longer_active() -> None:
     ) as service_cls:
         service_cls.return_value.checkpoint_after_node = AsyncMock()
         service_cls.return_value.fail_run = AsyncMock()
-        service_cls.return_value.is_run_active = AsyncMock(return_value=False)
+        _configure_run_service_mock(service_cls, active=False)
+        service_cls.return_value.should_continue_execution = AsyncMock(
+            return_value=False
+        )
 
         from src.api.core.exceptions import GenerationRunAborted
 

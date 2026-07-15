@@ -6,8 +6,11 @@ from src.api.core.exceptions.generation_run_exceptions import (
     GenerationResumeTooEarlyException,
     GenerationRunAborted,
     GenerationRunConflictException,
+    GenerationRunInputsChangedException,
+    GenerationRunNotAbandonableException,
     GenerationRunNotCancellableException,
     GenerationRunNotFoundException,
+    GenerationRunNotPausableException,
     GenerationRunNotResumableException,
 )
 from src.api.core.exceptions.identity_exceptions.auth_exceptions import (
@@ -110,8 +113,11 @@ __all__ = [
     "GenerationResumeTooEarlyException",
     "GenerationRunAborted",
     "GenerationRunConflictException",
+    "GenerationRunInputsChangedException",
+    "GenerationRunNotAbandonableException",
     "GenerationRunNotCancellableException",
     "GenerationRunNotFoundException",
+    "GenerationRunNotPausableException",
     "GenerationRunNotResumableException",
     "HintGenerationFailedException",
     "HintQuestionsNotFoundException",

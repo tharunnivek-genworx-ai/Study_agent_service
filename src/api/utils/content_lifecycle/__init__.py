@@ -35,8 +35,6 @@ from src.api.utils.content_lifecycle.visibility import (
     is_trainee_live,
     is_trainee_live_quiz,
     is_trainee_live_sm,
-    is_trainee_retired,
-    is_workspace_sm,
 )
 
 __all__ = [
@@ -56,8 +54,6 @@ __all__ = [
     "is_trainee_live",
     "is_trainee_live_quiz",
     "is_trainee_live_sm",
-    "is_trainee_retired",
-    "is_workspace_sm",
     "list_trainee_archive_quizzes",
     "list_trainee_archive_sm",
     "transition_quiz_to_active",

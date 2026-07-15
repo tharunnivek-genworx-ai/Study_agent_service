@@ -67,6 +67,9 @@ def test_generation_job_executor_runs_coro_in_isolated_session() -> None:
 
         with (
             patch(
+                "src.api.utils.generation_progress.generation_job_executor.engine"
+            ) as db_engine,
+            patch(
                 "src.api.utils.generation_progress.generation_job_executor.SessionLocal"
             ) as session_local,
             patch(
@@ -74,6 +77,12 @@ def test_generation_job_executor_runs_coro_in_isolated_session() -> None:
                 new_callable=AsyncMock,
             ) as release_locks,
         ):
+            connection = MagicMock()
+            connection_context = MagicMock()
+            connection_context.__aenter__ = AsyncMock(return_value=connection)
+            connection_context.__aexit__ = AsyncMock(return_value=None)
+            db_engine.connect.return_value = connection_context
+
             mock_session = MagicMock()
             mock_session.__aenter__ = AsyncMock(return_value=mock_session)
             mock_session.__aexit__ = AsyncMock(return_value=None)
@@ -84,6 +93,7 @@ def test_generation_job_executor_runs_coro_in_isolated_session() -> None:
             await run_generation_job(job)
 
         assert executed is True
+        session_local.assert_called_once_with(bind=connection)
         mock_session.commit.assert_awaited_once()
         assert release_locks.await_count == 2
 

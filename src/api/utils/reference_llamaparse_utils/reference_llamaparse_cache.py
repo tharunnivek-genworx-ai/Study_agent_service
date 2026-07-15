@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from concurrent.futures import Future
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +25,9 @@ from src.api.schemas.study_material_schemas.llama_parse_schema import (
     ParseImageRecord,
 )
 from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
+    JobIdsCallback,
+    ShouldContinue,
+    _abort_if_should_stop,
     compute_pdf_content_hash,
     extract_structured_reference,
     fetch_structured_data_from_extract_job,
@@ -30,6 +35,19 @@ from src.api.utils.reference_llamaparse_utils.llama_parse_extractor import (
 from src.api.utils.storage.object_storage import exists
 
 logger = logging.getLogger(__name__)
+
+
+def sync_should_continue_from_loop(
+    async_check: Callable[[], Awaitable[bool]],
+    loop: asyncio.AbstractEventLoop,
+) -> ShouldContinue:
+    """Bridge an async token check into the sync LlamaParse extractor thread."""
+
+    def check() -> bool:
+        future: Future[bool] = asyncio.run_coroutine_threadsafe(async_check(), loop)
+        return bool(future.result(timeout=30))
+
+    return check
 
 
 async def _cached_image_files_exist(images: list[ReferenceLlamaParseImage]) -> bool:
@@ -63,12 +81,15 @@ def _structured_json_is_complete(structured_json: dict[str, Any] | None) -> bool
 async def _resolve_structured_json(
     pdf_row: ReferenceLlamaParsePdf,
     api_key: str,
+    *,
+    should_continue: ShouldContinue | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Return structured JSON from DB, or fetch it from LlamaCloud as a fallback."""
     stored = pdf_row.structured_json
     if _structured_json_is_complete(stored):
         return dict(stored), False
 
+    _abort_if_should_stop(should_continue)
     logger.warning(
         "Cached LlamaParse row %s missing structured JSON; fetching extract job %s",
         pdf_row.llamaparse_pdf_id,
@@ -108,6 +129,7 @@ async def _try_load_cached_extraction(
     reference_material_id: UUID,
     node_id: UUID,
     api_key: str,
+    should_continue: ShouldContinue | None = None,
 ) -> LlamaParseExtractionResult | None:
     """Load a prior parse for identical PDF bytes from the database.
 
@@ -129,7 +151,9 @@ async def _try_load_cached_extraction(
         if await _cached_image_files_exist(images):
             try:
                 structured_data, json_fetched = await _resolve_structured_json(
-                    current, api_key
+                    current,
+                    api_key,
+                    should_continue=should_continue,
                 )
             except Exception:
                 logger.exception(
@@ -170,7 +194,9 @@ async def _try_load_cached_extraction(
 
     try:
         structured_data, _json_fetched = await _resolve_structured_json(
-            pdf_row, api_key
+            pdf_row,
+            api_key,
+            should_continue=should_continue,
         )
     except Exception:
         logger.exception(
@@ -204,6 +230,8 @@ async def resolve_reference_extraction(
     node_id: UUID,
     topic_title: str = "topic",
     material_label: str | None = None,
+    should_continue: ShouldContinue | None = None,
+    on_job_ids: JobIdsCallback | None = None,
 ) -> LlamaParseExtractionResult:
     """Return cached parse output for identical PDF bytes or run a new extraction."""
     content_hash = compute_pdf_content_hash(file_path)
@@ -214,10 +242,12 @@ async def resolve_reference_extraction(
         reference_material_id=reference_material_id,
         node_id=node_id,
         api_key=api_key,
+        should_continue=should_continue,
     )
     if cached is not None:
         return cached
 
+    _abort_if_should_stop(should_continue)
     extraction = await asyncio.to_thread(
         extract_structured_reference,
         file_path,
@@ -226,6 +256,8 @@ async def resolve_reference_extraction(
         topic_title=topic_title,
         reference_material_id=reference_material_id,
         material_label=material_label,
+        should_continue=should_continue,
+        on_job_ids=on_job_ids,
     )
 
     if extraction.content_hash != content_hash:

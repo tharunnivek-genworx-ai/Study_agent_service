@@ -18,6 +18,7 @@ class GenerationJobStatus(StrEnum):
     """Ephemeral progress-store job status (polling UI)."""
 
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -25,16 +26,15 @@ class GenerationJobStatus(StrEnum):
 class GenerationRunStatus(StrEnum):
     """Durable generation-run row status (DB checkpoints).
 
-    Superset of ``GenerationJobStatus``: includes ``superseded`` and
-    ``cancelled`` for run lifecycle management that the progress store
-    does not model.
+    Superset of ``GenerationJobStatus`` with lifecycle-only terminal states.
     """
 
     RUNNING = "running"
     FAILED = "failed"
     COMPLETED = "completed"
     SUPERSEDED = "superseded"
-    CANCELLED = "cancelled"
+    PAUSED = "paused"
+    ABANDONED = "abandoned"
 
 
 class GenerationRunMode(StrEnum):

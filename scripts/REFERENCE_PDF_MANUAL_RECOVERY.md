@@ -28,7 +28,7 @@ From `study_agent_service/` with Postgres reachable (Docker stack up or `databas
 # Or with explicit node id
 .\.venv\Scripts\python.exe scripts/cleanup_reference_materials_and_generation_runs.py --node-id <topic-node-uuid>
 
-# Apply: keep newest PDF, soft-delete older stacked rows, cancel stuck study_material runs
+# Apply: keep newest PDF, soft-delete older stacked rows, abandon stuck study_material runs
 .\.venv\Scripts\python.exe scripts/cleanup_reference_materials_and_generation_runs.py --node-id <topic-node-uuid> --apply
 
 # Start with zero active reference PDFs (single remaining row also removed)
@@ -42,9 +42,9 @@ Then hard-refresh the mentor UI.
 | Step | Action |
 |------|--------|
 | List | All active `referencematerials` where `nodeid = <node>` and `scope = 'node'` |
-| List | `generationruns` where `resourceid = <node>`, `pipeline = 'study_material'`, status `running` or `failed` |
+| List | Active `generationruns` where `resourceid = <node>` and `pipeline = 'study_material'` |
 | Fix PDFs | Soft-delete all but the **newest** active row (or all with `--delete-all-reference-materials`) |
-| Fix lock | Mark stuck runs `cancelled` so a new generate can acquire the advisory lock |
+| Fix lock | Mark stuck runs `abandoned` so a new generate can acquire the advisory lock |
 
 ## Option C — Raw SQL
 
@@ -76,16 +76,17 @@ FROM generationruns
 WHERE resourceid = '<node_id>' AND pipeline = 'study_material'
 ORDER BY createdat DESC;
 
--- Cancel running/failed runs (or POST /generation-runs/{run_id}/cancel via API)
+-- Abandon running/paused/failed runs (or POST /generation-runs/{run_id}/abandon via API)
 UPDATE generationruns
-SET status = 'cancelled',
-    errormessage = 'Cancelled manually',
-    errortype = 'cancelled',
-    completedat = NOW(),
+SET status = 'abandoned',
+    errormessage = 'Abandoned manually',
+    errortype = 'abandoned',
+    abandonedat = NOW(),
+    abandonreason = 'manual_recovery',
     updatedat = NOW()
 WHERE resourceid = '<node_id>'
   AND pipeline = 'study_material'
-  AND status IN ('running', 'failed');
+  AND status IN ('running', 'paused', 'failed');
 ```
 
 ## API alternative for generation lock
@@ -93,7 +94,7 @@ WHERE resourceid = '<node_id>'
 If you know the `run_id`:
 
 ```http
-POST /generation-runs/{run_id}/cancel
+POST /generation-runs/{run_id}/abandon
 ```
 
 (study-agent-service, port 8001 by default)

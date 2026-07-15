@@ -27,15 +27,6 @@ def exclude_discarded(lifecycle_status_column: ColumnElement) -> ColumnElement:
     return lifecycle_status_column != LIFECYCLE_DISCARDED
 
 
-def is_workspace_sm(version: StudyMaterialVersion) -> bool:
-    """Draft SM visible in mentor working history (not shelf-archived or discarded)."""
-    return (
-        version.lifecycle_status == LIFECYCLE_DRAFT
-        and not is_discarded(lifecycle_status=version.lifecycle_status)
-        and not version.is_archived
-    )
-
-
 def is_mentor_discardable_sm(version: StudyMaterialVersion) -> bool:
     """SM rows in the mentor workspace that clear-all-drafts may remove.
 
@@ -114,8 +105,3 @@ def is_trainee_live_quiz(quiz: Quiz) -> bool:
         lifecycle_status=quiz.lifecycle_status,
         is_published=quiz.is_published,
     )
-
-
-def is_trainee_retired(*, lifecycle_status: str) -> bool:
-    """Retired trainee layer: superseded archive or explicit unpublish hide."""
-    return lifecycle_status in (LIFECYCLE_ARCHIVED, LIFECYCLE_HIDDEN)

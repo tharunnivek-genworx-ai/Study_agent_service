@@ -6,21 +6,21 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.data.clients.postgres.database import SessionLocal
+from src.api.config import settings
+from src.api.data.clients.postgres.database import SessionLocal, engine
 
 logger = logging.getLogger(__name__)
 
-# Let the HTTP handler return its request-scoped DB session before the worker
-# tries to acquire the per-node advisory lock (avoids transient lock races).
+# Let the HTTP handler commit the run row before the worker tries to load it.
 _JOB_START_DELAY_SECONDS = 0.05
 
 T = TypeVar("T")
 
 JobCallable = Callable[[AsyncSession], Awaitable[T]]
-AfterCommitCallback = Callable[[], None]
 
 
 async def run_generation_job[T](job: JobCallable[T]) -> T:
@@ -30,42 +30,79 @@ async def run_generation_job[T](job: JobCallable[T]) -> T:
         release_all_generation_locks,
     )
 
-    async with SessionLocal() as session:
-        await prepare_session_for_generation(session)
-        try:
-            result = await job(session)
-            await session.commit()
-            return result
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await release_all_generation_locks(session)
+    # Session-level PostgreSQL advisory locks belong to one physical connection.
+    # Bind the session to a checked-out connection for the entire job so commits
+    # cannot return the lock-owning connection to the pool before final cleanup.
+    async with engine.connect() as connection:
+        async with SessionLocal(bind=connection) as session:
+            await prepare_session_for_generation(session)
+            try:
+                result = await job(session)
+                await session.commit()
+                return result
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await release_all_generation_locks(session)
+
+
+async def _defer_generation_run_job(
+    *,
+    run_id: UUID,
+    mentor_id: UUID,
+    role: str,
+    is_resume: bool,
+) -> None:
+    from src.api.batch.procrastinate_app import app
+    from src.api.batch.tasks import execute_generation_run_job
+
+    async with app.open_async():
+        task = execute_generation_run_job
+        configure = getattr(task, "configure", None)
+        if callable(configure):
+            task = configure(task_id=f"generation-run:{run_id}")
+        await task.defer_async(
+            run_id=str(run_id),
+            mentor_id=str(mentor_id),
+            role=role,
+            is_resume=is_resume,
+        )
 
 
 def schedule_generation_job(
     job: JobCallable[Any],
     *,
-    after_commit: AfterCommitCallback | None = None,
+    run_id: UUID | None = None,
+    mentor_id: UUID | None = None,
+    role: str = "mentor",
+    is_resume: bool = False,
 ) -> asyncio.Task[Any]:
-    """Fire-and-forget a generation job on the event loop.
+    """Fire-and-forget a generation job on the event loop or Procrastinate worker.
 
-    ``after_commit`` runs after the job session commits (or fails). Used by the
-    batch queue to start the next item only once durable run status is visible.
+    When ``batch_dispatch_mode`` is ``procrastinate`` and ``run_id`` / ``mentor_id``
+    are provided, the job is enqueued for the durable worker instead of running
+    inline on the API Cloud Run instance (which may scale down after HTTP 202).
     """
 
     async def _wrapper() -> Any:
         try:
             await asyncio.sleep(_JOB_START_DELAY_SECONDS)
+            if (
+                settings.batch_dispatch_mode == "procrastinate"
+                and run_id is not None
+                and mentor_id is not None
+            ):
+                await _defer_generation_run_job(
+                    run_id=run_id,
+                    mentor_id=mentor_id,
+                    role=role,
+                    is_resume=is_resume,
+                )
+                return None
             return await run_generation_job(job)
         except Exception:
             logger.exception("Background generation job failed")
             return None
-        finally:
-            if after_commit is not None:
-                try:
-                    after_commit()
-                except Exception:
-                    logger.exception("after_commit callback failed")
 
     return asyncio.create_task(_wrapper())

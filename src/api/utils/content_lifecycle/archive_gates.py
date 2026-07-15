@@ -57,13 +57,6 @@ async def assert_trainee_archive_context(
     return node, space
 
 
-async def node_has_active_published_sm(session: AsyncSession, node_id: UUID) -> bool:
-    """True when the node has a currently active published study material version."""
-    sm_repo = StudyMaterialRepository(session)
-    version = await sm_repo.get_published_version(node_id)
-    return version is not None and version.lifecycle_status == "active"
-
-
 async def assert_archive_list_gate(session: AsyncSession, *, node_id: UUID) -> bool:
     """Return True when archive listings are allowed (archived SM exists on node)."""
     from src.api.utils.content_lifecycle.queries import (

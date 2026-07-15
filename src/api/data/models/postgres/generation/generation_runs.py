@@ -62,3 +62,14 @@ class GenerationRun(Base):
         onupdate=utc_now,
     )
     completed_at = Column("completedat", TIMESTAMP(timezone=True), nullable=True)
+
+    paused_at = Column("pausedat", TIMESTAMP(timezone=True), nullable=True)
+    abandoned_at = Column("abandonedat", TIMESTAMP(timezone=True), nullable=True)
+    pause_reason = Column("pausereason", String(40), nullable=True)
+    abandon_reason = Column("abandonreason", String(40), nullable=True)
+    request_fingerprint = Column("requestfingerprint", String(64), nullable=True)
+    execution_token = Column("executiontoken", UUID(as_uuid=True), nullable=True)
+    llamaparse_extract_job_id = Column(
+        "llamaparseextractjobid", String(80), nullable=True
+    )
+    llamaparse_parse_job_id = Column("llamaparseparsejobid", String(80), nullable=True)

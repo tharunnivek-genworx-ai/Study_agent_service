@@ -13,6 +13,7 @@ the node — publishing or superseding study material does not auto-publish,
 unpublish, or retire quizzes.
 """
 
+import logging
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -167,6 +168,8 @@ from src.api.utils.study_agent_utils.version.version_actions import (
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _request_param_uuid(value: UUID | None) -> str | None:
@@ -522,12 +525,28 @@ class StudyMaterialService:
             error_message = str(graph_result.get("error") or error_message)
             if graph_result.get("terminal_llm_failure"):
                 error_type = str(graph_result.get("llm_error_type") or error_type)
-        await GenerationRunService(self.session).fail_run(
-            run_id,
-            error_message=error_message,
-            error_type=error_type,
-            next_llm_retry_at=next_retry,
-        )
+        try:
+            await GenerationRunService(self.session).fail_run(
+                run_id,
+                error_message=error_message,
+                error_type=error_type,
+                next_llm_retry_at=next_retry,
+            )
+        except Exception:
+            # The original failure may have poisoned the session (e.g. a flush
+            # error during finalize). Roll back to a clean state and retry once
+            # so the run is recorded as FAILED instead of stranded in RUNNING.
+            logger.exception(
+                "fail_run failed; rolling back poisoned session and retrying",
+                extra={"run_id": str(run_id)},
+            )
+            await self.session.rollback()
+            await GenerationRunService(self.session).fail_run(
+                run_id,
+                error_message=error_message,
+                error_type=error_type,
+                next_llm_retry_at=next_retry,
+            )
 
     async def _persist_run_result(
         self,
@@ -540,6 +559,103 @@ class StudyMaterialService:
         else:
             payload["study_material_feedback"] = result.model_dump(mode="json")
         await GenerationRunService(self.session).store_run_result(run_id, payload)
+
+    async def _settle_run_if_output_already_persisted(
+        self,
+        *,
+        run_id: UUID,
+        node_id: UUID,
+        generation_mode: str,
+    ) -> bool:
+        """Skip graph execution when this run already produced a durable result."""
+        from src.api.schemas import GenerationRunStatus
+
+        run_service = GenerationRunService(self.session)
+        run = await run_service.repo.get_by_id(run_id)
+        if run is None:
+            return True
+        if run.status == GenerationRunStatus.COMPLETED.value:
+            return True
+        if run.status != GenerationRunStatus.RUNNING.value:
+            return True
+
+        params: dict[str, Any] = run.request_params or {}
+        stored = params.get("result") or {}
+        if stored.get("study_material_generate") or stored.get(
+            "study_material_feedback"
+        ):
+            await self._complete_generation_run(run_id)
+            return True
+
+        sm_repo = StudyMaterialRepository(self.session)
+        versions = await sm_repo.list_versions_by_generation_run_id(
+            node_id,
+            str(run_id),
+        )
+        if not versions:
+            return False
+
+        version_out = _study_material_version_out(versions[0])
+        if generation_mode == "generate":
+            result: StudyMaterialGenerateResponse | StudyMaterialFeedbackResponse = (
+                StudyMaterialGenerateResponse(
+                    **version_out.model_dump(),
+                    run_id=run_id,
+                )
+            )
+        else:
+            result = StudyMaterialFeedbackResponse(
+                has_new_version=True,
+                new_version_id=version_out.version_id,
+                status="ok",
+                new_version=version_out,
+                qc_failed_permanently=version_out.qc_failed_permanently,
+                qc_result=version_out.qc_result,
+                run_id=run_id,
+            )
+        await self._persist_run_result(run_id, result)
+        await self._complete_generation_run(run_id)
+        return True
+
+    async def _run_study_material_graph_for_active_run(
+        self,
+        *,
+        run: Any,
+        run_id: UUID,
+        node_id: UUID,
+        reference_material_id: UUID | None,
+        user_id: UUID,
+        request_params: dict[str, Any],
+        generation_mode: str,
+    ) -> dict[str, Any]:
+        """Run the graph from scratch or from the last checkpoint for a RUNNING row."""
+        if run.last_completed_node and run.checkpoint_state:
+            initial_state = hydrate_checkpoint_state(
+                run.checkpoint_state,
+                last_completed_node=run.last_completed_node,
+                request_params=request_params,
+            )
+            initial_state["generation_mode"] = generation_mode
+            return await run_study_material_from_checkpoint(
+                session=self.session,
+                initial_state=initial_state,
+                user_id=user_id,
+                run_id=run_id,
+                execution_token=run.execution_token,
+            )
+
+        if generation_mode == "generate":
+            return await run_study_material_generation(
+                session=self.session,
+                node_id=node_id,
+                reference_material_id=reference_material_id,
+                user_id=user_id,
+                run_id=run_id,
+                execution_token=run.execution_token,
+            )
+        raise ValueError(
+            f"Fresh {generation_mode} execution requires an active draft checkpoint."
+        )
 
     async def resume_study_material_generation(
         self,
@@ -576,14 +692,25 @@ class StudyMaterialService:
         initial_state["generation_mode"] = generation_mode
 
         try:
+            # Idempotency guard (mirrors the execute_* fresh paths). A previous job for
+            # this run may have already persisted a draft before a worker interruption.
+            # Settle from that draft instead of re-running the graph, inserting a
+            # duplicate version, and burning extra LLM calls.
+            if await self._settle_run_if_output_already_persisted(
+                run_id=run_id,
+                node_id=node_id,
+                generation_mode=generation_mode,
+            ):
+                return None
             graph_result = await run_study_material_from_checkpoint(
                 session=self.session,
                 initial_state=initial_state,
                 user_id=user_id,
                 run_id=run_id,
+                execution_token=resume_result.execution_token,
             )
             graph_result["node_title"] = node_title
-            result = await self._finalize_generation_run(
+            return await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
                 space_id=space_id,
@@ -592,8 +719,6 @@ class StudyMaterialService:
                 user_id=user_id,
                 request_params=resume_result.request_params,
             )
-            await self._persist_run_result(run_id, result)
-            return result
         except GenerationRunAborted:
             return None
         except Exception as exc:
@@ -610,32 +735,39 @@ class StudyMaterialService:
         generation_mode: str,
         user_id: UUID,
         request_params: dict[str, Any],
-    ) -> StudyMaterialGenerateResponse | StudyMaterialFeedbackResponse:
+    ) -> StudyMaterialGenerateResponse | StudyMaterialFeedbackResponse | None:
+        run_service = GenerationRunService(self.session)
+        if not await run_service.is_run_active(run_id):
+            return None
         if (
             generation_mode == "regenerate"
             and graph_result.get("regenerate_status") == "vague"
         ):
-            await self._complete_generation_run(run_id)
-            return StudyMaterialFeedbackResponse(
+            result = StudyMaterialFeedbackResponse(
                 has_new_version=False,
                 status="regeneration_goal_too_vague",
                 status_message=graph_result.get("llm_output_content"),
                 new_version=None,
                 run_id=run_id,
             )
+            await self._persist_run_result(run_id, result)
+            await self._complete_generation_run(run_id)
+            return result
 
         if (
             generation_mode == "improve"
             and graph_result.get("improve_status") == "vague"
         ):
-            await self._complete_generation_run(run_id)
-            return StudyMaterialFeedbackResponse(
+            result = StudyMaterialFeedbackResponse(
                 has_new_version=False,
                 status="feedback_too_vague",
                 status_message=graph_result.get("llm_output_content"),
                 new_version=None,
                 run_id=run_id,
             )
+            await self._persist_run_result(run_id, result)
+            await self._complete_generation_run(run_id)
+            return result
 
         reference_material_id = graph_result.get("reference_material_id")
         if isinstance(reference_material_id, str):
@@ -663,24 +795,28 @@ class StudyMaterialService:
             mentor_feedback_used=mentor_feedback,
             reference_material_id=reference_material_id,
             based_on_version_id=based_on_uuid,
+            durable_run_id=run_id,
         )
-        await self._complete_generation_run(run_id)
 
         if generation_mode == "generate":
-            return StudyMaterialGenerateResponse(
+            result = StudyMaterialGenerateResponse(
                 **version_out.model_dump(),
                 run_id=run_id,
             )
+        else:
+            result = StudyMaterialFeedbackResponse(
+                has_new_version=True,
+                new_version_id=version_out.version_id,
+                status="ok",
+                new_version=version_out,
+                qc_failed_permanently=version_out.qc_failed_permanently,
+                qc_result=version_out.qc_result,
+                run_id=run_id,
+            )
 
-        return StudyMaterialFeedbackResponse(
-            has_new_version=True,
-            new_version_id=version_out.version_id,
-            status="ok",
-            new_version=version_out,
-            qc_failed_permanently=version_out.qc_failed_permanently,
-            qc_result=version_out.qc_result,
-            run_id=run_id,
-        )
+        await self._persist_run_result(run_id, result)
+        await self._complete_generation_run(run_id)
+        return result
 
     async def _persist_new_version(
         self,
@@ -693,6 +829,7 @@ class StudyMaterialService:
         mentor_feedback_used: str | None = None,
         reference_material_id: UUID | None = None,
         based_on_version_id: UUID | None = None,
+        durable_run_id: UUID | None = None,
     ) -> StudyMaterialVersionOut:
         repo = StudyMaterialRepository(self.session)
         next_version = await repo.get_next_version_number(node_id)
@@ -732,7 +869,11 @@ class StudyMaterialService:
             qc_result=qc_result_dict,
             qc_passed=bool(graph_result.get("qc_passed")),
             qc_attempt_count=qc_attempt_count,
-            generation_run_id=graph_result.get("artifact_run_id"),
+            generation_run_id=(
+                str(durable_run_id)
+                if durable_run_id is not None
+                else graph_result.get("artifact_run_id")
+            ),
             concept_plan=_build_concept_plan_from_graph(graph_result),
             checklist_llm_model_used=graph_result.get("checklist_llm_model_used"),
             qc_verification_mode=graph_result.get("qc_verification_mode"),
@@ -800,25 +941,34 @@ class StudyMaterialService:
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
+        node_title = node.title
+        space_id = node.space_id
         try:
-            graph_result = await run_study_material_generation(
-                session=self.session,
+            if await self._settle_run_if_output_already_persisted(
+                run_id=run_id,
+                node_id=node_id,
+                generation_mode="generate",
+            ):
+                return
+            graph_result = await self._run_study_material_graph_for_active_run(
+                run=run,
+                run_id=run_id,
                 node_id=node_id,
                 reference_material_id=reference_material_id,
                 user_id=user_id,
-                run_id=run_id,
+                request_params=params,
+                generation_mode="generate",
             )
-            graph_result["node_title"] = node.title
-            result = await self._finalize_generation_run(
+            graph_result["node_title"] = node_title
+            await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=space_id,
                 graph_result=graph_result,
                 generation_mode="generate",
                 user_id=user_id,
                 request_params=params,
             )
-            await self._persist_run_result(run_id, result)
         except GenerationRunAborted:
             return
         except Exception as exc:
@@ -888,7 +1038,15 @@ class StudyMaterialService:
         reference_material_id = active.reference_material_id
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
         mentor_goal = str(params.get("mentor_regeneration_goal") or "")
+        node_title = node.title
+        space_id = node.space_id
         try:
+            if await self._settle_run_if_output_already_persisted(
+                run_id=run_id,
+                node_id=node_id,
+                generation_mode="regenerate",
+            ):
+                return
             graph_result = await run_study_material_regeneration(
                 session=self.session,
                 node_id=node_id,
@@ -899,18 +1057,18 @@ class StudyMaterialService:
                 hydration=hydration,
                 failed_qc_feedback=failed_qc_feedback,
                 run_id=run_id,
+                execution_token=run.execution_token,
             )
-            graph_result["node_title"] = node.title
-            result = await self._finalize_generation_run(
+            graph_result["node_title"] = node_title
+            await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=space_id,
                 graph_result=graph_result,
                 generation_mode="regenerate",
                 user_id=user_id,
                 request_params=params,
             )
-            await self._persist_run_result(run_id, result)
         except GenerationRunAborted:
             return
         except Exception as exc:
@@ -980,7 +1138,15 @@ class StudyMaterialService:
         reference_material_id = active.reference_material_id
         hydration, failed_qc_feedback = _hydration_from_active_version(active)
         mentor_feedback = str(params.get("mentor_feedback") or "")
+        node_title = node.title
+        space_id = node.space_id
         try:
+            if await self._settle_run_if_output_already_persisted(
+                run_id=run_id,
+                node_id=node_id,
+                generation_mode="improve",
+            ):
+                return
             graph_result = await run_study_material_improve(
                 session=self.session,
                 node_id=node_id,
@@ -991,18 +1157,18 @@ class StudyMaterialService:
                 hydration=hydration,
                 failed_qc_feedback=failed_qc_feedback,
                 run_id=run_id,
+                execution_token=run.execution_token,
             )
-            graph_result["node_title"] = node.title
-            result = await self._finalize_generation_run(
+            graph_result["node_title"] = node_title
+            await self._finalize_generation_run(
                 run_id=run_id,
                 node_id=node_id,
-                space_id=node.space_id,
+                space_id=space_id,
                 graph_result=graph_result,
                 generation_mode="improve",
                 user_id=user_id,
                 request_params=params,
             )
-            await self._persist_run_result(run_id, result)
         except GenerationRunAborted:
             return
         except Exception as exc:
@@ -1671,6 +1837,59 @@ class StudyMaterialService:
         return StudyMaterialClearDraftsOut(
             node_id=node_id,
             discarded_count=discarded_count,
+        )
+
+    async def discard_artifacts_for_generation_run(
+        self,
+        run_id: UUID,
+        *,
+        user_id: UUID,
+    ) -> StudyMaterialVersion | None:
+        """Discard draft output from a generation run and restore the prior working draft."""
+        run_service = GenerationRunService(self.session)
+        run = await run_service.repo.get_by_id(run_id)
+        if run is None or run.mentor_id != user_id:
+            return None
+
+        node_id = run.node_id
+        sm_repo = StudyMaterialRepository(self.session)
+        version_ids: set[UUID] = set()
+
+        params: dict[str, Any] = run.request_params or {}
+        stored = params.get("result") or {}
+        generate_payload = stored.get("study_material_generate") or {}
+        generate_version_id = generate_payload.get("version_id")
+        if generate_version_id is not None:
+            version_ids.add(UUID(str(generate_version_id)))
+
+        feedback_payload = stored.get("study_material_feedback") or {}
+        feedback_version_id = feedback_payload.get("new_version_id")
+        if feedback_version_id is not None:
+            version_ids.add(UUID(str(feedback_version_id)))
+
+        if run.artifact_run_id:
+            for version in await sm_repo.list_versions_by_generation_run_id(
+                node_id, run.artifact_run_id
+            ):
+                version_ids.add(version.version_id)
+
+        for version in await sm_repo.list_versions_by_generation_run_id(
+            node_id, str(run_id)
+        ):
+            version_ids.add(version.version_id)
+
+        if not version_ids:
+            return await sm_repo.get_active_version(node_id)
+
+        active_before = await sm_repo.get_active_version(node_id)
+        fallback_id: UUID | None = None
+        if active_before is not None and active_before.version_id in version_ids:
+            fallback_id = active_before.based_on_version_id
+
+        await sm_repo.discard_versions_by_ids(list(version_ids))
+        return await sm_repo.restore_working_draft_after_discard(
+            node_id,
+            preferred_version_id=fallback_id,
         )
 
     async def get_space_published_resources(

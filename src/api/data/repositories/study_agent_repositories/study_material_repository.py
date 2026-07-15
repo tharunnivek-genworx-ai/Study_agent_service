@@ -69,6 +69,21 @@ class StudyMaterialRepository:
         )
         return cast(StudyMaterialVersion | None, result.scalars().first())
 
+    async def list_versions_by_generation_run_id(
+        self, node_id: UUID, generation_run_id: str
+    ) -> list[StudyMaterialVersion]:
+        """Return non-discarded versions tagged with a generation artifact run id."""
+        result = await self.db.execute(
+            select(StudyMaterialVersion).where(
+                and_(
+                    StudyMaterialVersion.node_id == node_id,
+                    StudyMaterialVersion.generation_run_id == generation_run_id,
+                    exclude_discarded(StudyMaterialVersion.lifecycle_status),
+                )
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_latest_workspace_draft(
         self, node_id: UUID
     ) -> StudyMaterialVersion | None:
@@ -447,6 +462,66 @@ class StudyMaterialRepository:
         )
         await self.db.commit()
         return int(getattr(sm_result, "rowcount", 0) or 0)
+
+    async def discard_versions_by_ids(self, version_ids: list[UUID]) -> int:
+        """Soft-discard specific mentor-workspace study material versions."""
+        if not version_ids:
+            return 0
+
+        from src.api.data.repositories.quiz_repositories.quiz_repository import (  # noqa: PLC0415
+            QuizRepository,
+        )
+
+        result = await self.db.execute(
+            select(StudyMaterialVersion).where(
+                StudyMaterialVersion.version_id.in_(version_ids)
+            )
+        )
+        versions = list(result.scalars().all())
+        discardable_ids = [
+            v.version_id
+            for v in versions
+            if v.lifecycle_status != LIFECYCLE_DISCARDED and not v.is_archived
+        ]
+        if not discardable_ids:
+            return 0
+
+        quiz_repo = QuizRepository(self.db)
+        await quiz_repo.discard_drafts_for_sm_versions(discardable_ids, commit=False)
+
+        sm_result = await self.db.execute(
+            update(StudyMaterialVersion)
+            .where(StudyMaterialVersion.version_id.in_(discardable_ids))
+            .values(
+                lifecycle_status=LIFECYCLE_DISCARDED,
+                is_published=False,
+                is_active=False,
+            )
+        )
+        await self.db.commit()
+        return int(getattr(sm_result, "rowcount", 0) or 0)
+
+    async def restore_working_draft_after_discard(
+        self,
+        node_id: UUID,
+        *,
+        preferred_version_id: UUID | None = None,
+    ) -> StudyMaterialVersion | None:
+        """Re-activate the best remaining mentor workspace draft after a discard."""
+        if preferred_version_id is not None:
+            preferred = await self.get_version_by_id(preferred_version_id)
+            if (
+                preferred is not None
+                and preferred.node_id == node_id
+                and not preferred.is_archived
+                and preferred.lifecycle_status != LIFECYCLE_DISCARDED
+            ):
+                return await self.activate_version(preferred)
+
+        latest = await self.get_latest_workspace_draft(node_id)
+        if latest is not None:
+            return await self.activate_version(latest)
+        return None
 
     async def dismiss_qc_warning(self, version_id: UUID) -> StudyMaterialVersion | None:
         """Persist mentor acknowledgement of a failed QC warning on this version."""

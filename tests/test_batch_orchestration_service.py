@@ -451,22 +451,26 @@ async def test_finalize_step_completed_increments_counter_and_finalizes_batch() 
 
 
 @pytest.mark.asyncio
-async def test_cancel_batch_marks_running_steps_failed() -> None:
+async def test_cancel_batch_abandons_running_and_skips_pending_steps() -> None:
     batch_id = uuid4()
     mentor_id = uuid4()
     batch = _make_batch(batch_id=batch_id, mentor_id=mentor_id, status="running")
     step = _make_step(batch_id=batch_id, position=1, status="running")
     step.generation_run_id = uuid4()
+    pending_step = _make_step(batch_id=batch_id, position=2, status="pending")
 
     session = MagicMock()
     session.flush = AsyncMock()
     service = BatchOrchestrationService(session)
 
-    cancel_run = AsyncMock()
+    abandon_run = AsyncMock()
     with (
         patch.object(service, "_get_batch", new_callable=AsyncMock, return_value=batch),
         patch.object(
-            service, "_steps_for_batch", new_callable=AsyncMock, return_value=[step]
+            service,
+            "_steps_for_batch",
+            new_callable=AsyncMock,
+            return_value=[step, pending_step],
         ),
         patch(
             "src.api.core.services.batch_orchestration_service._assert_space_access",
@@ -476,14 +480,21 @@ async def test_cancel_batch_marks_running_steps_failed() -> None:
             "src.api.core.services.batch_orchestration_service.GenerationRunService"
         ) as run_service_cls,
     ):
-        run_service_cls.return_value.cancel_run = cancel_run
+        run_service_cls.return_value.abandon_run = abandon_run
         response = await service.cancel_batch(batch_id, mentor_id, "mentor")
 
     assert response.status == "cancelled"
     assert batch.status == "cancelled"
     assert step.status == "failed"
+    assert pending_step.status == "skipped"
+    assert pending_step.completed_at is not None
     assert batch.failed_steps == 1
-    cancel_run.assert_awaited_once_with(step.generation_run_id, mentor_id=mentor_id)
+    assert batch.skipped_steps == 1
+    abandon_run.assert_awaited_once_with(
+        step.generation_run_id,
+        mentor_id=mentor_id,
+        reason="batch_cancelled",
+    )
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import mimetypes
 import re
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -17,6 +18,7 @@ from llama_cloud import LlamaCloud
 
 from src.api.config import feature_settings, settings
 from src.api.control.study_agent.prompts.parsing import build_parsing_instruction
+from src.api.core.exceptions import GenerationRunAborted
 from src.api.schemas.study_material_schemas.llama_parse_schema import (
     LlamaParseExtractionResult,
     ParseImageRecord,
@@ -39,6 +41,14 @@ _PAGE_FILENAME_RE = re.compile(
     r"page_(\d+)_(?:chart|image)_(\d+)",
     re.IGNORECASE,
 )
+
+JobIdsCallback = Callable[[str | None, str | None], None]
+ShouldContinue = Callable[[], bool]
+
+
+def _abort_if_should_stop(should_continue: ShouldContinue | None) -> None:
+    if should_continue is not None and not should_continue():
+        raise GenerationRunAborted()
 
 
 def compute_pdf_content_hash(file_path: str | Path) -> str:
@@ -110,21 +120,28 @@ def download_figures(
     node_id: UUID,
     stamp: str,
     images_dir: Path | None = None,
+    should_continue: ShouldContinue | None = None,
+    on_job_ids: JobIdsCallback | None = None,
+    extract_job_id: str | None = None,
 ) -> tuple[list[ParseImageRecord], str | None]:
     """Run a Parse job and download extracted images with original filenames."""
     use_gcs = settings.storage_backend == "gcs"
     if not use_gcs and images_dir is not None:
         images_dir.mkdir(parents=True, exist_ok=True)
 
+    _abort_if_should_stop(should_continue)
     parse_job_create = client.parsing.create(
         file_id=file_id,
         tier="agentic",
         version="latest",
     )
     parse_job_id = parse_job_create.id
+    if on_job_ids is not None:
+        on_job_ids(extract_job_id, parse_job_id)
 
     status: str | None = None
     for _ in range(300):
+        _abort_if_should_stop(should_continue)
         parse_job = client.parsing.get(parse_job_id)
         job_obj = getattr(parse_job, "job", None)
         status = (
@@ -150,6 +167,7 @@ def download_figures(
 
     raw_records: list[ParseImageRecord] = []
     for img_meta in images_meta.images:
+        _abort_if_should_stop(should_continue)
         filename = img_meta.filename
         presigned_url = img_meta.presigned_url
         if not presigned_url:
@@ -161,6 +179,7 @@ def download_figures(
         except OSError:
             continue
 
+        _abort_if_should_stop(should_continue)
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         if use_gcs:
             object_key = build_llamaparse_image_key(
@@ -249,6 +268,8 @@ def extract_structured_reference(
     reference_material_id: UUID | None = None,
     material_label: str | None = None,
     artifact_stamp: str | None = None,
+    should_continue: ShouldContinue | None = None,
+    on_job_ids: JobIdsCallback | None = None,
 ) -> LlamaParseExtractionResult:
     """Upload a PDF, extract structured JSON, and download reference figure files."""
     source = Path(file_path)
@@ -273,11 +294,13 @@ def extract_structured_reference(
 
     client = LlamaCloud(api_key=api_key)
 
+    _abort_if_should_stop(should_continue)
     file_obj = client.files.create(file=str(source), purpose="extract")
     file_id = file_obj.id
 
     parsing_instruction = build_parsing_instruction()
 
+    _abort_if_should_stop(should_continue)
     job = client.extract.create(
         file_input=file_id,
         configuration={
@@ -288,8 +311,11 @@ def extract_structured_reference(
         },
     )
     extract_job_id = job.id
+    if on_job_ids is not None:
+        on_job_ids(extract_job_id, None)
 
     for _ in range(300):
+        _abort_if_should_stop(should_continue)
         if job.status in ("COMPLETED", "FAILED", "CANCELLED"):
             break
         time.sleep(1)
@@ -318,6 +344,9 @@ def extract_structured_reference(
         node_id=node_id,
         stamp=stamp,
         images_dir=resolved_images_dir,
+        should_continue=should_continue,
+        on_job_ids=on_job_ids,
+        extract_job_id=extract_job_id,
     )
 
     logger.info(

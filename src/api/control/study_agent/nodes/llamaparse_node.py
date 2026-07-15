@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, cast
@@ -13,11 +14,13 @@ from langchain_core.runnables import RunnableConfig
 
 from src.api.config import llm_settings
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
+from src.api.core.exceptions import GenerationRunAborted
 from src.api.data.repositories import (
     NodeRepository,
 )
 from src.api.utils.reference_llamaparse_utils.reference_llamaparse_cache import (
     resolve_reference_extraction,
+    sync_should_continue_from_loop,
 )
 from src.api.utils.reference_llamaparse_utils.reference_llamaparse_persistence import (
     build_parsed_reference_data_from_extraction,
@@ -34,12 +37,23 @@ async def llamaparse_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
+    from src.api.core.services.generation_run_service import GenerationRunService
     from src.api.schemas import GenerationPipeline
     from src.api.utils.generation_progress.reporter import maybe_report_node_enter
 
     await maybe_report_node_enter(
         config, "llamaparse", default_pipeline=GenerationPipeline.STUDY_MATERIAL
     )
+
+    parsed_checkpoint = state.get("parsed_reference_data") or {}
+    if parsed_checkpoint.get("sections"):
+        logger.info(
+            "LlamaParse skipped — checkpoint already has parsed reference sections"
+        )
+        return {
+            "parsed_reference_data": parsed_checkpoint,
+            "extracted_reference_text": state.get("extracted_reference_text") or "",
+        }
 
     file_path = state.get("reference_file_path")
     if not file_path:
@@ -62,6 +76,37 @@ async def llamaparse_node(
     if session is None or user_id is None:
         return {"error": "Database session and user_id are required for LlamaParse."}
 
+    run_id_raw = configurable.get("run_id")
+    execution_token_raw = configurable.get("execution_token")
+    run_id = UUID(str(run_id_raw)) if run_id_raw else None
+    execution_token = UUID(str(execution_token_raw)) if execution_token_raw else None
+
+    run_service = GenerationRunService(session)
+    loop = asyncio.get_running_loop()
+    should_continue = None
+    if run_id is not None and execution_token is not None:
+
+        async def _token_check() -> bool:
+            return await run_service.should_continue_execution(
+                run_id,
+                execution_token,
+            )
+
+        should_continue = sync_should_continue_from_loop(_token_check, loop)
+
+    def _persist_job_ids(extract_id: str | None, parse_id: str | None) -> None:
+        if run_id is None:
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            run_service.store_llamaparse_job_ids(
+                run_id,
+                extract_id=extract_id,
+                parse_id=parse_id,
+            ),
+            loop,
+        )
+        future.result(timeout=30)
+
     topic_title = state.get("node_title") or "topic"
     material_label = state.get("reference_material_title") or Path(file_path).stem
 
@@ -74,10 +119,21 @@ async def llamaparse_node(
             node_id=node_id,
             topic_title=topic_title,
             material_label=material_label,
+            should_continue=should_continue,
+            on_job_ids=_persist_job_ids,
         )
+    except GenerationRunAborted:
+        raise
     except Exception as exc:
         logger.exception("LlamaParse extraction failed")
         return {"error": f"LlamaParse extraction failed: {exc}"}
+
+    if run_id is not None:
+        await run_service.store_llamaparse_job_ids(
+            run_id,
+            extract_id=extraction.extract_job_id,
+            parse_id=extraction.parse_job_id,
+        )
 
     if extraction.reused_from_cache:
         logger.info(

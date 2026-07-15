@@ -100,8 +100,8 @@ def test_build_steps_for_profile_marks_active_index() -> None:
     ]
 
 
-def test_cancelled_run_maps_to_failed_progress_status() -> None:
+def test_terminal_run_maps_to_failed_progress_status() -> None:
     from src.api.utils.generation_progress.db_store import _status_from_run
 
-    assert _status_from_run("cancelled") == GenerationJobStatus.FAILED
+    assert _status_from_run("abandoned") == GenerationJobStatus.FAILED
     assert _status_from_run("superseded") == GenerationJobStatus.FAILED
