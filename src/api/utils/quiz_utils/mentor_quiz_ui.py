@@ -55,6 +55,7 @@ def compute_mentor_quiz_ui_flags(
         total_questions = quiz_row.total_questions
 
     has_quiz_questions = total_questions > 0
+    has_quiz = quiz_out is not None or quiz_row is not None
     can_access_hints = has_quiz_questions
 
     hints_locked = is_published
@@ -81,7 +82,9 @@ def compute_mentor_quiz_ui_flags(
         else:
             can_publish_quiz = True
 
-    can_edit_questions = has_quiz_questions and not is_published
+    # Empty drafts must remain editable so a mentor can add the first manual
+    # question after a generation run returns no valid questions.
+    can_edit_questions = has_quiz and not is_published
     can_regenerate_quiz = has_quiz_questions and not is_published
 
     # Soft nudge only — no blocking.  Show when the quiz's SM version ID

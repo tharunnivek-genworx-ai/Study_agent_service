@@ -11,6 +11,8 @@ from src.api.utils.quiz_utils.quality_check_utils.document.question_merge import
     merge_full_regeneration_preserving_passing,
     merge_question_patches,
     prepare_question_patches_for_merge,
+    prune_questions_to_count,
+    remove_questions_by_ids,
 )
 
 
@@ -146,3 +148,33 @@ class TestPrepareQuestionPatchesForMerge:
         assert merged[2]["question_id"] == "q3"
         assert merged[2]["correct_option"] == "D"
         assert merged[0]["question_text"] == "Keep 1"
+
+
+class TestPruneQuestions:
+    def test_remove_questions_by_ids(self):
+        existing = [
+            _question("q1", "Q1", 0),
+            _question("q2", "Q2", 1),
+            _question("q3", "Q3", 2),
+        ]
+        kept = remove_questions_by_ids(existing, ["q2"])
+        assert [q["question_id"] for q in kept] == ["q1", "q3"]
+        assert [q["order_index"] for q in kept] == [0, 1]
+
+    def test_prune_prefers_flagged_ids_then_newest(self):
+        existing = [
+            _question("q1", "Q1", 0),
+            _question("q2", "Q2", 1),
+            _question("q3", "Q3", 2),
+            _question("q4", "Q4", 3),
+        ]
+        pruned = prune_questions_to_count(
+            existing,
+            2,
+            prefer_remove_ids=["q2"],
+        )
+        assert len(pruned) == 2
+        assert "q2" not in {q["question_id"] for q in pruned}
+        # One more removed from the newest end (q4).
+        assert "q4" not in {q["question_id"] for q in pruned}
+        assert {q["question_id"] for q in pruned} == {"q1", "q3"}

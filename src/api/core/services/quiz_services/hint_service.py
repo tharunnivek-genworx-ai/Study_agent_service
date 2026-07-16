@@ -81,7 +81,7 @@ class HintService:
         )
 
         repo = HintRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
         if quiz.is_published:

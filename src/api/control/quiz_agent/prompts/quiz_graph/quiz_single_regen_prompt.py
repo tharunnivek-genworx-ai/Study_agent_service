@@ -92,21 +92,21 @@ STEP 1 — HOW TO USE EACH INPUT
    across the full quiz when you change correct_option.
 3. Inspect each question's current JSON in <questions_to_rework>.
 4. Apply <mentor_feedback> as the primary directive for what changes.
-5. Return a JSON array containing ONLY the reworked questions (same schema as the
-   full quiz), not a diff. Every returned object must include question_id and
-   "hints_stale": true.
+5. Return a JSON object with a "questions" array containing ONLY the reworked questions
+   (same schema as the full quiz), not a diff. Every returned object must include
+   question_id and "hints_stale": true.
 """
 _SYSTEM_PROMPT_SUFFIX = """
 RULE — QUESTION QUALITY
 {question_quality_block}
 {output_format_block}
 OUTPUT EXTENSION — MENTOR REWORK
-Each object in the returned array MUST also include:
+Each object in the returned "questions" array MUST also include:
   "question_id": "<preserve exactly from <questions_to_rework>>"
   "hints_stale": true
 ABSOLUTE RULES
-- Output ONLY the JSON array of reworked questions, OR the vague-feedback object
-  from VAGUE FEEDBACK CHECK when feedback is too vague.
+- Output ONLY the JSON object with a "questions" array of reworked questions, OR the
+  vague-feedback object from VAGUE FEEDBACK CHECK when feedback is too vague.
 - Preserve question_id on every reworked question exactly as provided.
 - Add "hints_stale": true on every reworked question.
 - Never invent facts not present in the study material.
@@ -139,7 +139,7 @@ MENTOR QUESTION REWORK REQUEST
 Rewrite ONLY the questions in <questions_to_rework> per <mentor_feedback>.
 Preserve question_id exactly. Use <quiz_outline> correct-option counts to keep
 A/B/C/D evenly distributed when you change correct_option. Mark every rewritten
-question with "hints_stale": true. Return the JSON array now."""
+question with "hints_stale": true. Return the JSON object now."""
 
 
 def build_system_prompt(domain: str | None = None) -> str:

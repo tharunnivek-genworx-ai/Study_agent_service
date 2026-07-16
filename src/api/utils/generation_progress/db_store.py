@@ -138,3 +138,17 @@ class DbGenerationProgressStore:
         if record is None:
             return None
         return record.to_progress_out()
+
+    async def to_progress_out_for_mentor(
+        self,
+        run_id: UUID,
+        mentor_id: UUID,
+    ) -> GenerationProgressOut | None:
+        """Return progress only when the authenticated mentor owns the run."""
+        run = await self._repo.get_by_id(run_id)
+        if run is None or run.mentor_id != mentor_id:
+            return None
+        record = await self.get_record(run_id)
+        if record is None:
+            return None
+        return record.to_progress_out()

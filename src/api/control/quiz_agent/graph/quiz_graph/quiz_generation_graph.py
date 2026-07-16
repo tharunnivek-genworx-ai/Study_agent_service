@@ -37,6 +37,7 @@ Generate/regenerate subgraph::
       → [generate]   quiz_generator
     quiz_generator → parse (if needed) → deterministic_validate
       → [struct pass] quality_check → persist_quiz_draft → END
+      → [count overflow] quiz_generator (question_prune) → persist (skip QC) → END
       → [struct fail, retries left] quiz_generator (loop)
       → [max attempts / terminal LLM fail] persist_quiz_draft → END
 
@@ -158,6 +159,9 @@ def _route_after_quiz_generator(
         return "persist_quiz_draft"
     if state.get("error"):
         return "__end__"
+    # Successful overflow prune: skip QC and present the quiz immediately.
+    if state.get("present_without_qc") and state.get("struct_validation_passed"):
+        return "persist_quiz_draft"
     # quiz_generator_node may parse inline; skip redundant parse node when set.
     if state.get("parsed_questions") is not None:
         return "deterministic_validate"
@@ -178,6 +182,9 @@ def _route_after_deterministic_validate(
 ) -> Literal["quiz_generator", "quality_check", "persist_quiz_draft"]:
     """Loop back to generator on struct fail, or advance to QC / persist."""
     if state.get("struct_validation_passed"):
+        # After overflow prune, present the quiz without another QC pass.
+        if state.get("present_without_qc"):
+            return "persist_quiz_draft"
         return "quality_check"
     # MAX_GEN_ATTEMPTS exhausted — persist draft with QC diagnostics.
     if state.get("qc_failed_permanently"):

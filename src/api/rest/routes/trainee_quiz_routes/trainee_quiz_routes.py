@@ -22,6 +22,8 @@ from src.api.schemas.quiz_schemas import (
     PublishedQuizDiscoveryOut,
     QuizAttemptOut,
     QuizAttemptStartRequest,
+    QuizAttemptStateOut,
+    QuizAttemptStatePatch,
     QuizAttemptSubmitRequest,
     QuizQuestionResponseOut,
     QuizQuestionResponseRequest,
@@ -102,6 +104,23 @@ async def submit_question_response(
     )
 
 
+@router.patch(
+    "/attempts/{attempt_id}/state",
+    response_model=QuizAttemptStateOut,
+)
+async def patch_quiz_attempt_state(
+    attempt_id: UUID,
+    payload: QuizAttemptStatePatch,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizAttemptStateOut:
+    """Persist trainee navigation state before leaving or changing questions."""
+    service = TraineeQuizService(db)
+    return await service.patch_attempt_state(
+        attempt_id, payload, current_user.sub, current_user.role
+    )
+
+
 @router.post(
     "/attempts/{attempt_id}/submit",
     response_model=QuizAttemptOut,
@@ -156,11 +175,12 @@ async def list_archived_quizzes(
 async def review_archived_quiz(
     node_id: UUID,
     quiz_id: UUID,
+    attempt_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
 ) -> ArchivedQuizReviewOut:
     """Read-only review of an archived quiz with answers and explanations."""
     service = TraineeQuizService(db)
     return await service.review_archived_quiz(
-        node_id, quiz_id, current_user.sub, current_user.role
+        node_id, quiz_id, current_user.sub, current_user.role, attempt_id
     )

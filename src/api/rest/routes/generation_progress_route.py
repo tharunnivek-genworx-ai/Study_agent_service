@@ -27,10 +27,11 @@ async def get_generation_progress(
 
     ``session_id`` is the durable ``run_id`` returned when generation starts.
     """
-    del current_user  # auth gate only
-
     db_store = DbGenerationProgressStore(session)
-    progress_out = await db_store.to_progress_out(session_id)
+    progress_out = await db_store.to_progress_out_for_mentor(
+        session_id,
+        current_user.sub,
+    )
     if progress_out is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

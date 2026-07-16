@@ -36,7 +36,7 @@ RULE — QUESTION QUALITY
 {question_quality_block}
 {output_format_block}
 ABSOLUTE RULES
-- Output ONLY the JSON array of new question objects.
+- Output ONLY the JSON object with a "questions" array of new question objects.
 - Do NOT include question_id — the application assigns ids on merge.
 - Produce exactly as many questions as there are missing concepts unless a
   concept genuinely cannot support a question (note in topic_tag).
@@ -64,7 +64,7 @@ QUESTION INSERT REQUEST
 </missing_concepts>
 Write new questions for every concept in <missing_concepts>. Do not duplicate
 concepts in <existing_quiz_outline>. Use <existing_quiz_outline> correct-option
-counts to assign underrepresented letters (A/B/C/D). Return the JSON array now."""
+counts to assign underrepresented letters (A/B/C/D). Return the JSON object now."""
 
 
 def build_system_prompt(domain: str | None = None) -> str:

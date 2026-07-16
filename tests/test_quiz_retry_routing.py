@@ -64,10 +64,34 @@ class TestClassifyQuizRetryRouting:
 
     def test_missing_concepts_insert(self):
         qc_result = {
-            "checks": [_failed_check(category="duplicate_overlap", question_id=None)],
-            "failed_checks": [
-                _failed_check(category="duplicate_overlap", question_id=None)
+            "checks": [
+                {
+                    "id": "duplicate_overlap",
+                    "category": "duplicate_overlap",
+                    "question": "coverage?",
+                    "passed": False,
+                    "severity": "major",
+                    "evidence": "duplicates=[]; coverage=['Recursion']",
+                    "corrective_hint": "Add coverage",
+                }
             ],
+            "failed_checks": [
+                {
+                    "id": "duplicate_overlap",
+                    "category": "duplicate_overlap",
+                    "question": "coverage?",
+                    "passed": False,
+                    "severity": "major",
+                    "evidence": "duplicates=[]; coverage=['Recursion']",
+                    "corrective_hint": "Add coverage",
+                }
+            ],
+            "quiz_summary": {
+                "difficulty_ok": True,
+                "difficulty_counts": {"easy": 1, "medium": 0, "hard": 0},
+                "duplicate_concepts": [],
+                "coverage_issues": ["Recursion"],
+            },
             "retry_recommendation": {
                 "mode": "question_insert",
                 "missing_concepts": ["Recursion"],
@@ -76,7 +100,61 @@ class TestClassifyQuizRetryRouting:
         }
         result = classify_quiz_retry_routing(qc_result, [_question("q1")])
         assert result.mode == "question_insert"
-        assert "Recursion" in result.missing_concepts
+        assert result.missing_concepts == ["Recursion"]
+        assert not any(
+            concept.startswith("duplicates=") for concept in result.missing_concepts
+        )
+
+    def test_duplicate_overlap_evidence_blob_is_not_a_missing_concept(self):
+        evidence = "duplicates=[]; coverage=['The Battle of Stalingrad']"
+        qc_result = {
+            "checks": [
+                {
+                    "id": "duplicate_overlap",
+                    "category": "duplicate_overlap",
+                    "question": "coverage?",
+                    "passed": False,
+                    "severity": "major",
+                    "evidence": evidence,
+                    "corrective_hint": "Add coverage",
+                }
+            ],
+            "failed_checks": [
+                {
+                    "id": "duplicate_overlap",
+                    "category": "duplicate_overlap",
+                    "question": "coverage?",
+                    "passed": False,
+                    "severity": "major",
+                    "evidence": evidence,
+                    "corrective_hint": "Add coverage",
+                }
+            ],
+            "quiz_summary": {
+                "coverage_issues": ["The Battle of Stalingrad"],
+            },
+            "retry_recommendation": {
+                "mode": "question_patch",
+                "failed_question_ids": ["q3"],
+                "missing_concepts": [
+                    "The Battle of Stalingrad",
+                    evidence,
+                ],
+            },
+            "wrong_answer_risk": "none",
+        }
+        questions = [_question(f"q{i}") for i in range(1, 9)]
+        # Also fail a per-question check so mode can be patch_then_insert.
+        qc_result["failed_checks"].append(
+            _failed_check(category="answer_correctness", question_id="q3")
+        )
+        qc_result["checks"].append(
+            _failed_check(category="answer_correctness", question_id="q3")
+        )
+        result = classify_quiz_retry_routing(qc_result, questions)
+        assert result.mode == "question_patch_then_insert"
+        assert result.missing_concepts == ["The Battle of Stalingrad"]
+        assert result.failed_question_ids == ["q3"]
 
     def test_four_failed_questions_force_full_regeneration(self):
         questions = [_question(f"q{i}") for i in range(1, 6)]

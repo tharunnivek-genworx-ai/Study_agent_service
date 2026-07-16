@@ -78,10 +78,13 @@ def compute_nav_status(
         return "skipped" if attempt_submitted and skipped_at_submit else "notVisited"
     if response.was_locked:
         return "answered"
+    if response.was_skipped:
+        return "skipped"
     if attempt_submitted and skipped_at_submit:
         return "skipped"
     if (
-        response.selected_option is not None
+        response.is_visited
+        or response.selected_option is not None
         or response.hint_level_reached > 0
         or response.is_correct is False
     ):

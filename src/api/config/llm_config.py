@@ -75,6 +75,7 @@ class LLMSettings(BaseSettings):
     # QC token budgets (Groq on_demand TPM counts input + max_tokens per request)
     qc_llm_max_tokens: int = 4096
     quiz_qc_llm_max_tokens: int = 8192
+    quiz_generation_llm_max_tokens: int = 16384
     groq_qc_tpm_limit: int = 12000
     qc_document_max_chars: int = 80000
 

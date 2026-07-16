@@ -28,6 +28,22 @@ def det_question_count(
 ) -> dict[str, Any]:
     actual = len(questions)
     passed = actual == expected_count
+    if passed:
+        hint = ""
+    elif actual < expected_count:
+        missing = expected_count - actual
+        hint = (
+            f"You returned {actual} questions but the required count is "
+            f"{expected_count}. Add {missing} more distinct question(s) and return "
+            f'exactly {expected_count} objects in the "questions" array — not a '
+            f"partial set and not an addendum to the previous draft."
+        )
+    else:
+        hint = (
+            f"You returned {actual} questions but the required count is "
+            f"{expected_count}. Remove {actual - expected_count} question(s) and "
+            f'return exactly {expected_count} objects in the "questions" array.'
+        )
     return {
         "id": "det_question_count",
         "category": "quiz_coherence",
@@ -41,11 +57,7 @@ def det_question_count(
             if not passed
             else f"Question count matches requested {expected_count}."
         ),
-        "corrective_hint": (
-            ""
-            if passed
-            else f"Return exactly {expected_count} questions in the JSON array."
-        ),
+        "corrective_hint": hint,
     }
 
 

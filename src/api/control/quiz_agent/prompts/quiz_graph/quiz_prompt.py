@@ -1,6 +1,6 @@
 """Quiz generation prompts — self-contained, no shared imports.
-Output contract: a JSON array of question objects, ready to map directly onto
-`quiz_questions` rows (question_text, option_a..option_d, correct_option,
+Output contract: a JSON object ``{"questions": [...]}`` of question objects, ready to map
+directly onto `quiz_questions` rows (question_text, option_a..option_d, correct_option,
 explanation, difficulty, topic_tag, domain).
 Domain-aware: classification mirrors the study_agent's STEM / Programming /
 Conceptual / Mixed split, so a quiz on thermodynamics, a quiz on React hooks,
@@ -67,28 +67,56 @@ is missing or one letter appears far more often than the others, rebalance by re
 affected questions until the spread is fair."""
 # SHARED OUTPUT FORMAT (used by both GENERATE and REGENERATE)
 OUTPUT_FORMAT_BLOCK = """
-OUTPUT FORMAT — STRICT JSON ONLY
-Return a single JSON array. No prose, no markdown fences, no preamble or trailing text.
-Each element is one question object with EXACTLY these keys:
-[
-  {
-    "question_text": "string",
-    "option_a": "string",
-    "option_b": "string",
-    "option_c": "string",
-    "option_d": "string",
-    "correct_option": "C",
-    "explanation": "string — 1-3 sentences, shown to the trainee only after they submit",
-    "difficulty": "easy" | "medium" | "hard",
-    "domain": "STEM" | "Programming" | "Conceptual",
-    "topic_tag": "string — short label for the concept this question tests"
-  },
-  ...
-]
+OUTPUT FORMAT — STRICT JSON OBJECT ONLY
+Return a single JSON object. No prose, no markdown fences, no preamble or trailing text.
+Shape:
+{
+  "questions": [
+    {
+      "question_text": "string",
+      "option_a": "string",
+      "option_b": "string",
+      "option_c": "string",
+      "option_d": "string",
+      "correct_option": "C",
+      "explanation": "string — 1-3 sentences, shown to the trainee only after they submit",
+      "difficulty": "easy" | "medium" | "hard",
+      "domain": "STEM" | "Programming" | "Conceptual",
+      "topic_tag": "string — short label for the concept this question tests"
+    }
+  ]
+}
 - "domain" is the domain of THIS question, chosen from the overall topic's classification
   in <domain> (for a Mixed topic, pick whichever single domain this specific question
   actually tests).
-- "correct_option" must be exactly "A", "B", "C", or "D"."""
+- "correct_option" must be exactly "A", "B", "C", or "D".
+- Partial outputs (rework / patch calls) still use the same object shape with only the
+  rewritten questions inside "questions"."""
+
+EXACT_QUESTION_COUNT_BLOCK = """
+RULE — EXACT QUESTION COUNT (MANDATORY)
+You MUST return exactly {question_count} question objects inside "questions".
+- Do NOT return fewer or more than {question_count} questions.
+- Do NOT add placeholder, padding, or GENERATION NOTE entries to reach the count.
+- Before outputting, count the elements in "questions" and confirm the count is exactly
+  {question_count}. If the count is wrong, fix it before responding."""
+
+REGENERATE_EXACT_QUESTION_COUNT_BLOCK = """
+RULE — EXACT QUESTION COUNT (MANDATORY) — FULL REPLACEMENT
+You are REPLACING the entire quiz draft. Return exactly {question_count} question objects
+inside "questions" — this is the complete final quiz, not an addendum to
+<current_quiz_draft>.
+- The current draft has {existing_question_count} question(s); your output must contain
+  exactly {question_count} question(s) total.
+- Resize direction: {resize_direction}.
+- If expanding, you must invent {questions_to_add} NEW distinct question(s) (in addition
+  to revised/kept concepts) so the final "questions" array length is {question_count}.
+  Do not stop early after revising only the existing draft.
+- Do NOT return the current draft plus extras as two separate sets — return ONE array of
+  length {question_count}.
+- Do NOT return more than {question_count} or fewer than {question_count} questions.
+- Before outputting, count the elements in "questions" and confirm the count is exactly
+  {question_count}. If the count is wrong, fix it before responding."""
 # RULE — DOMAIN CLASSIFICATION (shared)
 DOMAIN_CLASSIFICATION_FULL_BLOCK = """
 RULE — DOMAIN CLASSIFICATION
@@ -201,17 +229,12 @@ GENERATION WORKFLOW — follow this order strictly
 4. SELF-CHECK: read each question_text in isolation — embed any missing context so a
    trainee can answer from the quiz alone; verify difficulty balance and correct_option
    distribution.
-5. OUTPUT the JSON array only.
+5. OUTPUT the JSON object with a "questions" array only.
 RULE — SOURCE OF TRUTH
 The study material provided is your ONLY source of facts. Do not introduce facts, APIs,
 configs, commands, formulas, named cases, or behaviours that are not stated or directly
 inferable from it. Every question, every option, and every explanation must be answerable
 and verifiable using only the study material's content.
-If the study material does not contain enough distinct, testable concepts to honestly
-produce the requested number of high-quality questions, generate as many strong questions
-as the material genuinely supports rather than padding with trivial or repetitive ones,
-and note the shortfall in a final element with "question_text": "GENERATION NOTE: ..." —
-only do this as a last resort.
 """
 _SYSTEM_PROMPT_GENERATE_COVERAGE = """
 RULE — COVERAGE
@@ -221,18 +244,17 @@ concepts, steps, derivations, and named cases that the study material itself emp
 (named steps, "###" subheadings, explicitly called-out pitfalls, worked examples).
 """
 _SYSTEM_PROMPT_GENERATE_SUFFIX = """
+{exact_question_count_block}
 RULE — QUESTION QUALITY
 {question_quality_block}
 {output_format_block}
 ABSOLUTE RULES
-- Output ONLY the JSON array. No markdown fences, no commentary, no trailing notes
-  (other than the optional GENERATION NOTE element described above).
+- Output ONLY the JSON object with a "questions" array. No markdown fences, no commentary,
+  no trailing notes.
 - Never invent facts, formulas, named cases, or constants not present in the study material.
 - Every question's "domain" must be one of STEM, Programming, or Conceptual — even for a
   Mixed topic, classify each question individually.
 - Do NOT generate hints — that is the Hint Agent's job.
-- Produce exactly the requested number of questions unless the SOURCE OF TRUTH
-  shortfall rule applies.
 - Spread correct_option evenly across A, B, C, and D — every letter should appear
   as the correct answer in a balanced way."""
 # REGENERATE — system prompt
@@ -241,17 +263,22 @@ SYSTEM PROMPT  ·  StudyGuru Quiz Agent  ·  REGENERATE
 You are a Quiz Writer for an e-learning platform that teaches any academic or
 technical subject. You are REVISING an existing quiz draft for a single study
 material document, based on mentor feedback.
-You are given THREE inputs: the study material (source of truth), the current quiz draft
-(questions as they exist now, WITHOUT hints — hints are managed separately), and the
-mentor's feedback (what to change and why).
+You are given TWO inputs: the current quiz draft (questions as they exist now,
+WITHOUT hints — hints are managed separately), and the mentor's feedback (what to
+change and why). Study material is not provided in this regenerate call — ground
+changes in the current draft and mentor feedback only.
 Hints are NOT your responsibility. Do not generate or modify hint_1, hint_2, hint_3.
 The Hint Agent will regenerate hints for any questions that change.
 """
+# Original THREE-input prefix (re-enable with <study_material> in user message):
+# You are given THREE inputs: the study material (source of truth), the current quiz draft
+# (questions as they exist now, WITHOUT hints — hints are managed separately), and the
+# mentor's feedback (what to change and why).
 _SYSTEM_PROMPT_REGENERATE_INPUT_RULES = """
 RULE — HOW TO USE EACH INPUT
-1. Treat the study material as the ONLY factual source of truth.
-   If the current draft contains a question that conflicts with or is no longer supported
-   by the study material, rewrite or replace it regardless of whether feedback mentions it.
+1. Treat the current quiz draft as the factual starting point for concepts, wording,
+   options, and explanations. Prefer revising from that draft rather than inventing
+   unrelated topics.
 2. Inspect the current quiz draft as your starting point — do not start from a blank slate.
 3. Apply the mentor's feedback as the primary driver of what changes.
 4. For each question in the current draft, decide:
@@ -262,10 +289,11 @@ RULE — HOW TO USE EACH INPUT
    - REPLACE if it is weak, redundant, factually unsupported, or feedback asks for a
      different question on that concept entirely.
 5. If feedback implies new concepts should be tested that the draft doesn't cover, add new
-   questions for them within the total question count.
-6. Return a COMPLETE revised quiz draft of the same total length as the current draft
-   (unless feedback explicitly asks to add or remove questions) — not a diff, not a list
-   of changes, not just the new/changed questions.
+   questions for them — and when <target_question_count> is larger than the current draft,
+   you MUST add enough new questions to reach that target (see <questions_to_add>).
+6. Return a COMPLETE replacement quiz draft with exactly the target question count from
+   <target_question_count> — not a diff, not an addendum to <current_quiz_draft>, and not
+   current-draft-plus-new questions. Count the final "questions" array before responding.
 RULE — SIGNAL CHANGED QUESTIONS
 For every question that was REVISED or REPLACED (not kept as-is), add a boolean field:
   "hints_stale": true
@@ -280,24 +308,35 @@ No single letter should dominate the full set.
 RULE — MAINTAIN OVERALL QUALITY BAR
 After applying feedback, the revised set as a whole must still satisfy:
 """
+# Original rule 1 while SM was included:
+# 1. Treat the study material as the ONLY factual source of truth.
+#    If the current draft contains a question that conflicts with or is no longer supported
+#    by the study material, rewrite or replace it regardless of whether feedback mentions it.
 _SYSTEM_PROMPT_REGENERATE_QUALITY_TAIL = """- Every question tests ONE clear idea, uses exact study-material terminology, and has a
   self-contained explanation.
 - No duplicate or near-duplicate questions in the final set across kept/revised/new questions.
 - If applying feedback breaks the difficulty distribution, rebalance the kept questions'
   difficulties where reasonable before adding brand new questions.
+{exact_question_count_block}
 RULE — QUESTION QUALITY
 {question_quality_block}
 {output_format_block}
 ABSOLUTE RULES
-- Output ONLY the full revised JSON array — every question in the final quiz.
-- Never invent facts, formulas, named cases, or constants not present in the study material,
-  even if feedback implies them.
-- Do not silently ignore mentor feedback; if feedback conflicts with the study material,
-  prioritize factual accuracy and adjust in the spirit of the feedback where possible.
+- Output ONLY the full revised JSON object with a "questions" array — every question in
+  the final quiz.
+- Stay consistent with facts already present in the current quiz draft; do not invent
+  unrelated topics. Study material is not provided in this regenerate call.
+- Do not silently ignore mentor feedback; apply it while keeping the revised set coherent
+  with the current draft.
 - Do NOT generate hints. Only add "hints_stale": true where applicable.
 - No markdown fences, no commentary, no diff-style output.
 - correct_option must stay evenly distributed across A, B, C, and D across the
   full revised set."""
+# Absolute rules while study material was included on regenerate:
+# - Never invent facts, formulas, named cases, or constants not present in the study material,
+#   even if feedback implies them.
+# - Do not silently ignore mentor feedback; if feedback conflicts with the study material,
+#   prioritize factual accuracy and adjust in the spirit of the feedback where possible.
 # GENERATE — user message template
 USER_MESSAGE_TEMPLATE_GENERATE = """
 USER MESSAGE  —  assemble this at call time and pass as role: user
@@ -318,7 +357,7 @@ USER MESSAGE  —  assemble this at call time and pass as role: user
 </difficulty_profile>
 {topic_split_block}
 Follow the GENERATION WORKFLOW. Spread correct_option evenly across A, B, C, and D.
-Generate the quiz now."""
+Generate exactly {num_questions} questions now."""
 # REGENERATE — user message template
 USER_MESSAGE_TEMPLATE_REGENERATE = """
 USER MESSAGE  —  assemble this at call time and pass as role: user
@@ -328,22 +367,38 @@ USER MESSAGE  —  assemble this at call time and pass as role: user
 <domain>
 {domain}
 </domain>
-<study_material>
-{study_material_content}
-</study_material>
 <current_quiz_draft>
 {current_quiz_draft_json}
 </current_quiz_draft>
+<current_draft_question_count>
+{existing_question_count}
+</current_draft_question_count>
+<target_question_count>
+{num_questions}
+</target_question_count>
+<questions_to_add>
+{questions_to_add}
+</questions_to_add>
+<resize_direction>
+{resize_direction}
+</resize_direction>
 <mentor_feedback>
 {mentor_feedback_text}
 </mentor_feedback>
-<question_count>
-{num_questions}
-</question_count>
 {topic_split_block}
-Revise the quiz now. Return the complete revised set of {num_questions} questions.
+Revise the quiz now. Return a complete replacement set of exactly {num_questions}
+questions inside "questions". Do not append to <current_quiz_draft>.
+If <questions_to_add> is greater than 0, write that many additional distinct questions
+so the final array length is exactly {num_questions}.
 Mark revised or replaced questions with "hints_stale": true.
 Keep correct_option evenly distributed across A, B, C, and D across the full set."""
+
+# Temporarily disabled: full regenerate previously included study material:
+# <study_material>
+# {study_material_content}
+# </study_material>
+# Re-enable in USER_MESSAGE_TEMPLATE_REGENERATE (and pass study_material_content
+# in build_quiz_prompt) when SM grounding is needed again on regenerate.
 
 
 # Helpers
@@ -367,7 +422,45 @@ def build_domain_question_rules_block(domain: str | None) -> str:
     )
 
 
-def _build_generate_system_prompt(domain: str | None) -> str:
+def _build_exact_question_count_block(question_count: int | None) -> str:
+    if question_count is None or question_count <= 0:
+        return ""
+    return EXACT_QUESTION_COUNT_BLOCK.format(question_count=question_count)
+
+
+def _build_regenerate_exact_question_count_block(
+    question_count: int | None,
+    existing_question_count: int,
+) -> str:
+    if question_count is None or question_count <= 0:
+        return ""
+    questions_to_add = max(0, question_count - existing_question_count)
+    if question_count > existing_question_count:
+        resize_direction = (
+            f"EXPAND from {existing_question_count} to {question_count} "
+            f"(add {questions_to_add} new question(s))"
+        )
+    elif question_count < existing_question_count:
+        resize_direction = (
+            f"SHRINK from {existing_question_count} to {question_count} "
+            f"(drop {existing_question_count - question_count} question(s))"
+        )
+    else:
+        resize_direction = (
+            f"KEEP SIZE at {question_count} "
+            "(revise in place; do not change the total count)"
+        )
+    return REGENERATE_EXACT_QUESTION_COUNT_BLOCK.format(
+        question_count=question_count,
+        existing_question_count=existing_question_count,
+        questions_to_add=questions_to_add,
+        resize_direction=resize_direction,
+    )
+
+
+def _build_generate_system_prompt(
+    domain: str | None, question_count: int | None = None
+) -> str:
     domain_rules = (
         f"{DIFFICULTY_RULES_BLOCK}\n{build_domain_question_rules_block(domain)}"
     )
@@ -379,13 +472,20 @@ def _build_generate_system_prompt(domain: str | None) -> str:
         + domain_rules
         + "\n\n"
         + _SYSTEM_PROMPT_GENERATE_SUFFIX.format(
+            exact_question_count_block=_build_exact_question_count_block(
+                question_count
+            ),
             question_quality_block=QUESTION_QUALITY_BLOCK,
             output_format_block=OUTPUT_FORMAT_BLOCK,
         )
     )
 
 
-def _build_regenerate_system_prompt(domain: str | None) -> str:
+def _build_regenerate_system_prompt(
+    domain: str | None,
+    question_count: int | None = None,
+    existing_question_count: int = 0,
+) -> str:
     domain_rules = (
         f"{DIFFICULTY_RULES_BLOCK}\n{build_domain_question_rules_block(domain)}"
     )
@@ -397,6 +497,10 @@ def _build_regenerate_system_prompt(domain: str | None) -> str:
         + domain_rules
         + "\n\n"
         + _SYSTEM_PROMPT_REGENERATE_QUALITY_TAIL.format(
+            exact_question_count_block=_build_regenerate_exact_question_count_block(
+                question_count,
+                existing_question_count,
+            ),
             question_quality_block=QUESTION_QUALITY_BLOCK,
             output_format_block=OUTPUT_FORMAT_BLOCK,
         )
@@ -404,11 +508,19 @@ def _build_regenerate_system_prompt(domain: str | None) -> str:
 
 
 def build_quiz_system_prompt(
-    *, is_regeneration: bool, domain: str | None = None
+    *,
+    is_regeneration: bool,
+    domain: str | None = None,
+    question_count: int | None = None,
+    existing_question_count: int = 0,
 ) -> str:
     if is_regeneration:
-        return _build_regenerate_system_prompt(domain)
-    return _build_generate_system_prompt(domain)
+        return _build_regenerate_system_prompt(
+            domain,
+            question_count,
+            existing_question_count,
+        )
+    return _build_generate_system_prompt(domain, question_count)
 
 
 SYSTEM_PROMPT_GENERATE = build_quiz_system_prompt(is_regeneration=False, domain="")
@@ -471,22 +583,40 @@ def build_quiz_prompt(
     to ChatGroq. No prompt strings are constructed by the caller.
     """
     is_regeneration = mode == "regenerate"
+    existing_questions = existing_quiz_questions or []
+    existing_question_count = len(existing_questions)
     system_prompt = build_quiz_system_prompt(
         is_regeneration=is_regeneration,
         domain=domain,
+        question_count=question_count,
+        existing_question_count=existing_question_count,
     )
     study_material = (study_material_content or "").strip()
     topic_split_block = build_topic_split_block(topic_split)
     if is_regeneration:
+        questions_to_add = max(0, question_count - existing_question_count)
+        if question_count > existing_question_count:
+            resize_direction = (
+                f"EXPAND from {existing_question_count} to {question_count}"
+            )
+        elif question_count < existing_question_count:
+            resize_direction = (
+                f"SHRINK from {existing_question_count} to {question_count}"
+            )
+        else:
+            resize_direction = f"KEEP SIZE at {question_count}"
         user_message = USER_MESSAGE_TEMPLATE_REGENERATE.format(
             topic_title=node_title or "",
             domain=domain or "",
-            study_material_content=study_material,
+            # study_material_content=study_material,  # temporarily omitted on full regenerate
             current_quiz_draft_json=json.dumps(
-                existing_quiz_questions or [], ensure_ascii=False, default=str
+                existing_questions, ensure_ascii=False, default=str
             ),
+            existing_question_count=existing_question_count,
             mentor_feedback_text=mentor_feedback or "",
             num_questions=question_count,
+            questions_to_add=questions_to_add,
+            resize_direction=resize_direction,
             topic_split_block=topic_split_block,
         )
         user_message += _build_previous_failed_qc_feedback_block(

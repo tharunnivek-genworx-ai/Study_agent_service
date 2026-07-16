@@ -90,6 +90,13 @@ class QuizGenerateRequest(BaseModel):
         default=None,
         description="Optional feedback or goal for regeneration.",
     )
+    resize_question_count: bool = Field(
+        default=False,
+        description=(
+            "When mode='regenerate', set True only when intentionally changing the "
+            "number of questions. Otherwise the server preserves the current draft size."
+        ),
+    )
 
 
 class QuizDeleteOut(BaseModel):
@@ -191,10 +198,32 @@ class QuizQuestionUpdateRequest(BaseModel):
     order_index: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def reject_blank_option_fields(self) -> Self:
-        for field in ("option_a", "option_b", "option_c", "option_d"):
+    def reject_null_required_fields(self) -> Self:
+        required_fields = (
+            "question_text",
+            "option_a",
+            "option_b",
+            "option_c",
+            "option_d",
+            "correct_option",
+            "order_index",
+        )
+        for field in required_fields:
             value = getattr(self, field)
-            if value is not None and not str(value).strip():
+            if field in self.model_fields_set and value is None:
+                raise ValueError(f"{field} cannot be null when provided.")
+            if (
+                field
+                in {
+                    "question_text",
+                    "option_a",
+                    "option_b",
+                    "option_c",
+                    "option_d",
+                }
+                and value is not None
+                and not str(value).strip()
+            ):
                 raise ValueError(f"{field} must be non-empty when provided.")
         return self
 
@@ -452,6 +481,7 @@ class TraineeQuizQuestionOut(BaseModel):
     # Current attempt state for this question
     hint_level_reached: int
     was_skipped: bool
+    is_flagged: bool = False
     was_locked: bool
     selected_option: str | None
     is_correct: bool | None
@@ -499,6 +529,39 @@ class QuizAttemptStartRequest(BaseModel):
     """
 
     pass
+
+
+class QuizAttemptStatePatch(BaseModel):
+    """Idempotent persisted navigation state for an in-progress attempt."""
+
+    question_id: UUID
+    is_visited: bool | None = None
+    is_flagged: bool | None = None
+    was_skipped: bool | None = None
+    resume_question_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_state_change(self) -> Self:
+        if not any(
+            field in self.model_fields_set
+            for field in (
+                "is_visited",
+                "is_flagged",
+                "was_skipped",
+                "resume_question_id",
+            )
+        ):
+            raise ValueError("At least one navigation state field is required.")
+        return self
+
+
+class QuizAttemptStateOut(BaseModel):
+    attempt_id: UUID
+    question_id: UUID
+    is_visited: bool
+    is_flagged: bool
+    was_skipped: bool
+    resume_question_id: UUID | None = None
 
 
 class QuizQuestionResponseRequest(BaseModel):

@@ -13,17 +13,12 @@ GENERATION WORKFLOW — follow this order strictly
 4. SELF-CHECK: read each question_text in isolation — embed any missing context so a
    trainee can answer from the quiz alone; verify difficulty balance and correct_option
    distribution.
-5. OUTPUT the JSON array only.
+5. OUTPUT the JSON object with a "questions" array only.
 RULE — SOURCE OF TRUTH
 The study material provided is your ONLY source of facts. Do not introduce facts, APIs,
 configs, commands, formulas, named cases, or behaviours that are not stated or directly
 inferable from it. Every question, every option, and every explanation must be answerable
 and verifiable using only the study material's content.
-If the study material does not contain enough distinct, testable concepts to honestly
-produce the requested number of high-quality questions, generate as many strong questions
-as the material genuinely supports rather than padding with trivial or repetitive ones,
-and note the shortfall in a final element with "question_text": "GENERATION NOTE: ..." —
-only do this as a last resort.
 
 RULE — DOMAIN CLASSIFICATION
 If <domain> is provided, use it. Otherwise classify the topic yourself:
@@ -122,6 +117,7 @@ scenario drawn from the study material — not just "define X."
 
 
 
+
 RULE — QUESTION QUALITY
 - Each question must test ONE clear idea. Avoid compound stems,
   "all of the above", or "none of the above".
@@ -168,36 +164,37 @@ Before outputting, scan your correct_option values from start to finish. If any 
 is missing or one letter appears far more often than the others, rebalance by rewriting
 affected questions until the spread is fair.
 
-OUTPUT FORMAT — STRICT JSON ONLY
-Return a single JSON array. No prose, no markdown fences, no preamble or trailing text.
-Each element is one question object with EXACTLY these keys:
-[
-  {
-    "question_text": "string",
-    "option_a": "string",
-    "option_b": "string",
-    "option_c": "string",
-    "option_d": "string",
-    "correct_option": "C",
-    "explanation": "string — 1-3 sentences, shown to the trainee only after they submit",
-    "difficulty": "easy" | "medium" | "hard",
-    "domain": "STEM" | "Programming" | "Conceptual",
-    "topic_tag": "string — short label for the concept this question tests"
-  },
-  ...
-]
+OUTPUT FORMAT — STRICT JSON OBJECT ONLY
+Return a single JSON object. No prose, no markdown fences, no preamble or trailing text.
+Shape:
+{
+  "questions": [
+    {
+      "question_text": "string",
+      "option_a": "string",
+      "option_b": "string",
+      "option_c": "string",
+      "option_d": "string",
+      "correct_option": "C",
+      "explanation": "string — 1-3 sentences, shown to the trainee only after they submit",
+      "difficulty": "easy" | "medium" | "hard",
+      "domain": "STEM" | "Programming" | "Conceptual",
+      "topic_tag": "string — short label for the concept this question tests"
+    }
+  ]
+}
 - "domain" is the domain of THIS question, chosen from the overall topic's classification
   in <domain> (for a Mixed topic, pick whichever single domain this specific question
   actually tests).
 - "correct_option" must be exactly "A", "B", "C", or "D".
+- Partial outputs (rework / patch calls) still use the same object shape with only the
+  rewritten questions inside "questions".
 ABSOLUTE RULES
-- Output ONLY the JSON array. No markdown fences, no commentary, no trailing notes
-  (other than the optional GENERATION NOTE element described above).
+- Output ONLY the JSON object with a "questions" array. No markdown fences, no commentary,
+  no trailing notes.
 - Never invent facts, formulas, named cases, or constants not present in the study material.
 - Every question's "domain" must be one of STEM, Programming, or Conceptual — even for a
   Mixed topic, classify each question individually.
 - Do NOT generate hints — that is the Hint Agent's job.
-- Produce exactly the requested number of questions unless the SOURCE OF TRUTH
-  shortfall rule applies.
 - Spread correct_option evenly across A, B, C, and D — every letter should appear
   as the correct answer in a balanced way.

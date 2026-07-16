@@ -435,6 +435,90 @@ class GenerationRunService:
         ):
             raise GenerationRunConflictException(str(active.run_id))
 
+    async def _sync_resume_progress_position(
+        self,
+        *,
+        run_id: UUID,
+        pipeline: str,
+        checkpoint_state: dict[str, Any],
+        request_params: dict[str, Any],
+        last_completed_node: str | None,
+    ) -> None:
+        """Project the next resume entry node onto the visible progress step.
+
+        Without this, a resumed run can keep showing the checkpoint's previous
+        active step until the next node finishes and writes a fresh checkpoint.
+        That is especially visible for quiz and hint flows, whose nodes do not
+        all emit explicit node-enter progress updates.
+        """
+        try:
+            next_node: str | None = None
+            pipeline_enum = GenerationPipeline(pipeline)
+
+            if pipeline == GenerationRunPipeline.STUDY_MATERIAL.value:
+                from src.api.control.study_agent.graph.resume_router import (
+                    hydrate_checkpoint_state,
+                    resolve_resume_next_node,
+                )
+
+                state = hydrate_checkpoint_state(
+                    checkpoint_state,
+                    last_completed_node=last_completed_node,
+                    request_params=request_params,
+                )
+                next_node = resolve_resume_next_node(
+                    state,
+                    last_completed_node=last_completed_node,
+                )
+            elif pipeline == GenerationRunPipeline.QUIZ.value:
+                from src.api.control.quiz_agent.graph.quiz_graph.resume_router import (
+                    hydrate_checkpoint_state,
+                    resolve_resume_next_node,
+                )
+
+                state = hydrate_checkpoint_state(
+                    checkpoint_state,
+                    last_completed_node=last_completed_node,
+                    request_params=request_params,
+                )
+                next_node = resolve_resume_next_node(
+                    state,
+                    last_completed_node=last_completed_node,
+                )
+            elif pipeline == GenerationRunPipeline.HINT.value:
+                from src.api.control.hint_agent.graph.resume_router import (
+                    hydrate_checkpoint_state,
+                    resolve_resume_next_node,
+                )
+
+                state = hydrate_checkpoint_state(
+                    checkpoint_state,
+                    last_completed_node=last_completed_node,
+                    request_params=request_params,
+                )
+                next_node = resolve_resume_next_node(
+                    state,
+                    last_completed_node=last_completed_node,
+                )
+
+            if not next_node or next_node == "__end__":
+                return
+
+            profile = step_profile_from_request_params(
+                request_params,
+                pipeline=pipeline_enum,
+            )
+            step_index = node_to_step_for_profile(profile, next_node)
+            if step_index is None:
+                return
+
+            await self.progress.set_step(run_id, step_index)
+        except Exception:
+            logger.exception(
+                "Failed to sync visible resume progress position",
+                extra={"run_id": str(run_id), "pipeline": pipeline},
+            )
+
     async def resume_run(
         self,
         run_id: UUID,
@@ -464,6 +548,13 @@ class GenerationRunService:
 
         await self.repo.increment_attempt_count(run_id)
         await self.repo.mark_running(run_id, execution_token=execution_token)
+        await self._sync_resume_progress_position(
+            run_id=run_id,
+            pipeline=run_pipeline,
+            checkpoint_state=checkpoint,
+            request_params=request_params,
+            last_completed_node=last_completed_node,
+        )
 
         return GenerationRunResumeResult(
             run_id=run_id,

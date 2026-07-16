@@ -15,6 +15,8 @@ Responsibilities
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -25,12 +27,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.config import llm_settings
 from src.api.control.quiz_agent.prompts import (
     question_insert_prompt,
+    question_prune_prompt,
     question_rework_prompt,
 )
 from src.api.control.quiz_agent.states.quiz_graph.quiz_state import QuizGraphState
 from src.api.schemas.common import QcInfraErrorType
 from src.api.schemas.qc_schemas import QuizRetryRoutingResult
-from src.api.utils.LLM_utils.groq_retry import call_groq_with_rotation
+from src.api.utils.LLM_utils.groq_quiz_generation_client import (
+    call_groq_quiz_generation,
+)
 from src.api.utils.LLM_utils.llm_failure_diagnostics import (
     build_llm_failure_qc_result,
     build_qc_infra_error_result,
@@ -44,6 +49,8 @@ from src.api.utils.quiz_utils.graph.constants import MAX_QC_ATTEMPTS
 from src.api.utils.quiz_utils.quality_check_utils.document.question_merge import (
     insert_questions,
     prepare_question_patches_for_merge,
+    prune_questions_to_count,
+    remove_questions_by_ids,
 )
 from src.api.utils.quiz_utils.quality_check_utils.infra.artifact_logging import (
     log_qc_agent,
@@ -57,6 +64,14 @@ from src.api.utils.quiz_utils.quality_check_utils.results.quiz_scoring import (
 )
 
 LlmCall = Callable[..., Awaitable[Any]]
+
+
+def _strip_json_fences(raw: str) -> str:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    return text.strip()
 
 
 def graph_session(config: RunnableConfig) -> AsyncSession:
@@ -77,21 +92,28 @@ def format_gen_feedback_from_checks(failed_checks: list[dict[str, Any]]) -> str:
             f"- [{check.get('severity', '?')}] {check.get('category', '?')}/"
             f"{check.get('id', '?')}: {check.get('evidence', '')}"
         )
+        hint = (check.get("corrective_hint") or "").strip()
+        if hint:
+            lines.append(f"  Fix: {hint}")
     return "Structural validation failed:\n" + "\n".join(lines)
 
 
-async def call_quiz_llm(*, system_prompt: str, user_message: str) -> Any:
+async def call_quiz_llm(
+    *,
+    system_prompt: str,
+    user_message: str,
+    question_count: int = 1,
+    graph_node: str = "quiz_generator",
+) -> Any:
     """Invoke the configured Groq model for quiz generation with rotation/retry."""
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_message),
     ]
-    return await call_groq_with_rotation(
+    return await call_groq_quiz_generation(
         messages=messages,
-        model=llm_settings.llm_model,
-        temperature=llm_settings.quiz_generation_temperature,
-        timeout=120,
-        graph_node="quiz_generator",
+        question_count=question_count,
+        graph_node=graph_node,
     )
 
 
@@ -197,6 +219,186 @@ def build_question_insert_messages(
     )
 
 
+def build_question_prune_messages(
+    state: QuizGraphState,
+    questions: list[dict[str, Any]],
+    *,
+    remove_count: int,
+) -> tuple[str, str]:
+    """Build system/user messages for overflow prune (drop unaligned extras)."""
+    required_count = int(state.get("question_count") or 0)
+    extra_command = (state.get("gen_feedback") or "").strip() or (
+        "There are extra questions beyond the requested count. Remove the ones "
+        "that are not needed and not aligned with the study material."
+    )
+    user_message = question_prune_prompt.build_user_message(
+        topic_title=state.get("node_title") or "",
+        study_material_content=state.get("study_material_content") or "",
+        difficulty_profile=state.get("difficulty") or "mixed",
+        required_count=required_count,
+        remove_count=remove_count,
+        existing_questions=questions,
+        domain=state.get("domain"),
+        topic_split=state.get("topic_split"),
+        extra_command=extra_command,
+    )
+    return (
+        question_prune_prompt.build_system_prompt(domain=state.get("domain")),
+        user_message,
+    )
+
+
+def _parse_remove_question_ids(raw_content: str) -> list[str]:
+    """Parse prune LLM JSON into a list of question ids to remove."""
+    text = _strip_json_fences(raw_content)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid prune JSON: {exc}") from exc
+
+    if isinstance(payload, dict):
+        ids = payload.get("remove_question_ids") or payload.get("question_ids") or []
+        if isinstance(ids, list):
+            return [str(item).strip() for item in ids if str(item).strip()]
+        raise ValueError("Expected remove_question_ids array in prune JSON.")
+
+    if isinstance(payload, list):
+        remove_ids: list[str] = []
+        for item in payload:
+            if isinstance(item, str) and item.strip():
+                remove_ids.append(item.strip())
+            elif isinstance(item, dict):
+                question_id = str(item.get("question_id", "")).strip()
+                if question_id:
+                    remove_ids.append(question_id)
+        return remove_ids
+
+    raise ValueError("Expected JSON object or array for prune response.")
+
+
+async def run_question_prune(
+    state: QuizGraphState,
+    *,
+    call_llm: LlmCall,
+) -> dict[str, Any]:
+    """Remove surplus questions so the quiz matches ``question_count``.
+
+    After a successful prune, sets ``present_without_qc`` so the graph persists
+    the draft without re-entering quality check.
+    """
+    questions = list(
+        state.get("validated_questions") or state.get("parsed_questions") or []
+    )
+    if not questions:
+        return {"error": "Cannot prune quiz questions without an existing quiz."}
+
+    expected_count = int(state.get("question_count") or 0)
+    if expected_count <= 0:
+        return {"error": "Cannot prune without a positive question_count."}
+
+    if len(questions) <= expected_count:
+        return {
+            "parsed_questions": questions,
+            "validated_questions": questions,
+            "qc_retry_mode": "none",
+            "present_without_qc": True,
+            "qc_passed": True,
+            "qc_failed_permanently": False,
+            "fixed_questions": None,
+            "gen_feedback": "",
+            "error": None,
+        }
+
+    remove_count = len(questions) - expected_count
+    prefer_remove_ids = list(state.get("qc_reverify_question_ids") or [])
+    system_prompt, user_message = build_question_prune_messages(
+        state,
+        questions,
+        remove_count=remove_count,
+    )
+
+    result = await call_llm(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        question_count=remove_count,
+        graph_node="quiz_generator",
+    )
+    llm_model_used = getattr(result, "model", None) or llm_settings.llm_model
+    token_usage = getattr(result, "token_usage", None)
+    raw_content = getattr(result, "content", None) or ""
+
+    pruned = questions
+    if getattr(result, "ok", False):
+        try:
+            remove_ids = _parse_remove_question_ids(raw_content)
+            existing_ids = {
+                str(q.get("question_id", "")).strip()
+                for q in questions
+                if str(q.get("question_id", "")).strip()
+            }
+            valid_remove_ids = [qid for qid in remove_ids if qid in existing_ids]
+            if valid_remove_ids:
+                candidate = remove_questions_by_ids(questions, valid_remove_ids)
+                if len(candidate) == expected_count:
+                    pruned = candidate
+                elif len(candidate) > expected_count:
+                    pruned = prune_questions_to_count(
+                        candidate,
+                        expected_count,
+                        prefer_remove_ids=prefer_remove_ids,
+                    )
+                else:
+                    # Too many removed — fall back to deterministic prune from original.
+                    pruned = prune_questions_to_count(
+                        questions,
+                        expected_count,
+                        prefer_remove_ids=prefer_remove_ids + valid_remove_ids,
+                    )
+            else:
+                pruned = prune_questions_to_count(
+                    questions,
+                    expected_count,
+                    prefer_remove_ids=prefer_remove_ids,
+                )
+        except Exception:  # noqa: BLE001
+            pruned = prune_questions_to_count(
+                questions,
+                expected_count,
+                prefer_remove_ids=prefer_remove_ids,
+            )
+    else:
+        pruned = prune_questions_to_count(
+            questions,
+            expected_count,
+            prefer_remove_ids=prefer_remove_ids,
+        )
+
+    if len(pruned) != expected_count:
+        pruned = prune_questions_to_count(
+            questions,
+            expected_count,
+            prefer_remove_ids=prefer_remove_ids,
+        )
+
+    return {
+        "parsed_questions": pruned,
+        "validated_questions": pruned,
+        "fixed_questions": None,
+        "raw_llm_output": raw_content,
+        "llm_model_used": llm_model_used,
+        "token_usage": token_usage,
+        "quiz_title": f"{state.get('node_title') or 'Quiz'} — Quiz",
+        "qc_retry_mode": "none",
+        "present_without_qc": True,
+        "qc_passed": True,
+        "qc_failed_permanently": False,
+        "prune_attempt": int(state.get("prune_attempt") or 0) + 1,
+        "gen_feedback": "",
+        "struct_validation_passed": True,
+        "error": None,
+    }
+
+
 async def run_question_retry(
     state: QuizGraphState,
     retry_mode: str,
@@ -292,7 +494,9 @@ async def run_question_retry(
     except QuestionCallError as exc:
         return exc.payload
 
-    return {
+    expected_count = int(state.get("question_count") or 0)
+    overflow = expected_count > 0 and len(merged_questions) > expected_count
+    result: dict[str, Any] = {
         "parsed_questions": merged_questions,
         "validated_questions": merged_questions,
         "fixed_questions": fixed_questions,
@@ -301,10 +505,15 @@ async def run_question_retry(
         "llm_model_used": llm_model_used,
         "token_usage": token_usage,
         "quiz_title": f"{state.get('node_title') or 'Quiz'} — Quiz",
-        "gen_attempt": 0,
+        # Do not reset gen_attempt — structural retries must still terminate.
         "gen_feedback": "",
         "error": None,
     }
+    if overflow:
+        # Clear validated so deterministic_validate sees overflow via parsed_questions
+        # and routes to question_prune (do not re-enter insert).
+        result["validated_questions"] = []
+    return result
 
 
 def log_quiz_artifact(
@@ -405,6 +614,10 @@ def resolve_qc_result_for_persist(
     """Return ``(qc_failed_permanently, qc_result_dict)`` for DB persistence."""
     if state.get("terminal_llm_failure"):
         return True, state.get("qc_result")
+
+    # Overflow prune presented without another QC pass — treat as deliverable.
+    if state.get("present_without_qc") and state.get("qc_passed"):
+        return False, None
 
     qc_failed_permanently = bool(state.get("qc_failed_permanently"))
     raw = state.get("qc_result")

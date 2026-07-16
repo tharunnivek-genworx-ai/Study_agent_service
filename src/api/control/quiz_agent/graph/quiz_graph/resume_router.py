@@ -43,7 +43,9 @@ from src.api.utils.generation_progress.resume_helpers import (
     is_resume_state,
     last_completed_node_from_state,
 )
-from src.api.utils.quiz_utils.graph.constants import QUESTION_RETRY_MODES
+from src.api.utils.quiz_utils.graph.constants import (
+    QUESTION_GENERATOR_RETRY_MODES,
+)
 
 QUIZ_GRAPH_NODES = frozenset(
     {
@@ -105,6 +107,10 @@ def _resolve_generate_resume_next_node(
     if last_completed_node == "quiz_generator":
         if state.get("terminal_llm_failure"):
             return "persist_quiz_draft"
+        if state.get("present_without_qc") and (
+            state.get("struct_validation_passed") or state.get("qc_passed")
+        ):
+            return "persist_quiz_draft"
         if state.get("error"):
             # Malformed JSON: retry parse if raw output exists; else regenerate.
             if state.get("raw_llm_output") and state.get("parsed_questions") is None:
@@ -127,6 +133,8 @@ def _resolve_generate_resume_next_node(
 
     if last_completed_node == "deterministic_validate":
         if state.get("struct_validation_passed"):
+            if state.get("present_without_qc"):
+                return "persist_quiz_draft"
             return "quality_check"
         if state.get("qc_failed_permanently"):
             return "persist_quiz_draft"
@@ -142,7 +150,10 @@ def _resolve_generate_resume_next_node(
             return "quality_check"
 
         retry_mode = state.get("qc_retry_mode") or "none"
-        if retry_mode in QUESTION_RETRY_MODES or retry_mode == "full_regeneration":
+        if (
+            retry_mode in QUESTION_GENERATOR_RETRY_MODES
+            or retry_mode == "full_regeneration"
+        ):
             return "quiz_generator"
         if state.get("validated_questions"):
             return "quality_check"

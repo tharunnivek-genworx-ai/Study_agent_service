@@ -1,5 +1,6 @@
 from . import (
     question_insert_prompt,
+    question_prune_prompt,
     question_rework_prompt,
     quiz_prompt,
     quiz_qc_check_definitions,
@@ -10,6 +11,7 @@ from . import (
 
 __all__ = [
     "question_insert_prompt",
+    "question_prune_prompt",
     "question_rework_prompt",
     "quiz_prompt",
     "quiz_qc_check_definitions",

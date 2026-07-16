@@ -10,6 +10,7 @@ QuizRetryMode = Literal[
     "question_patch",
     "question_insert",
     "question_patch_then_insert",
+    "question_prune",
     "full_regeneration",
     "none",
 ]

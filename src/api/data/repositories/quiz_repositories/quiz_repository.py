@@ -57,6 +57,22 @@ class QuizRepository:
         result = await self.db.execute(select(Quiz).where(Quiz.quiz_id == quiz_id))
         return cast(Quiz | None, result.scalars().first())
 
+    async def get_quiz_by_id_for_update(self, quiz_id: UUID) -> Quiz | None:
+        """Lock a quiz row while checking and applying a lifecycle mutation."""
+        result = await self.db.execute(
+            select(Quiz).where(Quiz.quiz_id == quiz_id).with_for_update()
+        )
+        return cast(Quiz | None, result.scalars().first())
+
+    async def lock_quizzes_for_node(self, node_id: UUID) -> None:
+        """Serialize publish swaps and other node-wide quiz lifecycle changes."""
+        await self.db.execute(
+            select(Quiz.quiz_id)
+            .where(Quiz.node_id == node_id)
+            .order_by(Quiz.quiz_id)
+            .with_for_update()
+        )
+
     async def get_quizzes_by_node(self, node_id: UUID) -> list[Quiz]:
         """All workspace-visible quizzes for a node ordered by created_at DESC."""
         result = await self.db.execute(
@@ -368,6 +384,16 @@ class QuizRepository:
         )
         return cast(QuizQuestion | None, result.scalars().first())
 
+    async def get_question_by_id_for_update(
+        self, question_id: UUID
+    ) -> QuizQuestion | None:
+        result = await self.db.execute(
+            select(QuizQuestion)
+            .where(QuizQuestion.question_id == question_id)
+            .with_for_update()
+        )
+        return cast(QuizQuestion | None, result.scalars().first())
+
     async def get_questions_by_quiz(self, quiz_id: UUID) -> list[QuizQuestion]:
         """All questions (active and inactive) for a quiz, ordered by order_index."""
         result = await self.db.execute(
@@ -534,8 +560,12 @@ class QuizRepository:
             question.hint_3 = None
             patched_ids.append(str(question_id))
 
-        quiz = await self.get_quiz_by_id(quiz_id)
+        quiz = await self.get_quiz_by_id_for_update(quiz_id)
         if quiz is not None:
+            if quiz.is_published:
+                raise RuntimeError(
+                    "Quiz was published while question regeneration was running."
+                )
             quiz.updated_at = now
 
         await self.db.flush()
