@@ -149,6 +149,12 @@ def _validate_question_options(
         )
 
 
+def _assert_quiz_questions_mutable(quiz: Any) -> None:
+    """Published quizzes are immutable until the mentor unpublishes them."""
+    if quiz.is_published:
+        raise QuizAlreadyPublishedException()
+
+
 class QuizService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -505,10 +511,17 @@ class QuizService:
         )
         failed_qc_feedback = None
         regenerate_from_retired = False
+        effective_question_count = request.question_count
         if request.mode == "regenerate" and request.quiz_id is not None:
             source_quiz = await repo.get_quiz_by_id(request.quiz_id)
             if source_quiz is None or source_quiz.node_id != node_id:
                 raise QuizNotFoundException()
+            existing_questions = await repo.get_active_questions_by_quiz(
+                request.quiz_id
+            )
+            existing_count = len(existing_questions)
+            if existing_count > 0 and not request.resize_question_count:
+                effective_question_count = existing_count
             if source_quiz.qc_failed_permanently and source_quiz.qc_result:
                 from src.api.utils.quiz_utils.quality_check_utils.results.feedback import (  # noqa: PLC0415
                     format_qc_feedback,
@@ -536,7 +549,7 @@ class QuizService:
                     effective_mode = "regenerate"
                     effective_quiz_id = existing_draft.quiz_id
         request_params = {
-            "question_count": request.question_count,
+            "question_count": effective_question_count,
             "difficulty": request.difficulty,
             "mode": effective_mode,
             "quiz_id": str(effective_quiz_id) if effective_quiz_id else None,
@@ -544,13 +557,14 @@ class QuizService:
             "title": request.title,
             "study_material_version_id": str(source_sm.version_id),
             "failed_qc_feedback": failed_qc_feedback,
+            "resize_question_count": request.resize_question_count,
         }
         initial_state = {
             "mentor_id": user_id,
             "node_id": node_id,
             "mode": effective_mode,
             "quiz_id": effective_quiz_id,
-            "question_count": request.question_count,
+            "question_count": effective_question_count,
             "difficulty": request.difficulty,
             "mentor_feedback": request.mentor_feedback,
             "space_id": None,
@@ -688,11 +702,10 @@ class QuizService:
             self.session, node_id, user_id, owner_only=True
         )
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
-        if quiz.is_published:
-            raise QuizAlreadyPublishedException()
+        _assert_quiz_questions_mutable(quiz)
         await self._require_quiz_study_material_source(node_id)
         payload_ids = set(request.question_ids)
         matched = await repo.get_active_questions_by_ids(quiz_id, request.question_ids)
@@ -987,11 +1000,11 @@ class QuizService:
 
         repo = QuizRepository(self.session)
         sm_repo = StudyMaterialRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        await repo.lock_quizzes_for_node(node_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
-        if quiz.is_published:
-            raise QuizAlreadyPublishedException()
+        _assert_quiz_questions_mutable(quiz)
 
         published = await sm_repo.get_published_version(node_id)
         validate_quiz_can_be_published(published_version=published)
@@ -1005,7 +1018,7 @@ class QuizService:
 
         await repo.publish_quiz(quiz, published_by=user_id)
 
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
         questions = await repo.get_questions_by_quiz(quiz_id)
@@ -1089,7 +1102,7 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
         if not quiz.is_published:
@@ -1145,7 +1158,7 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
         if is_discarded(lifecycle_status=quiz.lifecycle_status):
@@ -1177,9 +1190,10 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        _assert_quiz_questions_mutable(quiz)
         await self._require_quiz_study_material_source(node_id)
 
         _validate_question_options(
@@ -1233,12 +1247,13 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        _assert_quiz_questions_mutable(quiz)
         await self._require_quiz_study_material_source(node_id)
 
-        question = await repo.get_question_by_id(question_id)
+        question = await repo.get_question_by_id_for_update(question_id)
         if question is None or question.quiz_id != quiz_id or not question.is_active:
             raise QuizQuestionNotFoundException()
 
@@ -1295,9 +1310,11 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        if quiz.is_published:
+            raise QuizAlreadyPublishedException()
         await self._require_quiz_study_material_source(node_id)
 
         all_active = await repo.get_active_questions_by_quiz(quiz_id)
@@ -1328,12 +1345,14 @@ class QuizService:
         )
 
         repo = QuizRepository(self.session)
-        quiz = await repo.get_quiz_by_id(quiz_id)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
         if quiz is None or quiz.node_id != node_id:
             raise QuizNotFoundException()
+        if quiz.is_published:
+            raise QuizAlreadyPublishedException()
         await self._require_quiz_study_material_source(node_id)
 
-        question = await repo.get_question_by_id(question_id)
+        question = await repo.get_question_by_id_for_update(question_id)
         if question is None or question.quiz_id != quiz_id or not question.is_active:
             raise QuizQuestionNotFoundException()
 

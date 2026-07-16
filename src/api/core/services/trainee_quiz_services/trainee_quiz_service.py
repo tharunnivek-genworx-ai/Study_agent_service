@@ -44,6 +44,8 @@ from src.api.schemas.quiz_schemas import (
     PublishedQuizDiscoveryOut,
     QuizAttemptOut,
     QuizAttemptStartRequest,
+    QuizAttemptStateOut,
+    QuizAttemptStatePatch,
     QuizAttemptSubmitRequest,
     QuizQuestionResponseOut,
     QuizQuestionResponseRequest,
@@ -165,6 +167,7 @@ class TraineeQuizService:
             hint_3=question.hint_3 if hint_level >= 3 else None,
             hint_level_reached=hint_level,
             was_skipped=was_skipped,
+            is_flagged=response.is_flagged if response is not None else False,
             was_locked=was_locked,
             selected_option=response.selected_option if response is not None else None,
             is_correct=response.is_correct if response is not None else None,
@@ -204,7 +207,14 @@ class TraineeQuizService:
         ]
         resume_question_id = None
         if attempt.status == "in_progress":
-            resume_question_id = compute_resume_question_id(questions, responses_map)
+            active_question_ids = {
+                question.question_id for question in questions if question.is_active
+            }
+            resume_question_id = (
+                attempt.resume_question_id
+                if attempt.resume_question_id in active_question_ids
+                else compute_resume_question_id(questions, responses_map)
+            )
 
         return TraineeQuizOut(
             quiz_id=quiz.quiz_id,
@@ -388,6 +398,9 @@ class TraineeQuizService:
         quiz = await self.repo.get_published_quiz_by_node(node_id)
         if quiz is None or quiz.quiz_id != quiz_id:
             raise QuizNotFoundException()
+        quiz = await self.repo.get_quiz_by_id_for_update(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
         if not quiz.is_published:
             raise QuizNotPublishedException()
 
@@ -419,6 +432,64 @@ class TraineeQuizService:
             attempt=attempt,
             questions=questions,
             responses_map=responses_map,
+        )
+        await self.session.commit()
+        return result
+
+    async def patch_attempt_state(
+        self,
+        attempt_id: UUID,
+        request: QuizAttemptStatePatch,
+        user_id: UUID,
+        role: str,
+    ) -> QuizAttemptStateOut:
+        """Persist visited, flagged, skipped, and resume state idempotently."""
+        _assert_trainee(role)
+        attempt = await self.repo.get_attempt_by_id_for_update(attempt_id)
+        if attempt is None:
+            raise QuizAttemptNotFoundException()
+        _assert_trainee_owns_attempt(attempt.trainee_id, user_id)
+        await _assert_space_access(self.session, attempt.space_id, user_id, role)
+        if attempt.status == "submitted":
+            raise AttemptAlreadySubmittedException()
+        if attempt.status == "abandoned":
+            raise AttemptAbandonedException(
+                node_id=attempt.node_id,
+                quiz_id=attempt.quiz_id,
+            )
+
+        question = await self.repo.get_question_by_id(request.question_id)
+        if (
+            question is None
+            or question.quiz_id != attempt.quiz_id
+            or not question.is_active
+        ):
+            raise QuestionBelongsToAnotherAttemptException()
+        resume_question_id = request.resume_question_id
+        if resume_question_id is not None:
+            resume_question = await self.repo.get_question_by_id(resume_question_id)
+            if (
+                resume_question is None
+                or resume_question.quiz_id != attempt.quiz_id
+                or not resume_question.is_active
+            ):
+                raise QuestionBelongsToAnotherAttemptException()
+
+        response = await self.repo.patch_navigation_state(
+            attempt=attempt,
+            question=question,
+            is_visited=request.is_visited,
+            is_flagged=request.is_flagged,
+            was_skipped=request.was_skipped,
+            resume_question_id=resume_question_id,
+        )
+        result = QuizAttemptStateOut(
+            attempt_id=attempt.attempt_id,
+            question_id=question.question_id,
+            is_visited=response.is_visited,
+            is_flagged=response.is_flagged,
+            was_skipped=response.was_skipped,
+            resume_question_id=attempt.resume_question_id,
         )
         await self.session.commit()
         return result
@@ -708,6 +779,7 @@ class TraineeQuizService:
         quiz_id: UUID,
         user_id: UUID,
         role: str,
+        attempt_id: UUID | None = None,
     ) -> ArchivedQuizReviewOut:
         """Read-only review of an archived quiz with answers and explanations."""
         await assert_trainee_archive_context(
@@ -732,7 +804,16 @@ class TraineeQuizService:
         )
 
         attempts = await self.repo.list_attempts_by_quiz_and_trainee(quiz_id, user_id)
-        review_attempt = _pick_archive_review_attempt(attempts)
+        review_attempt = (
+            next(
+                (attempt for attempt in attempts if attempt.attempt_id == attempt_id),
+                None,
+            )
+            if attempt_id is not None
+            else _pick_archive_review_attempt(attempts)
+        )
+        if attempt_id is not None and review_attempt is None:
+            raise QuizAttemptNotFoundException()
 
         questions = await self.repo.get_all_questions_by_quiz(quiz_id)
         responses_map: dict[UUID, QuizQuestionResponse] = {}

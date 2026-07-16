@@ -298,6 +298,69 @@ def insert_questions(
     return _reindex_questions(merged)
 
 
+def remove_questions_by_ids(
+    questions: list[dict[str, Any]],
+    remove_ids: list[str] | set[str],
+) -> list[dict[str, Any]]:
+    """Drop questions whose question_id is in ``remove_ids`` and reindex."""
+    wanted_removed = {
+        str(question_id).strip()
+        for question_id in remove_ids
+        if str(question_id).strip()
+    }
+    if not wanted_removed:
+        return _reindex_questions(copy.deepcopy(questions))
+    kept = [
+        copy.deepcopy(question)
+        for question in questions
+        if _question_id(question) not in wanted_removed
+    ]
+    return _reindex_questions(kept)
+
+
+def prune_questions_to_count(
+    questions: list[dict[str, Any]],
+    expected_count: int,
+    *,
+    prefer_remove_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Reduce quiz length to ``expected_count`` without LLM.
+
+    Removal priority:
+    1. ``prefer_remove_ids`` (e.g. previously failing / QC-flagged questions)
+    2. Newest questions (highest ``order_index`` / list tail — typically inserts)
+    """
+    if expected_count < 0:
+        expected_count = 0
+    if len(questions) <= expected_count:
+        return _reindex_questions(copy.deepcopy(questions))
+
+    excess = len(questions) - expected_count
+    prefer = {
+        str(question_id).strip()
+        for question_id in (prefer_remove_ids or [])
+        if str(question_id).strip()
+    }
+    remove_ids: list[str] = []
+    for question in questions:
+        question_id = _question_id(question)
+        if question_id and question_id in prefer:
+            remove_ids.append(question_id)
+            if len(remove_ids) >= excess:
+                break
+
+    if len(remove_ids) < excess:
+        for question in reversed(questions):
+            question_id = _question_id(question)
+            if not question_id or question_id in remove_ids:
+                continue
+            remove_ids.append(question_id)
+            if len(remove_ids) >= excess:
+                break
+
+    return remove_questions_by_ids(questions, remove_ids)
+
+
 def extract_questions_by_ids(
     questions: list[dict[str, Any]],
     ids: list[str],

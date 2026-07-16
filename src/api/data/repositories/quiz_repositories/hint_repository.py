@@ -28,6 +28,12 @@ class HintRepository:
         result = await self.db.execute(select(Quiz).where(Quiz.quiz_id == quiz_id))
         return cast(Quiz | None, result.scalars().first())
 
+    async def get_quiz_by_id_for_update(self, quiz_id: UUID) -> Quiz | None:
+        result = await self.db.execute(
+            select(Quiz).where(Quiz.quiz_id == quiz_id).with_for_update()
+        )
+        return cast(Quiz | None, result.scalars().first())
+
     # ── Question lookups ──────────────────────────────────────────────
 
     async def get_active_questions_by_quiz(self, quiz_id: UUID) -> list[QuizQuestion]:
@@ -106,6 +112,19 @@ class HintRepository:
         """Update hint_1/2/3 for multiple questions in one transaction."""
         if not updates:
             return
+
+        quiz_ids_result = await self.db.execute(
+            select(QuizQuestion.quiz_id)
+            .where(QuizQuestion.question_id.in_([item[0] for item in updates]))
+            .distinct()
+        )
+        quiz_ids = list(quiz_ids_result.scalars().all())
+        for quiz_id in sorted(quiz_ids, key=str):
+            quiz = await self.get_quiz_by_id_for_update(quiz_id)
+            if quiz is None or quiz.is_published:
+                raise RuntimeError(
+                    "Quiz was published while hint generation was running."
+                )
 
         question_ids = [question_id for question_id, _, _, _ in updates]
         result = await self.db.execute(
@@ -187,11 +206,16 @@ class HintRepository:
     ) -> None:
         """Update hint fields for a single question."""
         result = await self.db.execute(
-            select(QuizQuestion).where(QuizQuestion.question_id == question_id)
+            select(QuizQuestion)
+            .where(QuizQuestion.question_id == question_id)
+            .with_for_update()
         )
         question = result.scalars().first()
         if question is None:
             return
+        quiz = await self.get_quiz_by_id_for_update(question.quiz_id)
+        if quiz is None or quiz.is_published:
+            raise RuntimeError("Quiz was published while hint generation was running.")
         question.hint_1 = hint_1
         question.hint_2 = hint_2
         question.hint_3 = hint_3
@@ -202,6 +226,9 @@ class HintRepository:
 
     async def clear_all_hints_for_quiz(self, quiz_id: UUID) -> int:
         """Clear hint_1/2/3 on all active questions. Returns count of rows updated."""
+        quiz = await self.get_quiz_by_id_for_update(quiz_id)
+        if quiz is None or quiz.is_published:
+            raise RuntimeError("Hints cannot be changed on a published quiz.")
         result = await self.db.execute(
             select(QuizQuestion).where(
                 and_(

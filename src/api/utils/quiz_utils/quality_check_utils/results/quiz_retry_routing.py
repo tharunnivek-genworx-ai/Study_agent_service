@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import re
 from typing import Any, cast
 
 from src.api.control.quiz_agent.prompts import (
@@ -13,11 +15,14 @@ from src.api.schemas.qc_schemas import (
     QuizRetryRoutingResult,
 )
 
+_COVERAGE_EVIDENCE_RE = re.compile(r"coverage\s*=\s*(\[[^\]]*\])", re.IGNORECASE)
+
 _VALID_MODES: frozenset[str] = frozenset(
     {
         "question_patch",
         "question_insert",
         "question_patch_then_insert",
+        "question_prune",
         "full_regeneration",
         "none",
     }
@@ -71,10 +76,9 @@ def _map_failures_to_questions(
                 unmapped_count += 1
             continue
 
-        if category == "duplicate_overlap" and not check.get("passed", True):
-            evidence = str(check.get("evidence", "")).strip()
-            if evidence:
-                missing_concepts.add(evidence)
+        # Coverage gaps are extracted from quiz_summary / structured evidence
+        # in ``_missing_concepts_from_qc`` — never treat raw evidence as a concept.
+        if category == "duplicate_overlap":
             continue
 
         if category in QUIZ_WIDE_CATEGORIES:
@@ -85,6 +89,43 @@ def _map_failures_to_questions(
     return failed_question_ids, missing_concepts, failures_by_question, unmapped_count
 
 
+def _parse_coverage_from_evidence(evidence: str) -> set[str]:
+    """Parse ``coverage=['A', 'B']`` blobs from duplicate_overlap evidence."""
+    match = _COVERAGE_EVIDENCE_RE.search(str(evidence or ""))
+    if not match:
+        return set()
+    try:
+        items = ast.literal_eval(match.group(1))
+    except (ValueError, SyntaxError):
+        return set()
+    if not isinstance(items, list):
+        return set()
+    return {str(item).strip() for item in items if str(item).strip()}
+
+
+def _missing_concepts_from_qc(
+    qc_result: dict[str, Any],
+    failed: list[dict[str, Any]],
+) -> set[str]:
+    """Collect real coverage-gap concepts (never raw evidence strings)."""
+    concepts: set[str] = set()
+    summary = qc_result.get("quiz_summary")
+    if isinstance(summary, dict):
+        for item in summary.get("coverage_issues") or []:
+            text = str(item).strip()
+            if text:
+                concepts.add(text)
+
+    for check in failed:
+        if str(check.get("category", "")) != "duplicate_overlap":
+            continue
+        if check.get("passed", True):
+            continue
+        concepts |= _parse_coverage_from_evidence(str(check.get("evidence", "")))
+
+    return concepts
+
+
 def _missing_concepts_from_recommendation(qc_result: dict[str, Any]) -> set[str]:
     recommendation = qc_result.get("retry_recommendation")
     if not isinstance(recommendation, dict):
@@ -93,6 +134,8 @@ def _missing_concepts_from_recommendation(qc_result: dict[str, Any]) -> set[str]
         str(concept).strip()
         for concept in (recommendation.get("missing_concepts") or [])
         if str(concept).strip()
+        # Guard against contaminated evidence blobs leaking into recommendations.
+        and not str(concept).strip().lower().startswith("duplicates=")
     }
 
 
@@ -231,9 +274,11 @@ def classify_quiz_retry_routing(
             rationale="no failed checks",
         )
 
-    failed_question_ids, missing_concepts, failures_by_question, unmapped_count = (
+    failed_question_ids, _unused_missing, failures_by_question, unmapped_count = (
         _map_failures_to_questions(failed)
     )
+    del _unused_missing
+    missing_concepts = _missing_concepts_from_qc(qc_result, failed)
     missing_concepts |= _missing_concepts_from_recommendation(qc_result)
 
     wrong_answer_risk = str(qc_result.get("wrong_answer_risk", "none"))

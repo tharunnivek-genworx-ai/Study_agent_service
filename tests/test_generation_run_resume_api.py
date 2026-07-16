@@ -91,3 +91,55 @@ def test_validate_resumable_rejects_non_failed_status() -> None:
         service._validate_resumable(run, run_id=run.run_id)
 
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_sync_resume_progress_position_updates_to_next_quiz_step() -> None:
+    service = GenerationRunService(session=None)  # type: ignore[arg-type]
+    run_id = uuid4()
+    captured: list[int] = []
+
+    async def fake_set_step(target_run_id, step_index: int) -> None:  # type: ignore[no-untyped-def]
+        assert target_run_id == run_id
+        captured.append(step_index)
+
+    service.progress.set_step = fake_set_step  # type: ignore[method-assign]
+
+    await service._sync_resume_progress_position(
+        run_id=run_id,
+        pipeline="quiz",
+        checkpoint_state={
+            "mode": "generate",
+            "study_material_content": "Variables and loops.",
+        },
+        request_params={"step_profile": "quiz_generate"},
+        last_completed_node="load_generation_context",
+    )
+
+    assert captured == [1]
+
+
+@pytest.mark.asyncio
+async def test_sync_resume_progress_position_updates_to_next_hint_step() -> None:
+    service = GenerationRunService(session=None)  # type: ignore[arg-type]
+    run_id = uuid4()
+    captured: list[int] = []
+
+    async def fake_set_step(target_run_id, step_index: int) -> None:  # type: ignore[no-untyped-def]
+        assert target_run_id == run_id
+        captured.append(step_index)
+
+    service.progress.set_step = fake_set_step  # type: ignore[method-assign]
+
+    await service._sync_resume_progress_position(
+        run_id=run_id,
+        pipeline="hint",
+        checkpoint_state={
+            "questions_for_hinting": [{"question_id": "q1"}],
+            "hints_written": {},
+        },
+        request_params={"step_profile": "hint_generate"},
+        last_completed_node="load_hint_context",
+    )
+
+    assert captured == [0]

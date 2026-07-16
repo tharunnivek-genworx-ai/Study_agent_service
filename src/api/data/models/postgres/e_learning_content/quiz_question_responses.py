@@ -35,6 +35,8 @@ class QuizQuestionResponse(Base):
     attempt_count = Column("attemptcount", Integer, nullable=False, default=0)
     hint_level_reached = Column("hintlevelreached", Integer, nullable=False, default=0)
     was_skipped = Column("wasskipped", Boolean, nullable=False, default=False)
+    is_visited = Column("isvisited", Boolean, nullable=False, default=False)
+    is_flagged = Column("isflagged", Boolean, nullable=False, default=False)
     was_locked = Column("waslocked", Boolean, nullable=False, default=False)
     responded_at = Column("respondedat", TIMESTAMP(timezone=True), nullable=True)
 

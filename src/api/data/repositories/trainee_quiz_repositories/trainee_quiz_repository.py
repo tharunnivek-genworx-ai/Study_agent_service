@@ -61,6 +61,12 @@ class TraineeQuizRepository:
         result = await self.db.execute(select(Quiz).where(Quiz.quiz_id == quiz_id))
         return cast(Quiz | None, result.scalars().first())
 
+    async def get_quiz_by_id_for_update(self, quiz_id: UUID) -> Quiz | None:
+        result = await self.db.execute(
+            select(Quiz).where(Quiz.quiz_id == quiz_id).with_for_update()
+        )
+        return cast(Quiz | None, result.scalars().first())
+
     async def get_hidden_quiz_with_trainee_attempts(
         self, node_id: UUID, trainee_id: UUID
     ) -> Quiz | None:
@@ -116,6 +122,16 @@ class TraineeQuizRepository:
         """Fetch an attempt by ID."""
         result = await self.db.execute(
             select(QuizAttempt).where(QuizAttempt.attempt_id == attempt_id)
+        )
+        return cast(QuizAttempt | None, result.scalars().first())
+
+    async def get_attempt_by_id_for_update(
+        self, attempt_id: UUID
+    ) -> QuizAttempt | None:
+        result = await self.db.execute(
+            select(QuizAttempt)
+            .where(QuizAttempt.attempt_id == attempt_id)
+            .with_for_update()
         )
         return cast(QuizAttempt | None, result.scalars().first())
 
@@ -276,6 +292,7 @@ class TraineeQuizRepository:
             existing.is_correct = is_correct
             existing.hint_level_reached = hint_level_reached
             existing.was_skipped = was_skipped
+            existing.is_visited = True
             existing.was_locked = was_locked
             existing.responded_at = now
             await self.db.flush()
@@ -291,10 +308,51 @@ class TraineeQuizRepository:
             is_correct=is_correct,
             hint_level_reached=hint_level_reached,
             was_skipped=was_skipped,
+            is_visited=True,
+            is_flagged=False,
             was_locked=was_locked,
             responded_at=now,
         )
         self.db.add(response)
+        await self.db.flush()
+        await self.db.refresh(response)
+        return response
+
+    async def patch_navigation_state(
+        self,
+        *,
+        attempt: QuizAttempt,
+        question: QuizQuestion,
+        is_visited: bool | None,
+        is_flagged: bool | None,
+        was_skipped: bool | None,
+        resume_question_id: UUID | None,
+    ) -> QuizQuestionResponse:
+        response = await self.get_response(attempt.attempt_id, question.question_id)
+        if response is None:
+            response = QuizQuestionResponse(
+                response_id=uuid4(),
+                attempt_id=attempt.attempt_id,
+                question_id=question.question_id,
+                trainee_id=attempt.trainee_id,
+                selected_option=None,
+                is_correct=None,
+                hint_level_reached=0,
+                was_skipped=False,
+                is_visited=False,
+                is_flagged=False,
+                was_locked=False,
+                responded_at=datetime.now(UTC),
+            )
+            self.db.add(response)
+        if is_visited is not None:
+            response.is_visited = is_visited
+        if is_flagged is not None:
+            response.is_flagged = is_flagged
+        if was_skipped is not None and response.selected_option is None:
+            response.was_skipped = was_skipped
+        if resume_question_id is not None:
+            attempt.resume_question_id = resume_question_id
         await self.db.flush()
         await self.db.refresh(response)
         return response

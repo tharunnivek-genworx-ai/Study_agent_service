@@ -58,6 +58,9 @@ class QuizGraphState(TypedDict, total=False):
     token_usage: int | None
     error: str | None
 
+    present_without_qc: bool
+    prune_attempt: int
+
     # ── Quality-Check fields ──────────────────────────────────────
     qc_passed: bool  # True when QC evaluation passed
     qc_result: dict[str, Any] | None  # Full parsed JSON report from QC LLM

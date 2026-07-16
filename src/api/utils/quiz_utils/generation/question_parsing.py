@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 from uuid import uuid4
 
+logger = logging.getLogger(__name__)
 
-def parse_json_array(raw: str) -> list:
-    """Parse an LLM response that should be a JSON array.
 
-    Tolerates accidental ```json fences around the payload.
-    """
+def _strip_json_fences(raw: str) -> str:
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else text
@@ -21,10 +20,60 @@ def parse_json_array(raw: str) -> list:
         text = text.strip()
         if text.lower().startswith("json"):
             text = text[len("json") :].strip()
+    return text
+
+
+def _extract_question_items(parsed: Any) -> list:
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        questions = parsed.get("questions")
+        if isinstance(questions, list):
+            return questions
+        raise ValueError("Expected JSON object with a 'questions' array.")
+    raise ValueError("Expected a JSON array or object with 'questions'.")
+
+
+def _countable_questions(items: list[Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and not str(item.get("question_text", "")).startswith("GENERATION NOTE")
+    ]
+
+
+def parse_json_array(raw: str, *, expected_count: int | None = None) -> list:
+    """Parse quiz LLM output into a question list.
+
+    Accepts either ``{"questions": [...]}`` (preferred) or a bare JSON array for
+    backward compatibility. Tolerates accidental ```json fences around the payload.
+
+    When ``expected_count`` is set, excess questions are trimmed. Under-count is
+    returned as-is so deterministic validation can retry generation with feedback
+    instead of aborting as a hard parse failure.
+    """
+    text = _strip_json_fences(raw)
     parsed = json.loads(text)
-    if not isinstance(parsed, list):
-        raise ValueError("Expected a JSON array.")
-    return parsed
+    items = _extract_question_items(parsed)
+    if expected_count is not None:
+        countable = _countable_questions(items)
+        if len(countable) > expected_count:
+            logger.warning(
+                "Quiz output returned %d questions; trimming to expected %d.",
+                len(countable),
+                expected_count,
+            )
+            return countable[:expected_count]
+        if len(countable) < expected_count:
+            logger.warning(
+                "Quiz output returned %d questions; expected %d "
+                "(will retry via structural validation).",
+                len(countable),
+                expected_count,
+            )
+        return countable
+    return items
 
 
 def empty_to_none(value: Any) -> Any:

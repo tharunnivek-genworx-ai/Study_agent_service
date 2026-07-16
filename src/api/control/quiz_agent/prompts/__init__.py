@@ -2,6 +2,7 @@
 
 from .quiz_graph import (
     question_insert_prompt,
+    question_prune_prompt,
     question_rework_prompt,
     quiz_prompt,
     quiz_qc_check_definitions,
@@ -28,6 +29,7 @@ __all__ = [
     "build_domain_classification_block",
     "build_quiz_prompt",
     "question_insert_prompt",
+    "question_prune_prompt",
     "question_rework_prompt",
     "quiz_prompt",
     "quiz_qc_check_definitions",

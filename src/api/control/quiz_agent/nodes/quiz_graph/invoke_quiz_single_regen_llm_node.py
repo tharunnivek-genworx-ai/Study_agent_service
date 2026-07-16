@@ -38,6 +38,8 @@ async def invoke_quiz_single_regen_llm(
     result = await call_quiz_llm(
         system_prompt=prompt_input["system_prompt"],
         user_message=prompt_input["user_message"],
+        question_count=len(state.get("question_ids") or []),
+        graph_node="quiz_single_regen_llm",
     )
     if not result.ok:
         logger.error("Groq quiz single-question regen failed: %s", result.error_type)

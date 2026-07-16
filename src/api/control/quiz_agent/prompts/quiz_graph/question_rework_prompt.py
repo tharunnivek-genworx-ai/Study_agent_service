@@ -29,15 +29,15 @@ RULE — HOW TO USE EACH INPUT
 1. Treat the study material as the ONLY factual source of truth.
 2. Inspect each question's current JSON and its listed failures.
 3. Address every failure at its root cause — rephrasing alone is not a fix.
-4. Return a JSON array containing ONLY the rewritten questions (same schema
-   as the full quiz), not a diff.
+4. Return a JSON object with a "questions" array containing ONLY the rewritten questions
+   (same schema as the full quiz), not a diff.
 """
 _SYSTEM_PROMPT_SUFFIX = """
 RULE — QUESTION QUALITY
 {question_quality_block}
 {output_format_block}
 ABSOLUTE RULES
-- Output ONLY the JSON array of rewritten questions.
+- Output ONLY the JSON object with a "questions" array of rewritten questions.
 - Preserve question_id on every object exactly as provided in <questions_to_fix>.
 - Add "hints_stale": true on every rewritten question.
 - Never invent facts not present in the study material.
@@ -66,7 +66,7 @@ QUESTION REWORK REQUEST
 Rewrite ONLY the questions in <questions_to_fix>. Fix every listed failure at
 its root cause. Preserve question_id exactly. Use <quiz_outline> correct-option
 counts to keep A/B/C/D evenly distributed. Mark every rewritten question with
-"hints_stale": true. Return the JSON array now."""
+"hints_stale": true. Return the JSON object now."""
 
 
 def build_system_prompt(domain: str | None = None) -> str:

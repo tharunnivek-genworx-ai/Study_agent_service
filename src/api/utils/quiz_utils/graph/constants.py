@@ -16,3 +16,7 @@ MAX_QC_ATTEMPTS = 3
 QUESTION_RETRY_MODES = frozenset(
     {"question_patch", "question_insert", "question_patch_then_insert"}
 )
+# Overflow recovery: prune extras then present without re-entering QC.
+QUESTION_PRUNE_MODE = "question_prune"
+# All modes that re-enter quiz_generator (surgical + overflow prune).
+QUESTION_GENERATOR_RETRY_MODES = QUESTION_RETRY_MODES | {QUESTION_PRUNE_MODE}

@@ -31,7 +31,10 @@ async def parse_quiz_output(state: QuizGraphState) -> QuizGraphState:
         return {**state, "error": "No LLM output to parse."}
 
     try:
-        items = parse_json_array(raw)
+        items = parse_json_array(
+            raw,
+            expected_count=state.get("question_count"),
+        )
         parsed, hints_stale_ids = normalize_parsed_items(items)
     except Exception as exc:  # noqa: BLE001
         return {**state, "error": f"Malformed quiz output: {exc}"}

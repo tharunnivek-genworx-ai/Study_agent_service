@@ -29,11 +29,15 @@ from src.api.utils.quiz_utils.generation.question_parsing import (
     normalize_parsed_items,
     parse_json_array,
 )
-from src.api.utils.quiz_utils.graph.constants import QUESTION_RETRY_MODES
+from src.api.utils.quiz_utils.graph.constants import (
+    QUESTION_PRUNE_MODE,
+    QUESTION_RETRY_MODES,
+)
 from src.api.utils.quiz_utils.graph.node_helpers import (
     call_quiz_llm,
     log_quiz_artifact,
     qc_retry_mode,
+    run_question_prune,
     run_question_retry,
 )
 from src.api.utils.quiz_utils.quality_check_utils.document.question_merge import (
@@ -53,6 +57,22 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
     )
     rewrite_question_ids = set(state.get("qc_reverify_question_ids") or [])
 
+    if retry_mode == QUESTION_PRUNE_MODE:
+        result = await run_question_prune(state, call_llm=call_quiz_llm)
+        log_quiz_artifact(
+            state,
+            "quiz_generator",
+            {
+                "raw_llm_output": result.get("raw_llm_output"),
+                "parsed_questions": result.get("parsed_questions"),
+                "qc_retry_mode": retry_mode,
+                "gen_attempt": state.get("gen_attempt") or 0,
+                "present_without_qc": result.get("present_without_qc"),
+                "error": result.get("error"),
+            },
+        )
+        return result
+
     if retry_mode in QUESTION_RETRY_MODES:
         # Surgical retry: patch and/or insert without full regeneration.
         result = await run_question_retry(
@@ -66,7 +86,7 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
             {
                 "raw_llm_output": result.get("raw_llm_output"),
                 "parsed_questions": result.get("parsed_questions"),
-                "qc_retry_mode": retry_mode,
+                "qc_retry_mode": result.get("qc_retry_mode") or retry_mode,
                 "gen_attempt": state.get("gen_attempt") or 0,
                 "error": result.get("error"),
             },
@@ -100,6 +120,7 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
     result = await call_quiz_llm(
         system_prompt=prompt_input["system_prompt"],
         user_message=prompt_input["user_message"],
+        question_count=state["question_count"],
     )
     if not result.ok:
         logger.error("Groq quiz generation failed: %s", result.error_type)
@@ -130,7 +151,7 @@ async def quiz_generator_node(state: QuizGraphState) -> dict[str, Any]:
 
     raw = result.content or ""
     try:
-        items = parse_json_array(raw)
+        items = parse_json_array(raw, expected_count=state["question_count"])
         parsed, hints_stale_ids = normalize_parsed_items(items)
     except Exception as exc:  # noqa: BLE001
         error_return = {
