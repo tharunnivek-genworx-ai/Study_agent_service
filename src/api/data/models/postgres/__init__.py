@@ -2,6 +2,7 @@
 # on Base.metadata so SQLAlchemy can resolve cross-table foreign keys.
 
 from src.api.data.models.postgres.e_learning_content import (  # noqa: F401
+    external_research_reference,
     node_media,
     quiz_attempts,
     quiz_question_responses,

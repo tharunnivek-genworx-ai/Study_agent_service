@@ -218,6 +218,19 @@ class StudyMaterialModificationBlockedReferenceMaterialRequiredException(HTTPExc
         )
 
 
+class StudyMaterialExternalResearchConflictException(HTTPException):
+    """Raised when both a PDF reference and External Research Mode are requested."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "External research and a source PDF cannot be used together. "
+                "Choose one generation source and try again."
+            ),
+        )
+
+
 class StudyMaterialArchiveNotAvailableException(HTTPException):
     """Raised when archive access is blocked (no active SM on node)."""
 

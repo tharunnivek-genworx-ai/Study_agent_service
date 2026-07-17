@@ -12,7 +12,7 @@ from src.api.control.study_agent.graph.resume_router import (
 )
 
 
-def test_resolve_resume_after_concept_checklist_with_reference_goes_to_llamaparse() -> (
+def test_resolve_resume_after_concept_checklist_with_reference_goes_to_reference_router() -> (
     None
 ):
     state = {
@@ -25,11 +25,69 @@ def test_resolve_resume_after_concept_checklist_with_reference_goes_to_llamapars
     }
     assert (
         resolve_resume_next_node(state, last_completed_node="concept_checklist")
+        == "reference_router"
+    )
+
+
+def test_resolve_resume_after_reference_router_with_pdf_goes_to_llamaparse() -> None:
+    state = {
+        "generation_mode": "generate",
+        "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
+        "has_reference_material": True,
+        "reference_file_path": "/tmp/ref.pdf",
+        "skip_llamaparse": False,
+        "parsed_reference_data": {},
+        "reference_mode": "pdf",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="reference_router")
         == "llamaparse"
     )
 
 
-def test_resolve_resume_after_concept_checklist_without_reference_goes_to_study_agent() -> (
+def test_resolve_resume_after_reference_router_external_goes_to_research() -> None:
+    state = {
+        "generation_mode": "generate",
+        "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
+        "external_research_enabled": True,
+        "reference_mode": "external",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="reference_router")
+        == "external_research"
+    )
+
+
+def test_resolve_resume_after_reference_router_external_cache_hit_skips_research() -> (
+    None
+):
+    state = {
+        "generation_mode": "regenerate",
+        "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
+        "reference_mode": "external",
+        "external_research_cache_hit": True,
+        "external_research_status": "success",
+        "extracted_reference_text": "cached ground truth",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="reference_router")
+        == "study_agent"
+    )
+
+
+def test_resolve_resume_after_external_research_goes_to_study_agent() -> None:
+    state = {
+        "generation_mode": "generate",
+        "external_research_status": "success",
+        "extracted_reference_text": "notes",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="external_research")
+        == "study_agent"
+    )
+
+
+def test_resolve_resume_after_concept_checklist_without_reference_goes_to_reference_router() -> (
     None
 ):
     state = {
@@ -39,6 +97,19 @@ def test_resolve_resume_after_concept_checklist_without_reference_goes_to_study_
     }
     assert (
         resolve_resume_next_node(state, last_completed_node="concept_checklist")
+        == "reference_router"
+    )
+
+
+def test_resolve_resume_after_reference_router_none_goes_to_study_agent() -> None:
+    state = {
+        "generation_mode": "generate",
+        "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
+        "domain": "Programming",
+        "reference_mode": "none",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="reference_router")
         == "study_agent"
     )
 

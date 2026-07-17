@@ -40,6 +40,19 @@ def test_no_global_preparing_materials_step_in_any_profile() -> None:
             assert step.label != "Preparing materials"
 
 
+def test_study_generate_with_external_research_step_order() -> None:
+    steps = step_defs_for_profile(
+        GenerationStepProfile.STUDY_GENERATE_WITH_EXTERNAL_RESEARCH
+    )
+    labels = [step.label for step in steps]
+    assert labels == [
+        "Outlining the topics to cover",
+        "Researching external sources",
+        "Generating study material",
+        "Assessing the quality of the content",
+    ]
+
+
 def test_study_step_profile_for_mode_with_reference() -> None:
     profile = study_step_profile_for_mode(
         generation_mode="generate",
@@ -48,10 +61,20 @@ def test_study_step_profile_for_mode_with_reference() -> None:
     assert profile == GenerationStepProfile.STUDY_GENERATE_WITH_REF
 
 
+def test_study_step_profile_for_mode_with_external_research() -> None:
+    profile = study_step_profile_for_mode(
+        generation_mode="generate",
+        has_reference_material=False,
+        external_research_enabled=True,
+    )
+    assert profile == GenerationStepProfile.STUDY_GENERATE_WITH_EXTERNAL_RESEARCH
+
+
 def test_study_step_profile_for_feedback_rework() -> None:
     profile = study_step_profile_for_mode(
         generation_mode="improve",
         has_reference_material=True,
+        external_research_enabled=True,
     )
     assert profile == GenerationStepProfile.STUDY_FEEDBACK_REWORK
 
@@ -86,6 +109,18 @@ def test_node_to_step_for_study_with_ref() -> None:
     assert node_to_step_for_profile(profile, "study_agent") == 2
     assert node_to_step_for_profile(profile, "quality_check") == 3
     assert node_to_step_for_profile(profile, "resolver") is None
+
+
+def test_node_to_step_for_study_with_external_research() -> None:
+    profile = GenerationStepProfile.STUDY_GENERATE_WITH_EXTERNAL_RESEARCH
+    assert node_to_step_for_profile(profile, "concept_checklist") == 0
+    assert node_to_step_for_profile(profile, "external_research") == 1
+    assert node_to_step_for_profile(profile, "external_research_search") == 1
+    assert (
+        node_to_step_for_profile(profile, "external_research_cross_website_merge") == 1
+    )
+    assert node_to_step_for_profile(profile, "study_agent") == 2
+    assert node_to_step_for_profile(profile, "quality_check") == 3
 
 
 def test_build_steps_for_profile_marks_active_index() -> None:

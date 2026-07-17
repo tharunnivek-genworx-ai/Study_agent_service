@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from src.api.core.exceptions import (  # noqa: E501
     StudyMaterialReferenceParseMissingException,
 )
 from src.api.data.repositories import (  # noqa: E501
+    ExternalResearchRepository,
     ReferenceLlamaParseRepository,
 )
 from src.api.utils.generation_progress import (
@@ -29,6 +30,8 @@ from src.api.utils.reference_llamaparse_utils.reference_llamaparse_persistence i
 )
 
 logger = logging.getLogger(__name__)
+
+ReferenceMode = Literal["pdf", "external", "none"]
 
 
 async def _load_persisted_reference(
@@ -50,6 +53,39 @@ async def _load_persisted_reference(
         cast(dict[str, Any], pdf_row.structured_json), images
     )
     return str(pdf_row.formatted_text or ""), structured_data
+
+
+async def _load_persisted_external_research(
+    session: AsyncSession,
+    node_id: UUID,
+) -> dict[str, Any]:
+    """Hydrate external-research cache for silent regenerate/improve reuse (A.9)."""
+    repo = ExternalResearchRepository(session)
+    existing = await repo.get_by_node_id(node_id)
+    if existing is None:
+        return {}
+
+    updates: dict[str, Any] = {
+        "reference_mode": "external",
+        "external_research_enabled": False,
+        "external_research_cache_hit": True,
+        "external_research_status": existing.status,
+        "external_research_fail_reason": existing.fail_reason,
+        "external_research_query": existing.search_query_used,
+        "resolved_topic": existing.resolved_topic,
+        "resolved_subtopic": existing.resolved_subtopic,
+        "knowledge_distillation_model_used": existing.knowledge_distillation_model_used,
+    }
+    if existing.status == "success" and existing.ground_truth_reference:
+        updates["ground_truth_reference"] = existing.ground_truth_reference
+        updates["external_source_urls"] = list(existing.source_urls or [])
+        updates["extracted_reference_text"] = existing.ground_truth_reference
+        updates["has_reference_material"] = True
+    else:
+        updates["ground_truth_reference"] = None
+        updates["external_source_urls"] = []
+        updates["extracted_reference_text"] = ""
+    return updates
 
 
 def _cleanup_temp_reference(result: StudyMaterialGraphState) -> None:
@@ -141,18 +177,28 @@ async def run_study_material_generation(
     reference_material_id: UUID | None = None,
     user_id: UUID | None = None,
     *,
+    external_research_enabled: bool = False,
     run_id: UUID | None = None,
     execution_token: UUID | None = None,
 ) -> StudyMaterialGraphState:
-    """First-time generate: resolver → optional llamaparse → study_agent."""
+    """First-time generate: resolver → checklist → PDF|external|none → study_agent."""
     if user_id is None:
         raise ValueError("user_id is required for study material generation.")
+
+    if external_research_enabled:
+        reference_mode: ReferenceMode = "external"
+    elif reference_material_id:
+        reference_mode = "pdf"
+    else:
+        reference_mode = "none"
 
     initial_state: StudyMaterialGraphState = {
         "node_id": node_id,
         "reference_material_id": reference_material_id,
         "generation_mode": "generate",
         "skip_llamaparse": False,
+        "external_research_enabled": external_research_enabled,
+        "reference_mode": reference_mode,
     }
     return await _run_graph(
         session,
@@ -198,12 +244,20 @@ async def run_study_material_regeneration(
     extracted_text = ""
     parsed_data: dict = {}
     skip_llamaparse = False
+    reference_mode: ReferenceMode = "none"
+    external_cache: dict[str, Any] = {}
 
     if reference_material_id is not None:
         extracted_text, parsed_data = await _load_persisted_reference(
             session, reference_material_id, node_id
         )
         skip_llamaparse = True
+        reference_mode = "pdf"
+    else:
+        external_cache = await _load_persisted_external_research(session, node_id)
+        if external_cache:
+            reference_mode = "external"
+            extracted_text = str(external_cache.get("extracted_reference_text") or "")
 
     initial_state: StudyMaterialGraphState = {
         "node_id": node_id,
@@ -215,7 +269,11 @@ async def run_study_material_regeneration(
         "extracted_reference_text": extracted_text,
         "parsed_reference_data": parsed_data,
         "failed_qc_feedback": failed_qc_feedback,
+        "reference_mode": reference_mode,
+        "external_research_enabled": False,
     }
+    if external_cache:
+        cast(dict[str, Any], initial_state).update(external_cache)
     if hydration:
         cast(dict[str, Any], initial_state).update(hydration)
     return await _run_graph(
@@ -244,12 +302,20 @@ async def run_study_material_improve(
     extracted_text = ""
     parsed_data: dict = {}
     skip_llamaparse = False
+    reference_mode: ReferenceMode = "none"
+    external_cache: dict[str, Any] = {}
 
     if reference_material_id is not None:
         extracted_text, parsed_data = await _load_persisted_reference(
             session, reference_material_id, node_id
         )
         skip_llamaparse = True
+        reference_mode = "pdf"
+    else:
+        external_cache = await _load_persisted_external_research(session, node_id)
+        if external_cache:
+            reference_mode = "external"
+            extracted_text = str(external_cache.get("extracted_reference_text") or "")
 
     initial_state: StudyMaterialGraphState = {
         "node_id": node_id,
@@ -261,7 +327,11 @@ async def run_study_material_improve(
         "extracted_reference_text": extracted_text,
         "parsed_reference_data": parsed_data,
         "failed_qc_feedback": failed_qc_feedback,
+        "reference_mode": reference_mode,
+        "external_research_enabled": False,
     }
+    if external_cache:
+        cast(dict[str, Any], initial_state).update(external_cache)
     if hydration:
         cast(dict[str, Any], initial_state).update(hydration)
     return await _run_graph(

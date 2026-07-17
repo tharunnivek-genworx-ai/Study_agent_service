@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 from src.api.config import llm_settings
 from src.api.control.study_agent.prompts.generation import generation_prompt
@@ -77,14 +77,40 @@ def teaching_instruction(state: StudyMaterialGraphState) -> str:
 
 
 def has_reference_material(state: StudyMaterialGraphState) -> bool:
-    """True when meaningful reference text is available for this run."""
+    """True when meaningful reference text is available for this run.
+
+    PDF runs use ``reference_material_id`` / the ``has_reference_material`` flag.
+    External research has no PDF id — non-empty ``extracted_reference_text`` counts
+    when ``reference_mode == "external"`` or ``external_research_status == "success"``.
+    """
     text = (state.get("extracted_reference_text") or "").strip()
     if not text or text.lower() == NO_REFERENCE_PLACEHOLDER:
         return False
-    return bool(
+    if (
         state.get("has_reference_material")
         or state.get("reference_material_id") is not None
+    ):
+        return True
+    return (
+        state.get("reference_mode") == "external"
+        or state.get("external_research_status") == "success"
     )
+
+
+def reference_kind(
+    state: StudyMaterialGraphState,
+) -> Literal["none", "pdf", "external"]:
+    """Classify reference source for generator system/user prompt labeling.
+
+    Returns ``external`` only when ``reference_mode == "external"`` and meaningful
+    reference text is present; otherwise ``pdf`` when reference material exists,
+    else ``none``.
+    """
+    if not has_reference_material(state):
+        return "none"
+    if state.get("reference_mode") == "external":
+        return "external"
+    return "pdf"
 
 
 def reference_text(state: StudyMaterialGraphState) -> str:
@@ -240,10 +266,17 @@ def build_previous_failed_qc_feedback_block(state: StudyMaterialGraphState) -> s
     )
 
 
-def format_reference_block(has_reference: bool, reference_text_value: str) -> str:
+def format_reference_block(
+    has_reference: bool,
+    reference_text_value: str,
+    *,
+    reference_kind: str = "none",
+) -> str:
     """Wrap reference text for generator user messages."""
     return generation_prompt.format_reference_user_block(
-        reference_text_value, has_reference=has_reference
+        reference_text_value,
+        has_reference=has_reference,
+        reference_kind=reference_kind,
     )
 
 

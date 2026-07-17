@@ -130,6 +130,9 @@ class StudyMaterialGenerateRequest(BaseModel):
 
     reference_material_id is optional. When provided, the service fetches
     the file, extracts text via LlamaParse, and passes it as context to the LLM.
+
+    external_research_enabled searches the web for ground-truth notes instead.
+    PDF and external research are mutually exclusive (service returns 400 if both).
     """
 
     reference_material_id: UUID | None = Field(
@@ -137,6 +140,13 @@ class StudyMaterialGenerateRequest(BaseModel):
         description=(
             "Optional: a reference_materials.material_id scoped to this node "
             "or its parent space. When set, extracted PDF text is passed to the LLM."
+        ),
+    )
+    external_research_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, the worker runs External Research Mode (Tavily + distillation) "
+            "instead of a PDF reference. Cannot be combined with reference_material_id."
         ),
     )
 

@@ -22,6 +22,7 @@ from src.api.schemas.study_material_schemas.generation_document_schema import (
     Subsection,
 )
 from src.api.schemas.study_material_schemas.generation_outcome_schema import (
+    EXTERNAL_RESEARCH_FAIL_SOFT_MESSAGE,
     ActionRequiredOut,
     ApiGenerationOutcome,
     GenerationOutcomeDetail,
@@ -108,6 +109,7 @@ __all__ = [
     "CodeBlock",
     "ConceptDomain",
     "ConceptPlanOut",
+    "EXTERNAL_RESEARCH_FAIL_SOFT_MESSAGE",
     "FormulaBlock",
     "GenerationDocument",
     "GenerationOutcomeDetail",

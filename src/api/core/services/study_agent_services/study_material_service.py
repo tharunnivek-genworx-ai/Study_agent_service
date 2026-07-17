@@ -38,6 +38,7 @@ from src.api.core.exceptions.study_material_exceptions.study_material_exceptions
     StudyMaterialCannotArchivePublishedException,
     StudyMaterialCannotUnarchiveTraineeHistoryException,
     StudyMaterialClearDraftsBlockedByQuizException,
+    StudyMaterialExternalResearchConflictException,
     StudyMaterialModificationBlockedReferenceMaterialRequiredException,
     StudyMaterialNoActiveVersionException,
     StudyMaterialNoDraftsException,
@@ -82,6 +83,9 @@ from src.api.schemas.generation_run_schema import (
     GenerationRunResumeResult,
 )
 from src.api.schemas.qc_schemas.qc_check_schema import parse_qc_check_item
+from src.api.schemas.study_material_schemas.generation_outcome_schema import (
+    EXTERNAL_RESEARCH_FAIL_SOFT_MESSAGE,
+)
 from src.api.schemas.study_material_schemas.study_material_schema import (
     PublishedResourceTopicSummary,
     QualityCheckResultOut,
@@ -314,6 +318,24 @@ def _enrich_qc_result_dict(
     return enrich_qc_result_for_client(enriched, concept_plan) or enriched
 
 
+def _apply_external_research_fail_soft_warning(
+    graph_result: dict[str, Any],
+    outcome_detail: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Attach design §14 mild warning when external research degraded to fail_soft."""
+    if graph_result.get("external_research_status") != "fail_soft":
+        return outcome_detail
+
+    detail = dict(outcome_detail) if isinstance(outcome_detail, dict) else {}
+    detail["external_research_fail_soft"] = True
+    detail.setdefault("message", EXTERNAL_RESEARCH_FAIL_SOFT_MESSAGE)
+    detail.setdefault("reason", "external_research_fail_soft")
+    fail_reason = graph_result.get("external_research_fail_reason")
+    if fail_reason and "fail_reason" not in detail:
+        detail["fail_reason"] = fail_reason
+    return detail
+
+
 def _study_material_version_out(
     version: StudyMaterialVersion,
 ) -> StudyMaterialVersionOut:
@@ -477,12 +499,16 @@ class StudyMaterialService:
         request_params: dict[str, Any],
     ) -> UUID:
         has_reference = bool(request_params.get("reference_material_id"))
+        external_research_enabled = bool(
+            request_params.get("external_research_enabled")
+        )
         request_params = {
             **request_params,
             "node_id": str(node_id),
             "step_profile": study_step_profile_for_mode(
                 generation_mode=generation_mode.value,
                 has_reference_material=has_reference,
+                external_research_enabled=external_research_enabled,
             ).value,
         }
         resource_type, resource_id = GenerationRunService.resource_for_study_material(
@@ -645,11 +671,15 @@ class StudyMaterialService:
             )
 
         if generation_mode == "generate":
+            external_research_enabled = bool(
+                request_params.get("external_research_enabled")
+            )
             return await run_study_material_generation(
                 session=self.session,
                 node_id=node_id,
                 reference_material_id=reference_material_id,
                 user_id=user_id,
+                external_research_enabled=external_research_enabled,
                 run_id=run_id,
                 execution_token=run.execution_token,
             )
@@ -845,6 +875,9 @@ class StudyMaterialService:
         outcome_detail = graph_result.get("generation_outcome_detail")
         if not isinstance(outcome_detail, dict):
             outcome_detail = None
+        outcome_detail = _apply_external_research_fail_soft_warning(
+            graph_result, outcome_detail
+        )
 
         content = content_for_persistence(graph_result["generated_content"])
 
@@ -909,6 +942,11 @@ class StudyMaterialService:
     ) -> UUID:
         """Validate and create a durable run for first-time generation."""
         _assert_mentor(role)
+        if (
+            request.reference_material_id is not None
+            and request.external_research_enabled
+        ):
+            raise StudyMaterialExternalResearchConflictException()
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=True
         )
@@ -920,6 +958,12 @@ class StudyMaterialService:
             request_params={
                 "reference_material_id": _request_param_uuid(
                     request.reference_material_id
+                ),
+                "external_research_enabled": bool(request.external_research_enabled),
+                "reference_mode": (
+                    "external"
+                    if request.external_research_enabled
+                    else ("pdf" if request.reference_material_id else "none")
                 ),
             },
         )

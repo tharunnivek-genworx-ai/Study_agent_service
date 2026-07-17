@@ -3,15 +3,17 @@
 
 Graph flow (happy path):
 
-    entry_router → resolver → concept_checklist → [llamaparse]
+    entry_router → resolver → concept_checklist → reference_router
+        → [llamaparse | external_research | study_agent]
         → study_agent ⇄ quality_check → END
+
+PDF branch keeps concept_checklist → llamaparse (live order).
+External branch is concept_checklist → external_research (A.1).
+
 QC retry loop:
     quality_check (fail) → study_agent (patch|insert|full_regen) → quality_check
 
 Resume: ``entry_router`` uses ``resolve_resume_next_node`` to skip completed nodes.
-
-See ``resume_router.route_after_study_agent`` and ``_route_after_quality_check``
-for conditional edge logic.
 """
 
 from __future__ import annotations
@@ -28,10 +30,15 @@ from src.api.control.study_agent.graph.resume_router import (
 )
 from src.api.control.study_agent.nodes import (
     concept_checklist_node,
+    external_research_node,
     llamaparse_node,
     quality_check_node,
+    reference_router_node,
     resolve_instruction_node,
     study_agent_node,
+)
+from src.api.control.study_agent.nodes.reference_router_node import (
+    resolve_reference_mode,
 )
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 
@@ -52,6 +59,8 @@ def _route_from_entry(
     "resolver",
     "llamaparse",
     "concept_checklist",
+    "reference_router",
+    "external_research",
     "study_agent",
     "quality_check",
     "__end__",
@@ -90,17 +99,44 @@ def _needs_llamaparse(state: StudyMaterialGraphState) -> bool:
 
 def _route_after_concept_checklist(
     state: StudyMaterialGraphState,
-) -> Literal["llamaparse", "study_agent", "__end__"]:
+) -> Literal["reference_router", "__end__"]:
     if state.get("terminal_llm_failure"):
         return "__end__"
     if state.get("error"):
         return "__end__"
-    if _needs_llamaparse(state):
+    return "reference_router"
+
+
+def _route_after_reference_router(
+    state: StudyMaterialGraphState,
+) -> Literal["llamaparse", "external_research", "study_agent", "__end__"]:
+    if state.get("terminal_llm_failure"):
+        return "__end__"
+    if state.get("error"):
+        return "__end__"
+
+    mode = resolve_reference_mode(state)
+    if mode == "external":
+        # Silent reuse when cache already hydrated (regenerate/improve / resume).
+        if state.get("external_research_cache_hit") or state.get(
+            "external_research_status"
+        ):
+            return "study_agent"
+        return "external_research"
+    if mode == "pdf" and _needs_llamaparse(state):
         return "llamaparse"
     return "study_agent"
 
 
 def _route_after_llamaparse(
+    state: StudyMaterialGraphState,
+) -> Literal["study_agent", "__end__"]:
+    if state.get("error"):
+        return "__end__"
+    return "study_agent"
+
+
+def _route_after_external_research(
     state: StudyMaterialGraphState,
 ) -> Literal["study_agent", "__end__"]:
     if state.get("error"):
@@ -144,6 +180,8 @@ def build_study_material_graph() -> Any:
     graph.add_node("resolver", resolve_instruction_node)
     graph.add_node("llamaparse", llamaparse_node)
     graph.add_node("concept_checklist", concept_checklist_node)
+    graph.add_node("reference_router", reference_router_node)
+    graph.add_node("external_research", external_research_node)
     graph.add_node("study_agent", study_agent_node)
     graph.add_node("quality_check", quality_check_node)
 
@@ -152,6 +190,8 @@ def build_study_material_graph() -> Any:
     graph.add_conditional_edges("resolver", _route_after_resolver)
     graph.add_conditional_edges("llamaparse", _route_after_llamaparse)
     graph.add_conditional_edges("concept_checklist", _route_after_concept_checklist)
+    graph.add_conditional_edges("reference_router", _route_after_reference_router)
+    graph.add_conditional_edges("external_research", _route_after_external_research)
     graph.add_conditional_edges("study_agent", _route_after_study_agent)
     graph.add_conditional_edges("quality_check", _route_after_quality_check)
 
@@ -169,3 +209,8 @@ def reset_study_material_graph() -> None:
     """Clear the compiled graph cache (for tests)."""
     global _compiled_graph
     _compiled_graph = None
+    from src.api.control.study_agent.graph.external_research_graph import (
+        reset_external_research_graph,
+    )
+
+    reset_external_research_graph()
