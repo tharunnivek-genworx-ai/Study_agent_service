@@ -119,6 +119,7 @@ def test_node_to_step_for_study_with_external_research() -> None:
     assert (
         node_to_step_for_profile(profile, "external_research_cross_website_merge") == 1
     )
+    assert node_to_step_for_profile(profile, "checklist_realign") == 1
     assert node_to_step_for_profile(profile, "study_agent") == 2
     assert node_to_step_for_profile(profile, "quality_check") == 3
 

@@ -87,6 +87,7 @@ requirement skeleton:
   "<Calculate/Apply/Determine/Solve for> <target> using <the named equation, rule, or law>, substituting <the specific values or variables involved>, and explain what the result means."
 depth_gate skeleton (fill only the brackets, keep the rest of the sentence exactly as written):
   "States the applicable [named equation, rule, or law]; substitutes the specific [values or variables] used; arrives at the correct result [state the result]; explains what the result means in context."
+A2 FILL GUIDANCE — Prefer a named equation/relation and its named quantities over inventing a new quantitative framework. If the topic supplies no numeric literals, use the named quantities symbolically or choose a standard classroom instance of that named relation; do not introduce an unrelated measurement framework or parameter class merely to make the item numeric.
 Worked example:
   requirement:  "Calculate the resonance stabilization energy of benzene using experimental heats of hydrogenation, substituting the measured values for cyclohexene and benzene, and explain what the result indicates about aromatic stability."
   depth_gate:   "States the applicable heats of hydrogenation for cyclohexene and benzene; substitutes the specific measured values; arrives at the correct resonance energy of approximately 36 kcal/mol reached and stated; explains what this value indicates about benzene's stability relative to a hypothetical non-aromatic cyclohexatriene."

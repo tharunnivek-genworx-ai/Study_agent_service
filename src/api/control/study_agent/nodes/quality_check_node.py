@@ -106,6 +106,15 @@ from src.api.utils.study_agent_utils.quality_check_utils.verification.verificati
 logger = logging.getLogger(__name__)
 
 
+def _research_notes_text(state: StudyMaterialGraphState) -> str:
+    """Prefer ground_truth_reference; fall back to extracted_reference_text."""
+    for key in ("ground_truth_reference", "extracted_reference_text"):
+        value = state.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 async def quality_check_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
@@ -144,6 +153,7 @@ async def quality_check_node(
     generated_content = state.get("generated_content") or ""
     must_cover_checklist: list[dict[str, Any]] = state.get("must_cover_checklist") or []
     topic_split: list[dict[str, Any]] = state.get("topic_split") or []
+    research_notes = _research_notes_text(state)
     new_attempt = current_attempt + 1
     attempt = pipeline_attempt(state)
     topic_title = state.get("node_title") or ""
@@ -320,6 +330,7 @@ async def quality_check_node(
             must_cover_checklist=scoped_checklist,
             topic_split=scoped_topic_split,
             domain=domain,
+            research_notes=research_notes,
             prior_teaching_alignment_failure=prior_teaching_alignment,
         )
     else:
@@ -340,6 +351,7 @@ async def quality_check_node(
             frozen_section_ids=frozen_section_ids,
             topic_split=topic_split,
             domain=domain,
+            research_notes=research_notes,
         )
         prior_qc_result = None
 

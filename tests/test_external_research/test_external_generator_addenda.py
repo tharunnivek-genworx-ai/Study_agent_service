@@ -23,6 +23,8 @@ _POLICY_KEYWORDS = (
     "invent",
     "do not dump",
     "topic_split",
+    "specific content",
+    "depth_gates are mandatory",
 )
 
 
@@ -59,6 +61,11 @@ def test_shared_policy_has_gt_first_invent_for_gaps_no_paste_keywords() -> None:
         assert keyword in lower, f"missing policy keyword: {keyword}"
     assert "prefer them as ground truth" in lower or "ground truth" in lower
     assert "notes omit" in lower or "lack that concept" in lower
+    # Notes-backed checklist specifics + invent-for-gaps; no realign wording.
+    assert "named apis" in lower or "named apis," in lower or "equations" in lower
+    assert "pull that content when present" in lower
+    assert "revised plan" not in lower
+    assert "realign" not in lower
 
 
 def test_domain_addenda_include_shared_policy() -> None:

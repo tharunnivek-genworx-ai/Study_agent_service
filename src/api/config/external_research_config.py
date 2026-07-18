@@ -31,6 +31,15 @@ _DEFAULT_DOMAIN_BLOCKLIST: list[str] = [
     "codecademy.com",
     "udemy.com",
     "coursera.org",
+    # entertainment / edu-lite publishers — thin chrome, low teaching-prep yield
+    "nationalgeographic.org",
+    "nationalgeographic.com",
+    "discovery.com",
+    "discoveryeducation.com",
+    "animalplanet.com",
+    "history.com",
+    # video/paywall lesson shells that extract poorly
+    "study.com",
 ]
 
 
@@ -48,7 +57,13 @@ class ExternalResearchSettings(BaseSettings):
     external_research_target_results: int = 3
     external_research_min_extraction_tokens: int = 200
     external_research_chunk_token_threshold: int = 3000
+    # Cap on merge floor when source notes are rich; scaled down when inputs are short.
     external_research_min_merge_tokens: int = 800
+    # Adaptive merge: effective_min = max(absolute, min(cap, source_tokens * ratio)).
+    external_research_min_merge_absolute_tokens: int = 150
+    external_research_merge_input_ratio: float = 0.85
+    # Best-available single-source fallback when merge stays below the adaptive floor.
+    external_research_min_best_available_tokens: int = 120
     external_research_min_distill_note_tokens: int = 120
     external_research_min_distill_keep_ratio: float = 0.08
     external_research_distill_content_retention_retry: bool = True

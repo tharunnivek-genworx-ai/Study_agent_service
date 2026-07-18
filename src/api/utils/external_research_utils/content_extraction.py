@@ -106,3 +106,33 @@ def extract_pages_from_urls(urls: list[str]) -> list[dict[str, Any]]:
         if rough_token_count(text) >= min_tokens:
             extracted.append({"url": url, "raw_text": text})
     return extracted
+
+
+def extract_pages_until_target(
+    urls: list[str],
+    *,
+    target: int | None = None,
+) -> list[dict[str, Any]]:
+    """Try candidate URLs in order until ``target`` successful pages are collected.
+
+    When a URL fails extract / is thin / marketing-dense, continue with the next
+    candidate from the search refill pool instead of stopping early.
+    """
+    goal = (
+        target
+        if target is not None
+        else external_research_settings.external_research_target_results
+    )
+    if goal <= 0:
+        return []
+
+    extracted: list[dict[str, Any]] = []
+    for url in urls:
+        if len(extracted) >= goal:
+            break
+        page_batch = extract_pages_from_urls([url])
+        if not page_batch:
+            logger.info("Extraction dropped URL; trying next candidate: %s", url)
+            continue
+        extracted.extend(page_batch)
+    return extracted

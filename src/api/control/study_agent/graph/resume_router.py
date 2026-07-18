@@ -91,6 +91,7 @@ STUDY_MATERIAL_GRAPH_NODES = frozenset(
         "external_research_cross_website_merge",
         "external_research_persist_cache",
         "external_research_attach_sources",
+        "checklist_realign",
         "study_agent",
         "quality_check",
     }
@@ -118,11 +119,12 @@ def _route_after_reference_mode(state: StudyMaterialGraphState) -> str:
 
     mode = resolve_reference_mode(state)
     if mode == "external":
-        # Cache hit already applied reference text — skip re-research.
+        # Cache hit already applied reference text — skip re-research,
+        # but still realign draft checklist against cached GT.
         if state.get("external_research_cache_hit") or state.get(
             "external_research_status"
         ):
-            return "study_agent"
+            return "checklist_realign"
         return "external_research"
     if mode == "pdf" and _needs_llamaparse_on_resume(state):
         return "llamaparse"
@@ -153,6 +155,9 @@ def resolve_resume_next_node(
         return "study_agent"
 
     if last_completed_node == "external_research":
+        return "checklist_realign"
+
+    if last_completed_node == "checklist_realign":
         return "study_agent"
 
     if last_completed_node == "study_agent":

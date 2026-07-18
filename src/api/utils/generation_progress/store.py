@@ -121,6 +121,7 @@ _STUDY_NO_REF_NODES: dict[str, int] = {
 }
 
 # Parent + every internal research node map to the researching step (index 1).
+# checklist_realign stays on researching so mentors see one continuous phase.
 _STUDY_WITH_EXTERNAL_RESEARCH_NODES: dict[str, int] = {
     "concept_checklist": 0,
     "reference_router": 0,
@@ -136,6 +137,7 @@ _STUDY_WITH_EXTERNAL_RESEARCH_NODES: dict[str, int] = {
     "external_research_cross_website_merge": 1,
     "external_research_persist_cache": 1,
     "external_research_attach_sources": 1,
+    "checklist_realign": 1,
     "study_agent": 2,
     "quality_check": 3,
 }

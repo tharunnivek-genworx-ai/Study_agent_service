@@ -113,12 +113,166 @@ def missing_checklist_ids_from_recommendation(
     ]
 
 
+def _document_section_ids(document: dict[str, Any] | None) -> set[str]:
+    if not isinstance(document, dict):
+        return set()
+    return {
+        str(section.get("id", "")).strip()
+        for section in document.get("sections") or []
+        if isinstance(section, dict) and str(section.get("id", "")).strip()
+    }
+
+
+def _checklist_item_by_id(
+    checklist: list[dict[str, Any]],
+    item_id: str,
+) -> dict[str, Any] | None:
+    for item in checklist:
+        if str(item.get("id", "")).strip() == item_id:
+            return item
+    return None
+
+
+def _must_cover_passed_for_id(
+    checks: list[dict[str, Any]],
+    *,
+    item_id: str,
+) -> bool | None:
+    """Return True/False when a must_cover check for ``item_id`` exists, else None."""
+    for check in checks:
+        if str(check.get("category", "")) != "must_cover":
+            continue
+        check_item = str(check.get("checklist_id") or check.get("id") or "").strip()
+        # Accept bare mc_* ids and must_cover_mc_* / must_cover_<id> forms.
+        if check_item in {item_id, f"must_cover_{item_id}"}:
+            return bool(check.get("passed", True))
+        if check_item.endswith(f"_{item_id}") and item_id:
+            return bool(check.get("passed", True))
+    return None
+
+
+def _derive_mode_from_targets(
+    *,
+    failed_section_ids: list[str],
+    missing_checklist_ids: list[str],
+    previous_mode: str,
+) -> str:
+    has_failed = bool(failed_section_ids)
+    has_missing = bool(missing_checklist_ids)
+    if not has_failed and not has_missing:
+        return "none"
+    if has_failed and has_missing:
+        return "section_patch_then_insert"
+    if has_missing:
+        return "section_insert"
+    if previous_mode == "full_regeneration":
+        # Keep full regen only when there is still at least one failed section target.
+        return "full_regeneration"
+    return "section_patch"
+
+
+def sanitize_retry_recommendation(
+    recommendation: dict[str, Any] | None,
+    *,
+    checks: list[dict[str, Any]],
+    document: dict[str, Any] | None = None,
+    checklist: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Drop contradictory LLM retry targets; recompute mode from remaining targets.
+
+    Guards the Calvin-style failure mode where every check passes but the model
+    still emits ``missing_checklist_ids`` / ``section_patch`` for an existing
+    section, which previously forced a non-deliverable result with
+    ``qc_retry_mode=none`` (blind full regenerate).
+    """
+    if not isinstance(recommendation, dict):
+        return None
+
+    from src.api.utils.study_agent_utils.generation.study_generation_json import (
+        normalize_checklist_id,
+    )
+
+    checklist = checklist or []
+    known_sections = _document_section_ids(document)
+    failed_checks = extract_failed_checks(checks)
+
+    cleaned_failed_sections: list[str] = []
+    seen_sections: set[str] = set()
+    for raw in recommendation.get("failed_section_ids") or []:
+        section_id = str(raw).strip()
+        if not section_id or section_id in seen_sections:
+            continue
+        if known_sections and section_id not in known_sections:
+            continue
+        if not failed_checks:
+            # All checks passed → never keep patch targets from the recommendation.
+            continue
+        # When checks failed (including document-level checks without section_id),
+        # allow the LLM to map targets onto existing sections.
+        cleaned_failed_sections.append(section_id)
+        seen_sections.add(section_id)
+
+    cleaned_missing: list[str] = []
+    seen_missing: set[str] = set()
+    for raw in recommendation.get("missing_checklist_ids") or []:
+        item_id = (
+            normalize_checklist_id(str(raw), checklist)
+            if checklist
+            else str(raw).strip()
+        )
+        item_id = str(item_id).strip()
+        if not item_id or item_id in seen_missing:
+            continue
+
+        passed = _must_cover_passed_for_id(checks, item_id=item_id)
+        if passed is True:
+            continue
+
+        item = _checklist_item_by_id(checklist, item_id) if checklist else None
+        section_id = str(item.get("section_id") or item_id).strip() if item else item_id
+        if known_sections and section_id in known_sections:
+            # Section exists → not an insert target (may still be a patch if failed).
+            continue
+
+        cleaned_missing.append(item_id)
+        seen_missing.add(item_id)
+
+    previous_mode = str(recommendation.get("mode") or "none").strip() or "none"
+    mode = _derive_mode_from_targets(
+        failed_section_ids=cleaned_failed_sections,
+        missing_checklist_ids=cleaned_missing,
+        previous_mode=previous_mode,
+    )
+    # Preserve explicit full_regeneration only when there are real failed checks.
+    if previous_mode == "full_regeneration" and failed_checks:
+        mode = "full_regeneration"
+
+    rationale = str(recommendation.get("rationale") or "").strip()
+    if mode == "none" and previous_mode != "none":
+        rationale = (
+            "Sanitized contradictory retry_recommendation "
+            f"(was {previous_mode!r}; all actionable targets dropped)."
+        )
+
+    return {
+        "mode": mode,
+        "failed_section_ids": cleaned_failed_sections,
+        "missing_checklist_ids": cleaned_missing,
+        "rationale": rationale,
+    }
+
+
 def requires_must_cover_retry(
     *,
     failed_checks: list[dict[str, Any]],
     retry_recommendation: dict[str, Any] | None,
 ) -> bool:
-    """True when checklist gaps remain and the pipeline should retry generation."""
+    """True when checklist gaps remain and the pipeline should retry generation.
+
+    ``missing_checklist_ids`` alone only counts after sanitization (or when the
+    caller already dropped contradictory ids). Prefer passing a sanitized
+    recommendation from ``build_final_qc_result``.
+    """
     if has_failed_must_cover(failed_checks):
         return True
     return bool(missing_checklist_ids_from_recommendation(retry_recommendation))
@@ -137,6 +291,9 @@ def is_qc_deliverable(
     ``warn`` is deliverable when no critical failures remain, hallucination risk
     is not high, and no must_cover checklist item failed or is missing.
     ``overall_status`` is unchanged for reporting.
+
+    Spurious ``missing_checklist_ids`` on an otherwise-passing run must be
+    sanitized before calling this (see ``sanitize_retry_recommendation``).
     """
     if is_refusal:
         return True

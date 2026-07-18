@@ -58,7 +58,7 @@ def test_resolve_resume_after_reference_router_external_goes_to_research() -> No
     )
 
 
-def test_resolve_resume_after_reference_router_external_cache_hit_skips_research() -> (
+def test_resolve_resume_after_reference_router_external_cache_hit_goes_to_realign() -> (
     None
 ):
     state = {
@@ -71,11 +71,11 @@ def test_resolve_resume_after_reference_router_external_cache_hit_skips_research
     }
     assert (
         resolve_resume_next_node(state, last_completed_node="reference_router")
-        == "study_agent"
+        == "checklist_realign"
     )
 
 
-def test_resolve_resume_after_external_research_goes_to_study_agent() -> None:
+def test_resolve_resume_after_external_research_goes_to_checklist_realign() -> None:
     state = {
         "generation_mode": "generate",
         "external_research_status": "success",
@@ -83,8 +83,29 @@ def test_resolve_resume_after_external_research_goes_to_study_agent() -> None:
     }
     assert (
         resolve_resume_next_node(state, last_completed_node="external_research")
+        == "checklist_realign"
+    )
+
+
+def test_resolve_resume_after_checklist_realign_goes_to_study_agent() -> None:
+    state = {
+        "generation_mode": "generate",
+        "must_cover_checklist": [{"id": "c1", "concept": "loops"}],
+        "external_research_status": "success",
+    }
+    assert (
+        resolve_resume_next_node(state, last_completed_node="checklist_realign")
         == "study_agent"
     )
+
+
+def test_study_material_graph_nodes_include_checklist_realign() -> None:
+    from src.api.control.study_agent.graph.resume_router import (
+        STUDY_MATERIAL_GRAPH_NODES,
+    )
+
+    assert "checklist_realign" in STUDY_MATERIAL_GRAPH_NODES
+    assert "external_research" in STUDY_MATERIAL_GRAPH_NODES
 
 
 def test_resolve_resume_after_concept_checklist_without_reference_goes_to_reference_router() -> (

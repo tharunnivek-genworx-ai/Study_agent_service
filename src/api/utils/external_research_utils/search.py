@@ -186,12 +186,14 @@ def search_external_urls(
     *,
     tavily_client: Any | None = None,
 ) -> list[str]:
-    """Search Tavily; hard-drop PDFs; retry once when usable HTML URLs are short.
+    """Search Tavily; hard-drop PDFs; return a refill pool for extraction.
 
     Blocklisted domains are excluded by Tavily via ``exclude_domains``.
     PDFs are never selected. Course/legacy URLs remain demoted (fill last).
-    If the first pass yields fewer than ``target_results`` non-PDF URLs, one
-    retry runs with ``-filetype:pdf`` and a larger ``max_results`` pool.
+
+    Returns up to ``max_search_results`` domain-deduped candidates so extraction
+    can replace dropped URLs. Retries once with ``-filetype:pdf`` when the first
+    pass yields fewer than ``target_results`` usable HTML URLs.
     """
     search_query = query.strip()
     if not search_query:
@@ -213,13 +215,15 @@ def search_external_urls(
 
     max_results = external_research_settings.external_research_max_search_results
     target = external_research_settings.external_research_target_results
+    # Candidate pool ≥ target so extraction can refill when a URL fails.
+    pool_target = max(max_results, target)
 
     first_urls = _tavily_search(
         tavily_client,
         query=search_query,
         max_results=max_results,
     )
-    selected = select_urls_with_domain_dedupe(first_urls, target=target)
+    selected = select_urls_with_domain_dedupe(first_urls, target=pool_target)
     if len(selected) >= target:
         return selected
 
@@ -238,4 +242,4 @@ def search_external_urls(
         max_results=retry_max,
     )
     merged = _merge_unique_urls(first_urls, retry_urls)
-    return select_urls_with_domain_dedupe(merged, target=target)
+    return select_urls_with_domain_dedupe(merged, target=pool_target)

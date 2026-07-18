@@ -29,8 +29,34 @@ def test_default_blocklist_includes_course_and_qa_domains():
         "codecademy.com",
         "udemy.com",
         "coursera.org",
+        "nationalgeographic.org",
+        "nationalgeographic.com",
+        "discovery.com",
+        "discoveryeducation.com",
+        "animalplanet.com",
+        "history.com",
+        "study.com",
     ):
         assert domain in _DEFAULT_DOMAIN_BLOCKLIST
+
+
+def test_search_returns_refill_pool_up_to_max_results():
+    mock_client = MagicMock()
+    mock_client.search.return_value = {
+        "results": [
+            {"url": "https://react.dev/reference/react/useState"},
+            {"url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript"},
+            {"url": "https://en.wikipedia.org/wiki/React_(software)"},
+            {"url": "https://web.dev/articles/react"},
+            {"url": "https://javascript.info/"},
+        ]
+    }
+
+    urls = search_external_urls("React Hooks", tavily_client=mock_client)
+
+    assert len(urls) == 5
+    assert len({extract_domain(url) for url in urls}) == 5
+    mock_client.search.assert_called_once()
 
 
 def test_is_demoted_url_for_course_paths():
@@ -152,6 +178,8 @@ def test_search_external_urls_uses_topic_subtopic_query_only():
     assert kwargs["query"] == "React Hooks"
     assert kwargs["exclude_domains"] is not None
     assert "codecademy.com" in kwargs["exclude_domains"]
+    assert "nationalgeographic.org" in kwargs["exclude_domains"]
+    assert "discovery.com" in kwargs["exclude_domains"]
     assert kwargs["include_raw_content"] is False
 
 
@@ -169,6 +197,8 @@ def test_search_external_urls_retries_when_first_pass_is_mostly_pdfs():
             "results": [
                 {"url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript"},
                 {"url": "https://en.wikipedia.org/wiki/React_(software)"},
+                {"url": "https://web.dev/articles/react"},
+                {"url": "https://javascript.info/"},
                 {"url": "https://react.dev/learn/thinking-in-react"},
             ]
         },
@@ -184,7 +214,9 @@ def test_search_external_urls_retries_when_first_pass_is_mostly_pdfs():
     assert second_kwargs["max_results"] > first_kwargs["max_results"]
     assert "https://arxiv.org/pdf/1234.5678.pdf" not in urls
     assert "https://react.dev/reference/react/useState" in urls
-    assert len(urls) == 3
+    # Pool may exceed former target=3 when refill candidates are available.
+    assert len(urls) >= 3
+    assert len(urls) <= 5
 
 
 def test_search_external_urls_no_retry_when_target_already_met():
@@ -259,6 +291,37 @@ def test_extract_pages_from_urls_keeps_teaching_article(monkeypatch):
     pages = extract_pages_from_urls(["https://react.dev/reference/react/hooks"])
     assert len(pages) == 1
     assert pages[0]["url"] == "https://react.dev/reference/react/hooks"
+
+
+def test_extract_pages_until_target_refills_after_dropped_url(monkeypatch):
+    from src.api.utils.external_research_utils.content_extraction import (
+        extract_pages_until_target,
+    )
+
+    article = "The Rules of Hooks are essential. " * 40
+
+    def _fake_extract(url: str) -> str | None:
+        if "study.com" in url:
+            return None
+        return article
+
+    monkeypatch.setattr(
+        "src.api.utils.external_research_utils.content_extraction.extract_single_page",
+        _fake_extract,
+    )
+
+    pages = extract_pages_until_target(
+        [
+            "https://study.com/academy/lesson/video/calvin.html",
+            "https://bio.libretexts.org/calvin",
+            "https://en.wikipedia.org/wiki/Calvin_cycle",
+            "https://example.edu/extra",
+        ],
+        target=3,
+    )
+    assert len(pages) == 3
+    assert pages[0]["url"] == "https://bio.libretexts.org/calvin"
+    assert "study.com" not in {p["url"] for p in pages}
 
 
 def test_extract_single_page_skips_pdf_urls_without_fetch():

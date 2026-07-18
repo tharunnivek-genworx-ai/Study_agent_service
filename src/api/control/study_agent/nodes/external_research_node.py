@@ -25,6 +25,7 @@ _RESULT_KEYS = (
     "external_source_urls",
     "ground_truth_reference",
     "extracted_reference_text",
+    "has_reference_material",
     "knowledge_distillation_model_used",
     "search_result_urls",
     "extracted_pages",

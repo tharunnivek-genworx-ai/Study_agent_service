@@ -470,6 +470,25 @@ def test_stem_prompt_teaching_prep_tone_no_mvp_topics():
     assert "usestate" not in lower
 
 
+def test_stem_preserve_hardens_years_experiments_equations_softens_numerics():
+    from src.api.control.study_agent.prompts.external_research.knowledge_distillation_prompt_stem import (
+        _STEM_PRESERVE,
+    )
+
+    lower = _STEM_PRESERVE.lower()
+    assert "every date and year" in lower
+    assert "named" in lower and "experiment" in lower
+    assert "equation" in lower
+    assert "davisson" in lower or "compton" in lower or "year or stated form" in lower
+    # Soften all-numerics pressure: prefer representative, not every table/drill.
+    assert "representative" in lower
+    assert "do not retain every numeric" in lower or "every numeric example" in lower
+    assert "parameter table" in lower
+    # Must not still mandate retaining every worked numeric / full tables.
+    assert "worked numeric examples including the specific numbers used" not in lower
+    assert "tables of values or parameters" not in lower
+
+
 def test_programming_prompt_keeps_full_examples_rule():
     from src.api.control.study_agent.prompts.external_research import (
         PROGRAMMING_DISTILLATION_PROMPT,

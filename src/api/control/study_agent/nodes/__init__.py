@@ -1,3 +1,6 @@
+from src.api.control.study_agent.nodes.checklist_realign_node import (
+    checklist_realign_node,
+)
 from src.api.control.study_agent.nodes.concept_checklist_node import (
     concept_checklist_node,
 )
@@ -15,6 +18,7 @@ from src.api.control.study_agent.nodes.resolver_node import (
 from src.api.control.study_agent.nodes.study_agent_node import study_agent_node
 
 __all__ = [
+    "checklist_realign_node",
     "concept_checklist_node",
     "external_research_node",
     "llamaparse_node",

@@ -74,15 +74,19 @@ PRESERVE (extractive-first — copy verbatim wherever possible):
   notes must state that same year
 - Every equation, formula, and relation with exact notation, variable names,
   and units — never simplify, re-derive, or collapse into a prose description
-- Numerical constants, coefficients, and their units
-- Worked numeric examples including the specific numbers used
 - Named laws, theorems, experiments, methods, and principles (exact names) —
   every named experiment or law that appears in the chunk must appear in notes
+  (e.g. Davisson–Germer, Compton scattering) together with any year or stated
+  form given in the source
 - Derivation steps including intermediate steps — do not skip to shorten
 - Algorithms and their step order
 - Comparisons between related quantities, models, or approaches
 - Constraints, assumptions, and stated limitations
-- Tables of values or parameters
+- Representative numerical constants / coefficients with units when they are
+  central to a relation — prefer one clear constant or relation over copying
+  every worked numeric drill or full parameter table
+- At most one representative worked numeric example when several similar
+  drills appear; do not retain every numeric example or entire parameter tables
 
 Special rule for equations: never simplify, re-derive, or "clean up" an
 equation from the source. Copy it verbatim into knowledge_notes even if

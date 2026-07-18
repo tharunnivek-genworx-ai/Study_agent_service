@@ -34,6 +34,7 @@ async def run_verification_pass(
     frozen_section_ids: list[str] | None,
     topic_split: list[dict[str, Any]] | None = None,
     domain: str = "",
+    research_notes: str = "",
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Single Groq pass over the full study document."""
     verification, meta = await run_llm_verification_pass(
@@ -52,6 +53,7 @@ async def run_verification_pass(
             "frozen_section_ids": frozen_section_ids,
             "topic_split": topic_split,
             "domain": domain,
+            "research_notes": research_notes,
             "max_doc_chars": llm_settings.qc_document_max_chars,
         },
         pass_label="QC verification",
@@ -69,6 +71,7 @@ async def run_retry_verification_pass(
     must_cover_checklist: list[dict[str, Any]],
     topic_split: list[dict[str, Any]] | None = None,
     domain: str = "",
+    research_notes: str = "",
     prior_teaching_alignment_failure: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Targeted Groq pass over patched or inserted sections only."""
@@ -87,6 +90,7 @@ async def run_retry_verification_pass(
             "must_cover_checklist": must_cover_checklist,
             "topic_split": topic_split,
             "domain": domain,
+            "research_notes": research_notes,
             "prior_teaching_alignment_failure": prior_teaching_alignment_failure,
         },
         pass_label="QC targeted verification",

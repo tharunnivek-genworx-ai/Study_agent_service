@@ -3,13 +3,18 @@
 SHARED_EXTERNAL_POLICY = """
 EXTERNAL RESEARCH NOTES POLICY
 Research notes are provided in <research_notes>. Prefer them as ground truth when
-they cover a concept. For checklist / topic_split concepts the notes omit, invent
-complete teaching material from authoritative knowledge at full depth_gate standard.
-Notes do not demote, drop, or shrink checklist items.
+they cover a concept. The checklist / topic_split may require specific content —
+named APIs, equations, experiments, worked examples, or cases — that appears in
+the notes. Pull that content when present. For checklist / topic_split concepts
+the notes omit, invent complete teaching material from authoritative knowledge at
+full depth_gate standard. Notes do not demote, drop, or shrink checklist items.
+Checklist depth_gates are mandatory evidence bars: every required item must be
+demonstrated to that bar (COMPLETE SECTION STANDARD substance), not merely named.
 
 Per checklist / topic_split section:
 1. Scan <research_notes> for definitions, mechanisms, code, equations, named rules,
-   or examples that cover that section's concept.
+   experiments, or examples that cover that section's concept — especially any
+   specifics the checklist / depth_gate names or implies.
 2. If notes cover the concept → adapt that content into trainee-facing lesson tone.
    Do not invent a parallel demo, alternate API, or substitute example for a concept
    the notes already teach.

@@ -34,6 +34,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.results.scoring import 
     derive_scores,
     extract_failed_checks,
     public_scores,
+    sanitize_retry_recommendation,
 )
 
 _DOCUMENT_LEVEL_CATEGORIES = frozenset({"teaching_alignment", "document_coherence"})
@@ -173,6 +174,13 @@ def build_final_qc_result(
 
     recommendation = ver.get("retry_recommendation")
     if isinstance(recommendation, dict):
-        result["retry_recommendation"] = recommendation
+        sanitized = sanitize_retry_recommendation(
+            recommendation,
+            checks=all_checks,
+            document=document,
+            checklist=checklist,
+        )
+        if sanitized is not None:
+            result["retry_recommendation"] = sanitized
 
     return result

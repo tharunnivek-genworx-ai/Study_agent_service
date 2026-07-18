@@ -4,11 +4,11 @@
 Graph flow (happy path):
 
     entry_router → resolver → concept_checklist → reference_router
-        → [llamaparse | external_research | study_agent]
+        → [llamaparse | external_research → checklist_realign | study_agent]
         → study_agent ⇄ quality_check → END
 
 PDF branch keeps concept_checklist → llamaparse (live order).
-External branch is concept_checklist → external_research (A.1).
+External branch is concept_checklist → external_research → checklist_realign.
 
 QC retry loop:
     quality_check (fail) → study_agent (patch|insert|full_regen) → quality_check
@@ -29,6 +29,7 @@ from src.api.control.study_agent.graph.resume_router import (
     route_after_study_agent,
 )
 from src.api.control.study_agent.nodes import (
+    checklist_realign_node,
     concept_checklist_node,
     external_research_node,
     llamaparse_node,
@@ -61,6 +62,7 @@ def _route_from_entry(
     "concept_checklist",
     "reference_router",
     "external_research",
+    "checklist_realign",
     "study_agent",
     "quality_check",
     "__end__",
@@ -109,7 +111,9 @@ def _route_after_concept_checklist(
 
 def _route_after_reference_router(
     state: StudyMaterialGraphState,
-) -> Literal["llamaparse", "external_research", "study_agent", "__end__"]:
+) -> Literal[
+    "llamaparse", "external_research", "checklist_realign", "study_agent", "__end__"
+]:
     if state.get("terminal_llm_failure"):
         return "__end__"
     if state.get("error"):
@@ -118,10 +122,11 @@ def _route_after_reference_router(
     mode = resolve_reference_mode(state)
     if mode == "external":
         # Silent reuse when cache already hydrated (regenerate/improve / resume).
+        # Still realign draft checklist against cached GT before generation.
         if state.get("external_research_cache_hit") or state.get(
             "external_research_status"
         ):
-            return "study_agent"
+            return "checklist_realign"
         return "external_research"
     if mode == "pdf" and _needs_llamaparse(state):
         return "llamaparse"
@@ -137,6 +142,14 @@ def _route_after_llamaparse(
 
 
 def _route_after_external_research(
+    state: StudyMaterialGraphState,
+) -> Literal["checklist_realign", "__end__"]:
+    if state.get("error"):
+        return "__end__"
+    return "checklist_realign"
+
+
+def _route_after_checklist_realign(
     state: StudyMaterialGraphState,
 ) -> Literal["study_agent", "__end__"]:
     if state.get("error"):
@@ -182,6 +195,7 @@ def build_study_material_graph() -> Any:
     graph.add_node("concept_checklist", concept_checklist_node)
     graph.add_node("reference_router", reference_router_node)
     graph.add_node("external_research", external_research_node)
+    graph.add_node("checklist_realign", checklist_realign_node)
     graph.add_node("study_agent", study_agent_node)
     graph.add_node("quality_check", quality_check_node)
 
@@ -192,6 +206,7 @@ def build_study_material_graph() -> Any:
     graph.add_conditional_edges("concept_checklist", _route_after_concept_checklist)
     graph.add_conditional_edges("reference_router", _route_after_reference_router)
     graph.add_conditional_edges("external_research", _route_after_external_research)
+    graph.add_conditional_edges("checklist_realign", _route_after_checklist_realign)
     graph.add_conditional_edges("study_agent", _route_after_study_agent)
     graph.add_conditional_edges("quality_check", _route_after_quality_check)
 

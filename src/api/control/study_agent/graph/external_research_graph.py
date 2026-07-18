@@ -18,6 +18,7 @@ from uuid import UUID
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
+from src.api.config import external_research_settings
 from src.api.control.study_agent.states.state import StudyMaterialGraphState
 from src.api.data.repositories import NodeRepository
 from src.api.data.repositories.study_agent_repositories.external_research_repository import (
@@ -191,10 +192,17 @@ async def external_research_content_extraction_node(
     await abort_if_should_stop(should_continue)
 
     urls = list(state.get("search_result_urls") or [])
+    target = external_research_settings.external_research_target_results
+    # Walk the refill pool until we have ``target`` successful pages (or pool ends).
     extracted: list[dict[str, Any]] = []
     for url in urls:
+        if len(extracted) >= target:
+            break
         await abort_if_should_stop(should_continue)
         page_batch = extract_pages_from_urls([url])
+        if not page_batch:
+            logger.info("Extraction dropped URL; trying next search candidate: %s", url)
+            continue
         extracted.extend(page_batch)
 
     updates: dict[str, Any] = {"extracted_pages": extracted}
