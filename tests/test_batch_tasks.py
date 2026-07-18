@@ -139,6 +139,107 @@ async def test_process_batch_happy_path_chains_next_step() -> None:
     execute_run.assert_awaited_once_with(run_id=run_id, mentor_id=mentor_id)
     orchestrator.attach_generation_run.assert_awaited_once_with(step.step_id, run_id)
     dispatch.assert_awaited_once_with(batch_id)
+    start_call = study_material_service.start_generate_study_material.await_args
+    assert start_call.args[0] == step.node_id
+    assert start_call.args[1].external_research_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_process_batch_enables_external_research_for_selected_nodes() -> None:
+    from src.api.batch import tasks
+
+    batch_id = uuid4()
+    run_id = uuid4()
+    mentor_id = uuid4()
+    step = _make_step()
+    batch = _make_batch(batch_id=batch_id, mentor_id=mentor_id)
+    batch.policy = {
+        "mode": "skip_existing",
+        "external_research_node_ids": [str(step.node_id)],
+    }
+
+    claim_session = _session_context(MagicMock())
+    claim_session.commit = AsyncMock()
+    claim_session.rollback = AsyncMock()
+
+    finalize_session = _session_context(MagicMock())
+    finalize_session.commit = AsyncMock()
+    finalize_session.rollback = AsyncMock()
+    finalize_session.get = AsyncMock(
+        return_value=SimpleNamespace(
+            run_id=run_id,
+            status=GenerationRunStatus.COMPLETED.value,
+            error_message=None,
+        )
+    )
+
+    chain_session = _session_context(MagicMock())
+    chain_session.get = AsyncMock(return_value=batch)
+
+    study_material_service = MagicMock()
+    study_material_service.start_generate_study_material = AsyncMock(
+        return_value=run_id
+    )
+
+    with (
+        patch(
+            "src.api.batch.tasks.SessionLocal",
+            side_effect=[claim_session, finalize_session, chain_session],
+        ),
+        patch("src.api.batch.tasks.BatchOrchestrationService") as orchestrator_cls,
+        patch(
+            "src.api.batch.tasks.StudyMaterialService",
+            return_value=study_material_service,
+        ),
+        patch(
+            "src.api.batch.tasks._execute_generation_run",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.api.batch.tasks.release_all_generation_locks",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.api.batch.tasks.dispatch_batch_job",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.api.batch.tasks._batch_has_pending_steps",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+    ):
+        orchestrator = orchestrator_cls.return_value
+        orchestrator._get_batch = AsyncMock(return_value=batch)
+        orchestrator.claim_next_step = AsyncMock(return_value=step)
+        orchestrator.attach_generation_run = AsyncMock()
+        orchestrator.finalize_step = AsyncMock()
+
+        await tasks.process_batch(str(batch_id))
+
+    request = study_material_service.start_generate_study_material.await_args.args[1]
+    assert request.external_research_enabled is True
+
+
+def test_policy_external_research_enabled_matches_node_ids() -> None:
+    from src.api.batch import tasks
+
+    node_id = uuid4()
+    assert (
+        tasks._policy_external_research_enabled(
+            {"external_research_node_ids": [str(node_id)]},
+            node_id,
+        )
+        is True
+    )
+    assert (
+        tasks._policy_external_research_enabled(
+            {"external_research_node_ids": [str(uuid4())]},
+            node_id,
+        )
+        is False
+    )
+    assert tasks._policy_external_research_enabled(None, node_id) is False
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ from src.api.utils.study_agent_utils.quality_check_utils.results.scoring import 
     extract_failed_checks,
     is_qc_deliverable,
     public_scores,
+    sanitize_retry_recommendation,
 )
 
 # ---------------------------------------------------------------------------
@@ -221,6 +222,8 @@ class TestIsQcDeliverable:
         )
 
     def test_warn_missing_checklist_ids_not_deliverable(self):
+        # Raw recommendation still blocks; callers must sanitize first
+        # (build_final_qc_result / classify_retry_routing do that).
         assert not is_qc_deliverable(
             overall_status="warn",
             failed_checks=[],
@@ -233,10 +236,146 @@ class TestIsQcDeliverable:
             },
         )
 
+    def test_pass_with_sanitized_empty_recommendation_is_deliverable(self):
+        assert is_qc_deliverable(
+            overall_status="pass",
+            failed_checks=[],
+            hallucination_risk="none",
+            is_refusal=False,
+            retry_recommendation={
+                "mode": "none",
+                "failed_section_ids": [],
+                "missing_checklist_ids": [],
+                "rationale": "Sanitized contradictory retry_recommendation.",
+            },
+        )
+
 
 # ---------------------------------------------------------------------------
-# derive_scores
+# sanitize_retry_recommendation
 # ---------------------------------------------------------------------------
+
+
+class TestSanitizeRetryRecommendation:
+    def test_calvin_style_contradiction_cleared_to_none(self):
+        """All checks pass + spurious missing/patch targets → mode none."""
+        checklist = [
+            {
+                "id": "mc_3",
+                "concept": "Regeneration",
+                "section_id": "ts_3",
+                "priority": "required",
+            }
+        ]
+        document = {
+            "sections": [
+                {"id": "ts_3", "heading": "Regen", "content": "has content"},
+            ]
+        }
+        checks = [
+            {
+                "id": "mc_3",
+                "category": "must_cover",
+                "checklist_id": "mc_3",
+                "section_id": "ts_3",
+                "passed": True,
+                "severity": "critical",
+            }
+        ]
+        sanitized = sanitize_retry_recommendation(
+            {
+                "mode": "section_patch",
+                "failed_section_ids": ["ts_3"],
+                "missing_checklist_ids": ["mc_3"],
+                "rationale": "Needs ATP values",
+            },
+            checks=checks,
+            document=document,
+            checklist=checklist,
+        )
+        assert sanitized is not None
+        assert sanitized["mode"] == "none"
+        assert sanitized["failed_section_ids"] == []
+        assert sanitized["missing_checklist_ids"] == []
+        assert is_qc_deliverable(
+            overall_status="pass",
+            failed_checks=[],
+            hallucination_risk="low",
+            is_refusal=False,
+            retry_recommendation=sanitized,
+        )
+
+    def test_keeps_true_missing_when_section_absent(self):
+        checklist = [
+            {
+                "id": "mc_5",
+                "concept": "Missing topic",
+                "section_id": "ts_5",
+                "priority": "required",
+            }
+        ]
+        document = {"sections": [{"id": "ts_1", "heading": "Intro", "content": "x"}]}
+        checks = [
+            {
+                "id": "mc_5",
+                "category": "must_cover",
+                "checklist_id": "mc_5",
+                "section_id": "ts_5",
+                "passed": False,
+                "severity": "critical",
+            }
+        ]
+        sanitized = sanitize_retry_recommendation(
+            {
+                "mode": "section_insert",
+                "failed_section_ids": [],
+                "missing_checklist_ids": ["mc_5"],
+                "rationale": "Section absent",
+            },
+            checks=checks,
+            document=document,
+            checklist=checklist,
+        )
+        assert sanitized is not None
+        assert sanitized["mode"] == "section_insert"
+        assert sanitized["missing_checklist_ids"] == ["mc_5"]
+
+    def test_keeps_failed_section_when_check_failed(self):
+        checklist = [
+            {
+                "id": "mc_2",
+                "concept": "Fixation",
+                "section_id": "ts_2",
+                "priority": "required",
+            }
+        ]
+        document = {
+            "sections": [{"id": "ts_2", "heading": "Fixation", "content": "thin"}]
+        }
+        checks = [
+            {
+                "id": "mc_2",
+                "category": "must_cover",
+                "checklist_id": "mc_2",
+                "section_id": "ts_2",
+                "passed": False,
+                "severity": "critical",
+            }
+        ]
+        sanitized = sanitize_retry_recommendation(
+            {
+                "mode": "section_patch",
+                "failed_section_ids": ["ts_2"],
+                "missing_checklist_ids": [],
+                "rationale": "Depth gate miss",
+            },
+            checks=checks,
+            document=document,
+            checklist=checklist,
+        )
+        assert sanitized is not None
+        assert sanitized["mode"] == "section_patch"
+        assert sanitized["failed_section_ids"] == ["ts_2"]
 
 
 class TestDeriveScores:

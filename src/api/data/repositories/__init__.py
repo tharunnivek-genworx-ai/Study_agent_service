@@ -18,6 +18,9 @@ from src.api.data.repositories.space_node_repository.node_repository import (
 from src.api.data.repositories.space_node_repository.space_repository import (
     SpaceRepository,
 )
+from src.api.data.repositories.study_agent_repositories.external_research_repository import (
+    ExternalResearchRepository,
+)
 from src.api.data.repositories.study_agent_repositories.reference_llamaparse_repository import (
     ReferenceLlamaParseRepository,
 )
@@ -38,6 +41,7 @@ from src.api.data.repositories.trainee_study_repositories.trainee_study_reposito
 )
 
 __all__ = [
+    "ExternalResearchRepository",
     "GenerationRunRepository",
     "HintRepository",
     "MentorProgressRepository",

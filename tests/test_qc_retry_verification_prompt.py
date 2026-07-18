@@ -86,6 +86,28 @@ class TestQcRetryVerificationPrompt:
         assert "<document_context>" not in msg
         assert "root-cause-fixed" in msg
 
+    def test_user_message_includes_non_empty_research_notes_only(self):
+        kwargs = {
+            "teaching_instruction": "Show the calculation.",
+            "document_outline": "- [mc_2] Worked example",
+            "revised_sections": _REVISED_SECTIONS,
+            "section_failures": _SECTION_FAILURES,
+            "must_cover_checklist": _CHECKLIST,
+            "domain": "STEM",
+        }
+        with_notes = qc_retry_verification_prompt.build_user_message(
+            **kwargs,
+            research_notes="The note relation is F = ma.",
+        )
+        without_notes = qc_retry_verification_prompt.build_user_message(
+            **kwargs,
+            research_notes="",
+        )
+
+        assert "<research_notes>" in with_notes
+        assert "The note relation is F = ma." in with_notes
+        assert "<research_notes>" not in without_notes
+
     def test_system_prompt_includes_must_cover_hygiene_rules(self):
         system = qc_retry_verification_prompt.build_system_prompt(domain="")
         assert "checklist_id exactly" in system
@@ -99,6 +121,25 @@ class TestQcRetryVerificationPrompt:
         assert "④ code_quality" not in stem_prompt
         assert "⑤ stack_fidelity" not in stem_prompt
         assert "Programming: trace code execution" not in stem_prompt
+
+    def test_numeric_integrity_and_a2_recompute_are_stem_only(self):
+        stem_prompt = qc_retry_verification_prompt.build_system_prompt(domain="STEM")
+        programming_prompt = qc_retry_verification_prompt.build_system_prompt(
+            domain="Programming"
+        )
+
+        assert "NUMERIC / SUBSTITUTION INTEGRITY" in stem_prompt
+        assert (
+            "Recomputed: <expression> = <value>. Document: <value>. Match: yes/no."
+            in stem_prompt
+        )
+        assert "A2-style apply/calculate/substitute" in stem_prompt
+        assert "does NOT impose the 4-formula_block chain minimum" in stem_prompt
+        assert "cannot independently verify" in stem_prompt
+        assert "contradiction = fail" in stem_prompt
+        assert "Do not emit plan patches" in stem_prompt
+        assert "NUMERIC / SUBSTITUTION INTEGRITY" not in programming_prompt
+        assert "A2-style apply/calculate/substitute" not in programming_prompt
 
     def test_user_message_includes_section_id_on_checklist_lines(self):
         checklist = [

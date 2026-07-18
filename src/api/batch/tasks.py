@@ -57,6 +57,14 @@ def _policy_reference_material_id(policy: dict | None) -> UUID | None:
     return UUID(str(raw))
 
 
+def _policy_external_research_enabled(policy: dict | None, node_id: UUID) -> bool:
+    raw_ids = (policy or {}).get("external_research_node_ids") or []
+    if not isinstance(raw_ids, list):
+        return False
+    wanted = {str(item) for item in raw_ids}
+    return str(node_id) in wanted
+
+
 async def _batch_has_pending_steps(session: AsyncSession, batch_id: UUID) -> bool:
     count = await session.scalar(
         select(func.count())
@@ -296,15 +304,21 @@ async def process_batch(batch_id: str) -> None:
 
             step_id = step.step_id
             step_node_id = step.node_id
-            reference_material_id = _policy_reference_material_id(
-                batch.policy if isinstance(batch.policy, dict) else None
+            policy = batch.policy if isinstance(batch.policy, dict) else None
+            reference_material_id = _policy_reference_material_id(policy)
+            external_research_enabled = _policy_external_research_enabled(
+                policy, step_node_id
             )
+            if reference_material_id is not None and external_research_enabled:
+                # PDF reference wins if both are somehow present.
+                external_research_enabled = False
             study_material_service = StudyMaterialService(session)
             try:
                 run_id = await study_material_service.start_generate_study_material(
                     step_node_id,
                     StudyMaterialGenerateRequest(
-                        reference_material_id=reference_material_id
+                        reference_material_id=reference_material_id,
+                        external_research_enabled=external_research_enabled,
                     ),
                     mentor_id,
                     "mentor",

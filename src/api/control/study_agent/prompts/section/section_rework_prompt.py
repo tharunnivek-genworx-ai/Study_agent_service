@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import json
 
+from src.api.control.study_agent.prompts.generation.external import (
+    resolve_external_addendum,
+)
 from src.api.control.study_agent.prompts.generation.generation_prompt import (
     format_reference_user_block,
 )
@@ -124,9 +127,29 @@ def _build_base_system(domain: str | None) -> str:
 _BASE_SYSTEM = _build_base_system("")
 
 
-def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
-    return _build_base_system(domain) + (
-        _REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM
+def _select_reference_addendum(
+    *,
+    has_reference: bool,
+    reference_kind: str = "none",
+    domain: str | None = None,
+) -> str:
+    if reference_kind == "external":
+        return resolve_external_addendum(domain)
+    if reference_kind == "pdf" or has_reference:
+        return _REFERENCE_ADDENDUM
+    return _NO_REFERENCE_ADDENDUM
+
+
+def build_system_prompt(
+    *,
+    has_reference: bool,
+    domain: str | None = None,
+    reference_kind: str = "none",
+) -> str:
+    return _build_base_system(domain) + _select_reference_addendum(
+        has_reference=has_reference,
+        reference_kind=reference_kind,
+        domain=domain,
     )
 
 
@@ -308,8 +331,13 @@ def build_user_message(
 
 
 def format_reference_block(
-    extracted_reference_text: str, *, has_reference: bool
+    extracted_reference_text: str,
+    *,
+    has_reference: bool,
+    reference_kind: str = "none",
 ) -> str:
     return format_reference_user_block(
-        extracted_reference_text, has_reference=has_reference
+        extracted_reference_text,
+        has_reference=has_reference,
+        reference_kind=reference_kind,
     )

@@ -78,10 +78,57 @@ STUDY_MATERIAL_GRAPH_NODES = frozenset(
         "resolver",
         "llamaparse",
         "concept_checklist",
+        "reference_router",
+        "external_research",
+        "external_research_cache_check",
+        "external_research_resolve_query",
+        "external_research_search",
+        "external_research_content_extraction",
+        "external_research_content_distillation",
+        "external_research_chunk_if_needed",
+        "external_research_knowledge_distillation",
+        "external_research_website_reduction",
+        "external_research_cross_website_merge",
+        "external_research_persist_cache",
+        "external_research_attach_sources",
+        "checklist_realign",
         "study_agent",
         "quality_check",
     }
 )
+
+
+def _needs_llamaparse_on_resume(state: StudyMaterialGraphState) -> bool:
+    if state.get("skip_llamaparse"):
+        return False
+    if not state.get("has_reference_material"):
+        return False
+    if not state.get("reference_file_path"):
+        return False
+    parsed = state.get("parsed_reference_data") or {}
+    if isinstance(parsed, dict) and parsed.get("sections"):
+        return False
+    return True
+
+
+def _route_after_reference_mode(state: StudyMaterialGraphState) -> str:
+    """Mirror main-graph reference_router edges for resume."""
+    from src.api.control.study_agent.nodes.reference_router_node import (
+        resolve_reference_mode,
+    )
+
+    mode = resolve_reference_mode(state)
+    if mode == "external":
+        # Cache hit already applied reference text — skip re-research,
+        # but still realign draft checklist against cached GT.
+        if state.get("external_research_cache_hit") or state.get(
+            "external_research_status"
+        ):
+            return "checklist_realign"
+        return "external_research"
+    if mode == "pdf" and _needs_llamaparse_on_resume(state):
+        return "llamaparse"
+    return "study_agent"
 
 
 def resolve_resume_next_node(
@@ -99,17 +146,18 @@ def resolve_resume_next_node(
     if last_completed_node == "concept_checklist":
         if not state.get("must_cover_checklist"):
             return "concept_checklist"
-        if state.get("skip_llamaparse"):
-            return "study_agent"
-        if (
-            state.get("has_reference_material")
-            and state.get("reference_file_path")
-            and not (state.get("parsed_reference_data") or {}).get("sections")
-        ):
-            return "llamaparse"
-        return "study_agent"
+        return "reference_router"
+
+    if last_completed_node == "reference_router":
+        return _route_after_reference_mode(state)
 
     if last_completed_node == "llamaparse":
+        return "study_agent"
+
+    if last_completed_node == "external_research":
+        return "checklist_realign"
+
+    if last_completed_node == "checklist_realign":
         return "study_agent"
 
     if last_completed_node == "study_agent":
@@ -156,6 +204,8 @@ def hydrate_checkpoint_state(
         ("mentor_regeneration_goal", "mentor_feedback"),
         ("mentor_feedback", "mentor_feedback"),
         ("reference_material_id", "reference_material_id"),
+        ("external_research_enabled", "external_research_enabled"),
+        ("reference_mode", "reference_mode"),
     ):
         if state_key not in state and params.get(param_key) is not None:
             value = params[param_key]

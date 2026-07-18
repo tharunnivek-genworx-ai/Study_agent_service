@@ -43,6 +43,9 @@ from src.api.utils.study_agent_utils.quality_check_utils.core.failure_class impo
     is_placement_only_failure,
     split_section_failures_by_kind,
 )
+from src.api.utils.study_agent_utils.quality_check_utils.results.scoring import (
+    sanitize_retry_recommendation,
+)
 
 _VALID_MODES: frozenset[str] = frozenset(
     {
@@ -584,16 +587,97 @@ def classify_retry_routing(
     """
     checklist = checklist or []
     failed = _failed_checks(qc_result)
+    raw_checks = qc_result.get("checks")
+    checks: list[dict[str, Any]] = (
+        [c for c in raw_checks if isinstance(c, dict)]
+        if isinstance(raw_checks, list)
+        else failed
+    )
 
     failure_class = classify_failure_class(failed)
 
+    raw_recommendation = qc_result.get("retry_recommendation")
+    recommendation_dict = sanitize_retry_recommendation(
+        raw_recommendation if isinstance(raw_recommendation, dict) else None,
+        checks=[c for c in checks if isinstance(c, dict)],
+        document=document,
+        checklist=checklist,
+    )
+    # Prefer sanitized copy for downstream rationale / consumers of this dict.
+    if recommendation_dict is not None:
+        qc_result = {**qc_result, "retry_recommendation": recommendation_dict}
+
+    llm_recommendation_mode: RetryMode | None = None
+    llm_recommendation_rationale = ""
+    if recommendation_dict is not None:
+        llm_recommendation_mode = _coerce_llm_recommendation_mode(
+            recommendation_dict.get("mode")
+        )
+        llm_recommendation_rationale = str(
+            recommendation_dict.get("rationale", "")
+        ).strip()
+
     if not failed:
+        # All checks passed. After sanitization the recommendation should be
+        # mode=none; if actionable targets remain, honor that mode instead of
+        # returning none while qc_passed is false (Calvin full-regen bug).
+        failed_section_ids: set[str] = set()
+        missing_checklist_ids: set[str] = set()
+        failures_by_section: dict[str, list[dict[str, str]]] = {}
+        _merge_llm_recommendation_targets(
+            recommendation=recommendation_dict,
+            document=document,
+            checklist=checklist,
+            failed_section_ids=failed_section_ids,
+            missing_checklist_ids=missing_checklist_ids,
+            failures_by_section=failures_by_section,
+            failed=failed,
+        )
+        if not failed_section_ids and not missing_checklist_ids:
+            return RetryRoutingResult(
+                mode="none",
+                failed_section_ids=[],
+                missing_checklist_ids=[],
+                section_failures=[],
+                rationale="no failed checks",
+                failure_class=failure_class,
+            )
+
+        deterministic = _deterministic_mode(
+            failed_section_ids=failed_section_ids,
+            missing_checklist_ids=missing_checklist_ids,
+        )
+        mode = _reconcile_mode(
+            deterministic=deterministic,
+            llm_recommendation_mode=llm_recommendation_mode,
+            force_full_regen=False,
+            failed_section_ids=failed_section_ids,
+            missing_checklist_ids=missing_checklist_ids,
+            teaching_alignment_sole_failure=False,
+        )
+        sorted_failed_ids = sorted(failed_section_ids)
+        sorted_missing_ids = sorted(missing_checklist_ids)
+        section_failures = _build_section_failures(
+            sorted_failed_ids,
+            failures_by_section,
+            _section_by_id(document),
+        )
+        placement_section_failures, substance_section_failures = (
+            split_section_failures_by_kind(section_failures)
+        )
+        rationale = (
+            llm_recommendation_rationale
+            if llm_recommendation_rationale and llm_recommendation_mode == mode
+            else f"honored retry_recommendation with no failed checks: {mode}"
+        )
         return RetryRoutingResult(
-            mode="none",
-            failed_section_ids=[],
-            missing_checklist_ids=[],
-            section_failures=[],
-            rationale="no failed checks",
+            mode=mode,
+            failed_section_ids=sorted_failed_ids,
+            missing_checklist_ids=sorted_missing_ids,
+            section_failures=section_failures,
+            placement_section_failures=placement_section_failures,
+            substance_section_failures=substance_section_failures,
+            rationale=rationale,
             failure_class=failure_class,
         )
 
@@ -610,18 +694,6 @@ def classify_retry_routing(
         topic_split=topic_split,
         structure_missing_ids=structure_missing_ids,
     )
-
-    recommendation = qc_result.get("retry_recommendation")
-    recommendation_dict = recommendation if isinstance(recommendation, dict) else None
-    llm_recommendation_mode: RetryMode | None = None
-    llm_recommendation_rationale = ""
-    if recommendation_dict is not None:
-        llm_recommendation_mode = _coerce_llm_recommendation_mode(
-            recommendation_dict.get("mode")
-        )
-        llm_recommendation_rationale = str(
-            recommendation_dict.get("rationale", "")
-        ).strip()
 
     _merge_llm_recommendation_targets(
         recommendation=recommendation_dict,

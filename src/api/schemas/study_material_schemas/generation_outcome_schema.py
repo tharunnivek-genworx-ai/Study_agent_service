@@ -31,6 +31,13 @@ class ActionRequiredOut(BaseModel):
     reason: str | None = None
 
 
+EXTERNAL_RESEARCH_FAIL_SOFT_MESSAGE = (
+    "We couldn't find enough reliable information online for this topic, "
+    "so this version was generated without external references. "
+    "You can attach a reference PDF instead, or edit the generated content directly."
+)
+
+
 class GenerationOutcomeDetail(BaseModel):
     """Stored in JSONB and graph state for terminal non-deliverable outcomes."""
 
@@ -38,3 +45,5 @@ class GenerationOutcomeDetail(BaseModel):
     reason: str | None = None
     topic_received: str | None = None
     raw_preview: str | None = None
+    external_research_fail_soft: bool | None = None
+    fail_reason: str | None = None

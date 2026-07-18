@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from src.api.control.study_agent.prompts.concept.checklist_realign_prompt import (
+    truncate_research_notes,
+)
 from src.api.utils.prompt_utils.domain_merge import (
     classification_block,
     domains_to_include,
@@ -66,6 +69,9 @@ QC_STEM_DERIVATION_MUST_COVER_BLOCK = """\
    - Independently recompute every step in the chain from the one immediately before it. A step that does not
      follow validly from its predecessor forces passed=false and the specific invalid step must be quoted verbatim
      in "issues" — even if the document's final stated answer happens to be numerically correct.
+   - Also independently recompute every result component in an A2-style apply/calculate/substitute must_cover item.
+     This arithmetic and logical integrity requirement does NOT impose the 4-formula_block derivation minimum on
+     A2 items; it verifies the substitutions and stated result that the item actually claims.
    - A depth_gate phrase referring to a diagram, figure, or visual construction is satisfied only if the document
      expresses the equivalent relationship as an explicit formula_block equation — a prose description of what a
      diagram would show, with no corresponding equation, does not satisfy that component (mark it MISSING).
@@ -111,8 +117,28 @@ QC_STEM_VERIFICATION_BLOCK = """\
    - Is every stated constant (speed of light, Planck's constant, Avogadro's number, etc.) numerically correct?
    - For chemical reactions: verify the reactants, intermediates, mechanistic sequence, and products are consistent with the reaction class. Check the actual chemistry, not just the labels or symbols.
    - Is every named reaction, mechanism, or compound a real one? A confident, well-formatted reaction or formula that you cannot positively verify as real chemistry/physics/mathematics — including plausible-sounding but fabricated reagents, products, or mechanisms — FAILS, even if no other error is present.
+   NUMERIC / SUBSTITUTION INTEGRITY:
+   - Apply this rule when a formula_block contains an evaluable arithmetic or algebraic expression, or when a
+     formula_block is cited as evidence for a must_cover component claiming a correct result, yield, or
+     substitution outcome.
+   - Independently recompute the expression. The evidence MUST include exactly this labeled record:
+     "Recomputed: <expression> = <value>. Document: <value>. Match: yes/no."
+   - Match: no forces that content_accuracy check to passed=false and also forces passed=false for every must_cover
+     component that depends on the incorrect result.
+   - Verify unit consistency as part of the recomputation; incompatible units or scale mismatches such as J versus
+     kJ fail.
+   - Accept equivalent algebraic forms and minor rounding within approximately 1% relative error or the stated
+     significant figures. Do not fail for notation style alone.
+   - For stoichiometry and chemical equations, verify atom/count conservation and any stated cycle stoichiometry.
+     Invented reactants or products fail.
    - FAIL if any code_block is present in this section at all — see the STEM RULE above. This is a content_accuracy
      and document_coherence failure simultaneously; do not let a correct formula_block elsewhere offset it.
+   OPTIONAL RESEARCH-NOTES GROUNDING (when <research_notes> is non-empty):
+   - If notes state an equation, relation, API, or count for a concept the document also treats, the document must not
+     contradict that artifact. Contradiction with notes = fail.
+   - Notes do not require importing every note topic. Absence of a note for a claim is not an automatic fail — model
+     knowledge still applies.
+   - Do not emit plan patches; do not rewrite checklist or topic_split.
    FAIL if any equation or reaction is wrong, misapplied, fabricated, or a worked example reaches an incorrect result.
 """
 
@@ -220,6 +246,12 @@ ANTI-INFLATION RULES — absolute, no exceptions
 - NEVER leave evidence empty for must_cover, teaching_alignment, or document_coherence on pass or fail.
 - NEVER set corrective_hint when passed=true; use "".
 - NEVER set retry_recommendation.mode to "none" while any check has passed=false.
+- NEVER set retry_recommendation.mode to anything other than "none" when EVERY check has passed=true.
+- NEVER put a checklist id in missing_checklist_ids when that item's section already exists in the document.
+- NEVER put a checklist id in missing_checklist_ids when that item's must_cover check has passed=true.
+- NEVER put a section id in failed_section_ids unless at least one check for that section has passed=false.
+- NEVER emit section_patch / section_insert / section_patch_then_insert / full_regeneration solely because issues[] or corrective_instructions mention a gap — those fields are advisory; retry_recommendation must follow failed checks only.
+- If all checks passed=true: retry_recommendation.mode MUST be "none", failed_section_ids MUST be [], and missing_checklist_ids MUST be [].
 - NEVER treat length, detail density, or formatting quality as evidence of correctness.
 - NEVER set hallucination_risk to "none" if any must_cover evidence contains a MISSING component, or if any
   emitted check has passed=false.
@@ -229,11 +261,12 @@ HALLUCINATION RISK
   "medium" — One or more specific claims appear incorrect, were accepted without independent verification, or cannot be verified (e.g. organisational statistics without a source, chemistry mechanisms not independently confirmed).
   "high"   — A core concept, equation, reaction, or code example is wrong or fabricated in a way that actively misleads a learner.
 RETRY RECOMMENDATION
-  "none"                      — all checks pass.
-  "section_patch"             — isolated failures in existing sections.
-  "section_insert"            — required items have no matching section in the document.
+  "none"                      — all checks pass. REQUIRED whenever every check has passed=true.
+  "section_patch"             — isolated failures in existing sections (failed_section_ids non-empty; missing_checklist_ids empty).
+  "section_insert"            — required items have no matching section in the document (missing_checklist_ids non-empty; those sections must be absent).
   "section_patch_then_insert" — both types of failure present.
   "full_regeneration"         — teaching alignment fundamentally wrong, or more than half of required items fail.
+  Consistency: failed_section_ids and missing_checklist_ids must only list ids justified by failed checks / truly absent sections. Do not contradict passed checks.
 OUTPUT CONTRACT
 Return ONLY valid JSON. Start with { end with }. No preamble, no markdown, no commentary.
 Every schema field must be present. Use [] for empty arrays, "" for empty strings.
@@ -336,6 +369,7 @@ def build_user_message(
     frozen_section_ids: list[str] | None = None,
     topic_split: list[dict] | None = None,
     domain: str = "",
+    research_notes: str = "",
     max_doc_chars: int = 80000,
 ) -> str:
     parts = [
@@ -361,6 +395,9 @@ def build_user_message(
             f"  - [{e.get('id', '')}] {e.get('heading', '')}" for e in topic_split
         )
         parts.append(f"\n<topic_split>\n{split_lines}\n</topic_split>")
+    notes = truncate_research_notes(research_notes)
+    if notes:
+        parts.append(f"\n<research_notes>\n{notes}\n</research_notes>")
     doc, truncated = prepare_document_for_qc(
         generated_content,
         max_chars=max_doc_chars,
@@ -383,6 +420,9 @@ def build_user_message(
         "For code: trace the actual output before deciding; verify every API call is real for the stated language. "
         "For STEM: apply the 3-step procedure — state the correct fact from your own knowledge first, then compare. Do not use 'X is indeed Y' as evidence. "
         "For chemistry: verify reactants, mechanism, and products independently before passing any formula_block. "
+        "When research notes are provided: fail content claims that contradict note equations, relations, APIs, or counts "
+        "for concepts the document also treats; do not require importing every note topic; do not emit plan patches "
+        "or rewrite checklist/topic_split. "
         "Assign code_1, code_2, … in document order. Every code check must carry a section_id. "
         "Return the complete JSON report."
     )

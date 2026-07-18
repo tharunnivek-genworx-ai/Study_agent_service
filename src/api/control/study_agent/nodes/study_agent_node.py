@@ -65,8 +65,13 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
     mode = state.get("generation_mode") or "generate"
     teaching_instruction = helpers.teaching_instruction(state)
     has_reference = helpers.has_reference_material(state)
+    kind = helpers.reference_kind(state)
     reference_text = helpers.reference_text(state) if has_reference else ""
-    reference_block = helpers.format_reference_block(has_reference, reference_text)
+    reference_block = helpers.format_reference_block(
+        has_reference,
+        reference_text,
+        reference_kind=kind,
+    )
 
     must_cover_block = helpers.build_must_cover_block(state)
     topic_split_block = helpers.build_topic_split_block(state)
@@ -88,6 +93,7 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
             generation_prompt.build_system_prompt(
                 has_reference=has_reference,
                 domain=state.get("domain"),
+                reference_kind=kind,
             ),
             user_message,
         )
@@ -112,6 +118,7 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
             regeneration_prompt.build_system_prompt(
                 has_reference=has_reference,
                 domain=state.get("domain"),
+                reference_kind=kind,
             ),
             user_message,
         )
@@ -132,6 +139,7 @@ def _build_user_message(state: StudyMaterialGraphState) -> tuple[str, str]:
         improve_prompt.build_system_prompt(
             has_reference=has_reference,
             domain=state.get("domain"),
+            reference_kind=kind,
         ),
         user_message,
     )
@@ -153,12 +161,14 @@ def _build_section_patch_messages(
     relocation plans for LLM fallback.
     """
     has_reference = helpers.has_reference_material(state)
+    kind = helpers.reference_kind(state)
     section_failures = state.get("qc_section_failures") or []
     patch_section_ids = helpers.section_ids_from_failures(section_failures)
     if _uses_placement_relocate_prompt(state):
         reference_block = section_block_relocate_prompt.format_reference_block(
             helpers.reference_text(state),
             has_reference=has_reference,
+            reference_kind=kind,
         )
         user_message = section_block_relocate_prompt.build_user_message(
             topic_title=state.get("node_title", ""),
@@ -178,6 +188,7 @@ def _build_section_patch_messages(
             section_block_relocate_prompt.build_system_prompt(
                 has_reference=has_reference,
                 domain=state.get("domain"),
+                reference_kind=kind,
             ),
             user_message,
         )
@@ -185,6 +196,7 @@ def _build_section_patch_messages(
     reference_block = section_rework_prompt.format_reference_block(
         helpers.reference_text(state),
         has_reference=has_reference,
+        reference_kind=kind,
     )
     user_message = section_rework_prompt.build_user_message(
         topic_title=state.get("node_title", ""),
@@ -205,6 +217,7 @@ def _build_section_patch_messages(
         section_rework_prompt.build_system_prompt(
             has_reference=has_reference,
             domain=state.get("domain"),
+            reference_kind=kind,
         ),
         user_message,
     )
@@ -248,9 +261,11 @@ def _build_section_insert_messages(
         )
 
     has_reference = helpers.has_reference_material(state)
+    kind = helpers.reference_kind(state)
     reference_block = section_insert_prompt.format_reference_block(
         helpers.reference_text(state),
         has_reference=has_reference,
+        reference_kind=kind,
     )
     user_message = section_insert_prompt.build_user_message(
         topic_title=state.get("node_title", ""),
@@ -269,6 +284,7 @@ def _build_section_insert_messages(
         section_insert_prompt.build_system_prompt(
             has_reference=has_reference,
             domain=state.get("domain"),
+            reference_kind=kind,
         ),
         user_message,
     )

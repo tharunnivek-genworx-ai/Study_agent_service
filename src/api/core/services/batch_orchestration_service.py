@@ -145,12 +145,25 @@ class BatchOrchestrationService:
             raise ValueError("No topics selected for generation.")
 
         involved_root_ids = sorted({root_id for _, root_id in plan_items})
+        policy_payload = payload.policy.model_dump(mode="json")
+        research_ids = [
+            str(node_id)
+            for node_id in (
+                payload.external_research_node_ids
+                or payload.policy.external_research_node_ids
+            )
+        ]
+        # Keep only research flags for topics actually queued in this batch.
+        planned_ids = {str(node_data.node.node_id) for node_data, _ in plan_items}
+        policy_payload["external_research_node_ids"] = [
+            node_id for node_id in research_ids if node_id in planned_ids
+        ]
         batch = BatchJob(
             space_id=space_id,
             mentor_id=mentor_id,
             status="pending",
             selected_root_node_ids=[str(root_id) for root_id in involved_root_ids],
-            policy=payload.policy.model_dump(mode="json"),
+            policy=policy_payload,
             total_steps=len(plan_items),
         )
         self.session.add(batch)

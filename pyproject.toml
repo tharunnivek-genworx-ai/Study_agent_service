@@ -22,6 +22,9 @@ dependencies = [
     "google-cloud-storage>=2.19.0",
     "procrastinate>=3.9.0,<4",
     "psycopg[binary]>=3.3",
+    "tavily-python",
+    "trafilatura",
+    "readability-lxml",
 ]
 
 [dependency-groups]

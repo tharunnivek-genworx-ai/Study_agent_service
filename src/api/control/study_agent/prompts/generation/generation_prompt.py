@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from src.api.control.study_agent.prompts.generation.external import (
+    resolve_external_addendum,
+)
 from src.api.control.study_agent.prompts.generation.output_schemas import (
     build_json_output_schema,
 )
@@ -131,19 +134,45 @@ def _build_system_prompt_prefix(domain: str | None) -> str:
     )
 
 
-def build_system_prompt(*, has_reference: bool, domain: str | None = None) -> str:
+def _select_reference_addendum(
+    *,
+    has_reference: bool,
+    reference_kind: str = "none",
+    domain: str | None = None,
+) -> str:
+    if reference_kind == "external":
+        return resolve_external_addendum(domain)
+    if reference_kind == "pdf" or has_reference:
+        return _REFERENCE_ADDENDUM
+    return _NO_REFERENCE_ADDENDUM
+
+
+def build_system_prompt(
+    *,
+    has_reference: bool,
+    domain: str | None = None,
+    reference_kind: str = "none",
+) -> str:
     """domain is REQUIRED and must be the same resolved value used to build
     the <domain> tag in the user message and passed to build_domain_rules_block().
     There is no legacy/default schema fallback — passing None or "" here
     deliberately returns the Mixed schema (both code_blocks and
     formula_blocks available), so an unresolved domain must be an explicit
-    choice, never an accident of a stale default parameter."""
+    choice, never an accident of a stale default parameter.
+
+    ``reference_kind`` defaults to ``\"none\"`` so legacy ``has_reference=True/False``
+    callers keep PDF addendum behavior unless they pass ``reference_kind=\"external\"``.
+    """
     return (
         _build_system_prompt_prefix(domain)
         + build_domain_rules_block(domain)
         + "\n\n"
         + SYSTEM_PROMPT_SUFFIX
-        + (_REFERENCE_ADDENDUM if has_reference else _NO_REFERENCE_ADDENDUM)
+        + _select_reference_addendum(
+            has_reference=has_reference,
+            reference_kind=reference_kind,
+            domain=domain,
+        )
     )
 
 
@@ -157,11 +186,17 @@ SYSTEM_PROMPT = (
 
 
 def format_reference_user_block(
-    extracted_reference_text: str, *, has_reference: bool
+    extracted_reference_text: str,
+    *,
+    has_reference: bool,
+    reference_kind: str = "none",
 ) -> str:
     if not has_reference or not extracted_reference_text.strip():
         return ""
-    return f"\n<reference_material>\n{extracted_reference_text.strip()}\n</reference_material>"
+    body = extracted_reference_text.strip()
+    if reference_kind == "external":
+        return f"\n<research_notes>\n{body}\n</research_notes>"
+    return f"\n<reference_material>\n{body}\n</reference_material>"
 
 
 def build_domain_block(domain: str) -> str:

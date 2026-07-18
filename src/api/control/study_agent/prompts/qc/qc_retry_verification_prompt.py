@@ -6,6 +6,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from src.api.control.study_agent.prompts.concept.checklist_realign_prompt import (
+    truncate_research_notes,
+)
 from src.api.utils.prompt_utils.domain_merge import domains_to_include
 from src.api.utils.study_agent_utils.generation.must_cover_checklist_format import (
     format_must_cover_checklist_line,
@@ -24,6 +27,19 @@ Apply the same domain rules as the original verification, choosing the rule set 
 """
 QC_RETRY_STEM_RULES_BLOCK = """\
 - STEM: trace worked examples, verify constants, check every equation and reaction in a formula_block. A reaction or formula that is plausible-sounding but not independently verifiable as real chemistry/physics/math is a failure, not a pass. Apply the 3-step evidence procedure: state the correct fact from your own knowledge first, then compare to the revised content.
+- NUMERIC / SUBSTITUTION INTEGRITY: apply when a formula_block contains an evaluable arithmetic or algebraic
+  expression, or is cited as evidence for a must_cover component claiming a correct result, yield, or substitution
+  outcome. Independently recompute it, and include this exact labeled record in evidence:
+  "Recomputed: <expression> = <value>. Document: <value>. Match: yes/no."
+  Match: no forces the content_accuracy check and every dependent must_cover component to fail. Verify unit
+  consistency (including scale mismatches such as J versus kJ), but accept equivalent algebraic forms and minor
+  rounding within approximately 1% relative error or stated significant figures; notation style alone is not a
+  failure. For stoichiometry and chemical equations, verify atom/count conservation and stated cycle
+  stoichiometry; invented reactants or products fail.
+- OPTIONAL RESEARCH-NOTES GROUNDING (when <research_notes> is non-empty): if notes state an equation, relation,
+  API, or count for a concept the revised content also treats, the document must not contradict that artifact
+  (contradiction = fail). Notes do not require importing every note topic; absence of a note for a claim is not an
+  automatic fail. Do not emit plan patches; do not rewrite checklist or topic_split.
 """
 QC_RETRY_STEM_DERIVATION_BLOCK = """\
 - STEM CODE RULE: any STEM-classified section that contains a code_block fails — unconditionally, regardless of
@@ -35,6 +51,9 @@ QC_RETRY_STEM_DERIVATION_BLOCK = """\
   the one before it — a step that does not follow, even one producing a coincidentally correct final answer, fails
   the check and must be quoted in "issues". A "fix" that adds a second, unverified derivation method alongside the
   first is a new failure, not a correction — verify any newly introduced method just as strictly as the original.
+- A2 RESULT RULE: independently recompute every result component in an A2-style apply/calculate/substitute
+  must_cover item. This arithmetic and logical integrity requirement does NOT impose the 4-formula_block chain minimum
+  on A2 items; verify the substitutions and stated result that the item actually claims.
 """
 QC_RETRY_PROGRAMMING_RULES_BLOCK = """\
 - Programming: trace code execution; verify no undefined symbols; verify every API call is real for the stated language/version; check for duplicate method/function names in the same scope. A Programming item's runnable code block is itself the correct evidence — it is never penalised for "not being a derivation."
@@ -255,6 +274,7 @@ def build_user_message(
     must_cover_checklist: list[dict] | None = None,
     topic_split: list[dict] | None = None,
     domain: str = "",
+    research_notes: str = "",
     *,
     prior_teaching_alignment_failure: dict[str, Any] | None = None,
     max_section_chars: int = 40000,
@@ -275,6 +295,9 @@ def build_user_message(
             f"  - [{e.get('id', '')}] {e.get('heading', '')}" for e in topic_split
         )
         parts.append(f"\n<topic_split>\n{split_lines}\n</topic_split>")
+    notes = truncate_research_notes(research_notes)
+    if notes:
+        parts.append(f"\n<research_notes>\n{notes}\n</research_notes>")
     parts.append(build_previously_failed_block(section_failures))
     prior_ta_block = build_prior_teaching_alignment_block(
         prior_teaching_alignment_failure
@@ -295,6 +318,9 @@ def build_user_message(
         "For STEM items: any code_block in a STEM section is always a failure — unconditionally. "
         "For code: trace the actual output; verify every API call is real for the stated language. "
         "For STEM: apply the 3-step procedure — state the correct fact from your own knowledge first, then compare. Do not use 'X is indeed Y' as evidence. "
+        "When research notes are provided: fail content claims that contradict note equations, relations, APIs, or counts "
+        "for concepts the revised content also treats; do not require importing every note topic; do not emit plan "
+        "patches or rewrite checklist/topic_split. "
         "Quote specific evidence for every passing must_cover check. "
         "Every section-specific check must include a section_id. "
         "Assign unique ids across all checks — do not reuse ids. "

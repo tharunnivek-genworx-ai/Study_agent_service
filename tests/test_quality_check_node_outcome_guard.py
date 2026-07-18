@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -67,3 +67,52 @@ def test_qc_proceeds_past_guard_for_study_document() -> None:
     assert result["qc_passed"] is False
     qc_result = result.get("qc_result") or {}
     assert qc_result.get("qcInfraError") is True
+
+
+def test_qc_passes_ground_truth_reference_to_verification() -> None:
+    state = {
+        "generation_outcome": "study_document",
+        "generated_content": (
+            '{"sections": [{"id": "s1", "heading": "Intro", "content": "x"}]}'
+        ),
+        "generation_parsed_document": {
+            "sections": [{"id": "s1", "heading": "Intro", "content": "x"}]
+        },
+        "node_id": uuid4(),
+        "node_title": "Test Topic",
+        "effective_instruction": "Teach basics.",
+        "ground_truth_reference": "  Grounded relation: x = 2y.  ",
+        "extracted_reference_text": "Fallback notes must not win.",
+        "qc_attempt": 0,
+    }
+    verification_result = {
+        "checks": [],
+        "hallucination_risk": "none",
+        "is_refusal": False,
+        "issues": [],
+        "corrective_instructions": "",
+        "summary": "No failures.",
+        "retry_recommendation": {
+            "mode": "none",
+            "failed_section_ids": [],
+            "missing_checklist_ids": [],
+            "rationale": "All checks pass.",
+        },
+    }
+
+    with (
+        patch(
+            "src.api.control.study_agent.nodes.quality_check_node.helpers.groq_api_keys_configured",
+            return_value=True,
+        ),
+        patch(
+            "src.api.control.study_agent.nodes.quality_check_node.run_verification_pass",
+            new_callable=AsyncMock,
+            return_value=(verification_result, {"llm_model_used": "test-model"}),
+        ) as verification_mock,
+    ):
+        asyncio.run(quality_check_node(state, config={}))
+
+    assert verification_mock.await_args.kwargs["research_notes"] == (
+        "Grounded relation: x = 2y."
+    )

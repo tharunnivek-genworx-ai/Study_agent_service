@@ -79,6 +79,26 @@ class TestVerificationPrompt:
         )
         assert "<domain>Programming</domain>" in msg
 
+    def test_user_message_includes_non_empty_research_notes_only(self):
+        with_notes = qc_verification_prompt.build_user_message(
+            topic_title="Mechanics",
+            teaching_instruction="Show the calculation.",
+            generated_content=_SAMPLE_DOC,
+            domain="STEM",
+            research_notes="The note relation is F = ma.",
+        )
+        without_notes = qc_verification_prompt.build_user_message(
+            topic_title="Mechanics",
+            teaching_instruction="Show the calculation.",
+            generated_content=_SAMPLE_DOC,
+            domain="STEM",
+            research_notes="",
+        )
+
+        assert "<research_notes>" in with_notes
+        assert "The note relation is F = ma." in with_notes
+        assert "<research_notes>" not in without_notes
+
     def test_user_message_includes_document_with_inline_code(self):
         msg = qc_verification_prompt.build_user_message(
             topic_title="OOPS",
@@ -117,6 +137,11 @@ class TestVerificationPrompt:
         assert "section_patch" in system
         assert "section_insert" in system
         assert "full_regeneration" in system
+        assert "NEVER put a checklist id in missing_checklist_ids" in system
+        assert (
+            'If all checks passed=true: retry_recommendation.mode MUST be "none"'
+            in system
+        )
 
     def test_frozen_check_ids_excluded_from_checklist(self):
         msg = qc_verification_prompt.build_user_message(
@@ -258,3 +283,22 @@ class TestVerificationPrompt:
         assert "⑤ code_quality" not in stem_prompt
         assert "⑥ stack_fidelity" not in stem_prompt
         assert "PROGRAMMING VERIFICATION" not in stem_prompt
+
+    def test_numeric_integrity_and_a2_recompute_are_stem_only(self):
+        stem_prompt = qc_verification_prompt.build_system_prompt(domain="STEM")
+        programming_prompt = qc_verification_prompt.build_system_prompt(
+            domain="Programming"
+        )
+
+        assert "NUMERIC / SUBSTITUTION INTEGRITY" in stem_prompt
+        assert (
+            "Recomputed: <expression> = <value>. Document: <value>. Match: yes/no."
+            in stem_prompt
+        )
+        assert "A2-style apply/calculate/substitute" in stem_prompt
+        assert "does NOT impose the 4-formula_block derivation minimum" in stem_prompt
+        assert "cannot independently verify this step" in stem_prompt
+        assert "Contradiction with notes = fail" in stem_prompt
+        assert "Do not emit plan patches" in stem_prompt
+        assert "NUMERIC / SUBSTITUTION INTEGRITY" not in programming_prompt
+        assert "A2-style apply/calculate/substitute" not in programming_prompt

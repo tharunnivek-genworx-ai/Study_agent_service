@@ -171,13 +171,14 @@ class TestPatchQuestionsFromAi:
             mock_question.hint_3 = "old hint 3"
 
             mock_quiz = MagicMock()
+            mock_quiz.is_published = False
             mock_db = MagicMock()
             mock_db.flush = AsyncMock()
             mock_db.commit = AsyncMock()
 
             repo = QuizRepository(mock_db)
             repo.get_question_by_id = AsyncMock(return_value=mock_question)  # type: ignore[method-assign]
-            repo.get_quiz_by_id = AsyncMock(return_value=mock_quiz)  # type: ignore[method-assign]
+            repo.get_quiz_by_id_for_update = AsyncMock(return_value=mock_quiz)  # type: ignore[method-assign]
 
             patch_payload = _sample_llm_patch(question_id=str(question_id))
 

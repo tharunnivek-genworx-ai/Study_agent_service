@@ -101,3 +101,24 @@ class StudyMaterialGraphState(TypedDict, total=False):
     llm_error_type: str | None
     provider_meta: dict[str, Any] | None
     next_llm_retry_at: datetime | None
+
+    # ── External Research Mode ──────────────────────────────────────
+    # Set by reference_router / request params: "pdf" | "external" | "none"
+    reference_mode: Literal["pdf", "external", "none"]
+    external_research_enabled: bool
+    external_research_cache_hit: bool | None
+    external_research_status: Literal["success", "fail_soft"] | None
+    external_research_fail_reason: str | None
+    external_research_query: str | None
+    resolved_topic: str | None
+    resolved_subtopic: str | None
+    external_source_urls: list[str]
+    ground_truth_reference: str | None
+    # Pipeline intermediates (external branch only)
+    search_result_urls: list[str]
+    extracted_pages: list[dict[str, Any]]
+    cleaned_pages: list[dict[str, Any]]
+    chunked_pages: list[dict[str, Any]]
+    distilled_pages: list[dict[str, Any]]
+    reduced_pages: list[dict[str, Any]]
+    knowledge_distillation_model_used: str | None

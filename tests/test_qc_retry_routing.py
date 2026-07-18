@@ -84,6 +84,60 @@ class TestClassifyRetryRouting:
         assert result.failed_section_ids == []
         assert result.missing_checklist_ids == []
 
+    def test_calvin_contradictory_recommendation_sanitized_to_none(self):
+        """Spurious missing_checklist_ids with all checks passed must not patch/regen."""
+        document = _doc(
+            {"id": "ts_1", "heading": "Intro", "content": "intro"},
+            {"id": "ts_3", "heading": "Regen", "content": "regen"},
+        )
+        checklist = [
+            {
+                "id": "mc_1",
+                "concept": "Intro",
+                "requirement": "Explain",
+                "priority": "required",
+                "section_id": "ts_1",
+                "depth_gate": "Defined",
+            },
+            {
+                "id": "mc_3",
+                "concept": "Regen",
+                "requirement": "Explain",
+                "priority": "required",
+                "section_id": "ts_3",
+                "depth_gate": "ATP values",
+            },
+        ]
+        qc_result = {
+            "checks": [
+                _check(
+                    id="mc_1",
+                    category="must_cover",
+                    checklist_id="mc_1",
+                    section_id="ts_1",
+                    passed=True,
+                ),
+                _check(
+                    id="mc_3",
+                    category="must_cover",
+                    checklist_id="mc_3",
+                    section_id="ts_3",
+                    passed=True,
+                ),
+            ],
+            "failed_checks": [],
+            "retry_recommendation": {
+                "mode": "section_patch",
+                "failed_section_ids": ["ts_3"],
+                "missing_checklist_ids": ["mc_3"],
+                "rationale": "Needs ATP/NADPH values",
+            },
+        }
+        result = classify_retry_routing(qc_result, document, checklist)
+        assert result.mode == "none"
+        assert result.failed_section_ids == []
+        assert result.missing_checklist_ids == []
+
     def test_isolated_section_failure_uses_section_patch(self):
         document = _doc(
             {"id": "mc_1", "heading": "Intro", "content": "intro"},
