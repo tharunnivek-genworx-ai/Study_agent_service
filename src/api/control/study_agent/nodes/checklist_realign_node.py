@@ -215,12 +215,13 @@ async def checklist_realign_node(
         "must_cover_checklist": draft_checklist,
     }
 
-    system_prompt = build_checklist_realign_system_prompt()
+    system_prompt = build_checklist_realign_system_prompt(domain=draft_domain)
     user_message = build_checklist_realign_user_message(
         topic_title,
         teaching_instruction=teaching_instruction,
         draft_plan=draft_plan,
         research_notes=research_notes,
+        domain=draft_domain,
     )
     prompt_snapshot = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_message}"
 

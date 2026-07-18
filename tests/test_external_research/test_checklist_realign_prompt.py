@@ -11,64 +11,71 @@ from src.api.control.study_agent.prompts.concept.checklist_realign_prompt import
     truncate_research_notes,
 )
 from src.api.control.study_agent.prompts.concept.shared_blocks import (
-    EVIDENCE_FAMILY_BLOCK,
-)
-
-_POLICY_KEYWORDS = (
-    "edit budget",
-    "anti-bloat",
-    "do not import every note",
-    "evidence catalog",
-    "outline spine",
-    "note artifact binding",
-    "draft-debt sweep",
-    "section load",
-    "rewrite-in-place",
-    "equation / relation priority",
-    "note artifact",
-    "family a1",
-    "family b",
-    "family c",
-    "depth_gate skeleton",
-    "preserve domain",
-    "max(3",
+    JSON_OUTPUT_SCHEMA,
 )
 
 
-def test_realign_system_prompt_has_compact_policy_and_domain_reuse() -> None:
-    system = build_checklist_realign_system_prompt()
+def test_realign_system_prompt_routes_stem_only() -> None:
+    system = build_checklist_realign_system_prompt(domain="STEM")
     lower = system.lower()
     assert DOMAIN_REUSE_FROM_DRAFT_PLAN_BLOCK in system
     assert "never reclassify" in lower
-    for keyword in _POLICY_KEYWORDS:
-        assert keyword in lower, f"missing policy keyword: {keyword}"
-    assert "requirement skeleton" in lower
-    assert "hard word ban" in lower
+    assert "domain policy — stem" in lower
+    assert "stem application" in lower
+    assert "concept-scoped note binding (stem)" in lower
+    assert "self-check before output (stem)" in lower
+    assert "no accidental code" in lower
+    # Other domain policies must not be bloated into this prompt.
+    assert "domain policy — programming" not in lower
+    assert "domain policy — conceptual" not in lower
+    assert "domain policy — mixed" not in lower
+    assert "family a1" not in lower
+    assert "family b — implementation" not in lower
+    assert JSON_OUTPUT_SCHEMA.strip() in system
     assert "structural integrity" in lower
-    # Draft is outline spine only — old primary-authority phrasing must be gone.
-    assert "authoritative spine" not in lower
 
 
-def test_realign_system_prompt_keeps_evidence_family_skeletons() -> None:
-    system = build_checklist_realign_system_prompt()
-    assert "FAMILY A1 — MATHEMATICAL" in system
-    assert "FAMILY A2 — MATHEMATICAL" in system
-    assert "FAMILY B — IMPLEMENTATION" in system
-    assert "FAMILY C — INTERPRETIVE" in system
-    assert "At most +1 new topic_split" in system or "+1 new topic_split" in system
-    assert "A2 FILL RULE" in system
-    assert "standard classroom instance of the named note relation" in system
-    assert "Never invent a new measurement framework" in system
+def test_realign_system_prompt_routes_programming_only() -> None:
+    system = build_checklist_realign_system_prompt(domain="Programming")
+    lower = system.lower()
+    assert "domain policy — programming" in lower
+    assert "artifact conflict rule" in lower
+    assert "document.title" in lower
+    assert "self-check before output (programming)" in lower
+    assert "no accidental algebraic derivation" in lower
+    assert "domain policy — stem" not in lower
+    assert "stem application (default)" not in lower
+    assert "domain policy — conceptual" not in lower
 
 
-def test_shared_a2_fill_guidance_prefers_named_relation() -> None:
-    assert "A2 FILL GUIDANCE" in EVIDENCE_FAMILY_BLOCK
-    assert "named quantities symbolically" in EVIDENCE_FAMILY_BLOCK
-    assert "standard classroom instance of that named relation" in EVIDENCE_FAMILY_BLOCK
-    assert "unrelated measurement framework or parameter class" in EVIDENCE_FAMILY_BLOCK
+def test_realign_system_prompt_routes_conceptual_only() -> None:
+    system = build_checklist_realign_system_prompt(domain="Conceptual")
+    lower = system.lower()
+    assert "domain policy — conceptual" in lower
+    assert "conceptual case/argument" in lower
+    assert "self-check before output (conceptual)" in lower
+    assert "no accidental code or derivation" in lower
+    assert "domain policy — programming" not in lower
+    assert "artifact conflict rule" not in lower
 
 
-def test_realign_user_message_shape() -> None:
+def test_realign_system_prompt_routes_mixed_only() -> None:
+    system = build_checklist_realign_system_prompt(domain="Mixed")
+    lower = system.lower()
+    assert "domain policy — mixed" in lower
+    assert "route each checklist item locally" in lower or "routed locally" in lower
+    assert "artificially balance" in lower
+    assert "self-check before output (mixed)" in lower
+    assert "domain policy — stem" not in lower
+    assert "domain policy — programming" not in lower
+
+
+def test_realign_system_prompt_unknown_domain_falls_back_to_mixed() -> None:
+    system = build_checklist_realign_system_prompt(domain="")
+    assert "DOMAIN POLICY — MIXED" in system
+
+
+def test_realign_user_message_shape_is_domain_aware() -> None:
     draft = {
         "domain": "STEM",
         "topic_split": [{"id": "ts_1", "heading": "Widgets", "purpose": "Intro"}],
@@ -92,19 +99,35 @@ def test_realign_user_message_shape() -> None:
         teaching_instruction="Cover WidgetLaw if relevant.",
         draft_plan=draft,
         research_notes=notes,
+        domain="STEM",
     )
     assert "<topic>Widget fundamentals</topic>" in msg
+    assert "<domain>STEM</domain>" in msg
     assert "<teaching_instruction>" in msg
     assert "WidgetLaw" in msg
     assert "GadgetAPI.connect(timeout_ms)" in msg
     assert "<draft_plan>" in msg
     assert json.dumps(draft, ensure_ascii=False) in msg
     assert "<research_notes>" in msg
-    assert "Realign the JSON plan now." in msg
-    assert "evidence catalog" in msg
-    assert "Bind each required gate to a note-backed artifact" in msg
-    assert "Sweep unsupported draft debt" in msg
-    assert "section already owns 2 items" in msg
+    assert "Realign the JSON plan now for this STEM topic." in msg
+    assert "not derivation in every section, and not code" in msg
+    assert "vague 'specific values'" in msg
+
+
+def test_realign_user_message_programming_closing() -> None:
+    draft = {
+        "domain": "Programming",
+        "topic_split": [],
+        "must_cover_checklist": [],
+    }
+    msg = build_checklist_realign_user_message(
+        "Hooks",
+        draft_plan=draft,
+        research_notes="- useEffect",
+    )
+    assert "<domain>Programming</domain>" in msg
+    assert "Realign the JSON plan now for this Programming topic." in msg
+    assert "not algebraic derivation" in msg
 
 
 def test_truncate_research_notes_head_tail_with_marker() -> None:

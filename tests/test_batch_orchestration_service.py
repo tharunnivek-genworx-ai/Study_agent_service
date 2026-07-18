@@ -248,6 +248,65 @@ async def test_create_batch_inserts_ordered_steps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_batch_stores_per_node_external_research_flags() -> None:
+    space_id = uuid4()
+    mentor_id = uuid4()
+    root = _make_root()
+    nodes = [
+        _make_subtree_node(title="One"),
+        _make_subtree_node(title="Two"),
+        _make_subtree_node(title="Three"),
+    ]
+    research_node = nodes[0].node.node_id
+    ignored_outside_plan = uuid4()
+
+    session = MagicMock()
+    session.add = MagicMock()
+
+    async def _flush_assign_ids() -> None:
+        for call in session.add.call_args_list:
+            obj = call.args[0]
+            if isinstance(obj, BatchJob) and obj.batch_id is None:
+                obj.batch_id = uuid4()
+
+    session.flush = AsyncMock(side_effect=_flush_assign_ids)
+    service = BatchOrchestrationService(session)
+
+    with (
+        patch(
+            "src.api.core.services.batch_orchestration_service._assert_space_access",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.api.core.services.batch_orchestration_service.NodeRepository"
+        ) as repo_cls,
+    ):
+        repo = repo_cls.return_value
+        repo.get_space_root_nodes = AsyncMock(return_value=[root])
+        repo.get_subtree_nodes_preorder = AsyncMock(return_value=nodes)
+
+        await service.create_batch(
+            space_id,
+            BatchCreateRequest(
+                root_node_ids=[root.node_id],
+                node_ids=[nodes[0].node.node_id, nodes[1].node.node_id],
+                policy=BatchPolicyIn(mode="skip_existing"),
+                external_research_node_ids=[research_node, ignored_outside_plan],
+            ),
+            mentor_id,
+            "mentor",
+        )
+
+    batches = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], BatchJob)
+    ]
+    assert len(batches) == 1
+    assert batches[0].policy["external_research_node_ids"] == [str(research_node)]
+
+
+@pytest.mark.asyncio
 async def test_claim_next_step_skips_existing_material() -> None:
     batch_id = uuid4()
     batch = _make_batch(batch_id=batch_id, policy={"mode": "skip_existing"})

@@ -59,12 +59,14 @@ class BatchPreviewResponse(BaseModel):
 class BatchPolicyIn(BaseModel):
     mode: BatchPolicyMode = "skip_existing"
     reference_material_id: UUID | None = None
+    external_research_node_ids: list[UUID] = Field(default_factory=list)
 
 
 class BatchCreateRequest(BaseModel):
     root_node_ids: list[UUID] = Field(default_factory=list)
     node_ids: list[UUID] = Field(default_factory=list)
     policy: BatchPolicyIn = Field(default_factory=BatchPolicyIn)
+    external_research_node_ids: list[UUID] = Field(default_factory=list)
 
 
 class BatchJobOut(BaseModel):
