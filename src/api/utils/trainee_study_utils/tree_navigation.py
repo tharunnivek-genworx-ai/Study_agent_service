@@ -29,11 +29,15 @@ def find_available_siblings(
     children_by_parent: dict[UUID | None, list[UUID]],
     *,
     limit: int = 2,
+    navigable_node_ids: set[UUID] | None = None,
 ) -> list[tuple[UUID, str]]:
     """Return up to *limit* siblings with accessible content ordered by ``order_index``.
 
     Used by the locked-leaf "Meanwhile, continue with" chip row so trainees
     always have somewhere to go when the current lesson is unpublished.
+
+    When *navigable_node_ids* is provided, prerequisite-locked siblings are
+    excluded even if they have published content.
     """
     from src.api.utils.trainee_progress_utils.learning_units import (
         has_accessible_learning_content,
@@ -46,6 +50,8 @@ def find_available_siblings(
         if not has_accessible_learning_content(
             sibling.node_id, published_node_ids, children_by_parent
         ):
+            continue
+        if navigable_node_ids is not None and sibling.node_id not in navigable_node_ids:
             continue
         results.append((sibling.node_id, sibling.title))
         if len(results) >= limit:
@@ -60,26 +66,35 @@ def find_next_up(
     children_by_parent: dict[UUID | None, list[UUID]],
     *,
     parent: TopicNode | None = None,
+    navigable_node_ids: set[UUID] | None = None,
 ) -> tuple[UUID, str, str] | None:
     """Return the next navigation target after *node* for the What's-next card.
 
     Returns ``(node_id, title, label_prefix)`` where *label_prefix* is
     ``"Next up"`` for a forward sibling or ``"Back to"`` for the parent fallback.
+
+    When *navigable_node_ids* is provided, skip prerequisite-locked siblings so
+    "Next up" never points at a node the trainee cannot open.
     """
     from src.api.utils.trainee_progress_utils.learning_units import (
         has_accessible_learning_content,
     )
 
-    ordered = sorted(siblings, key=lambda item: item.order_index)
+    ordered = sorted(siblings, key=lambda item: (item.order_index, str(item.node_id)))
     seen_current = False
     for sibling in ordered:
         if sibling.node_id == node.node_id:
             seen_current = True
             continue
-        if seen_current and has_accessible_learning_content(
+        if not seen_current:
+            continue
+        if not has_accessible_learning_content(
             sibling.node_id, published_node_ids, children_by_parent
         ):
-            return sibling.node_id, sibling.title, "Next up"
+            continue
+        if navigable_node_ids is not None and sibling.node_id not in navigable_node_ids:
+            continue
+        return sibling.node_id, sibling.title, "Next up"
     if parent is not None:
         return parent.node_id, parent.title, "Back to"
     return None

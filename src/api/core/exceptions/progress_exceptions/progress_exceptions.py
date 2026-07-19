@@ -23,6 +23,8 @@ Edge cases covered (cross-referenced to TDD §3.6):
 Naming convention mirrors quiz_exceptions.py and auth_exceptions.py.
 """
 
+from uuid import UUID
+
 from fastapi import HTTPException, status
 
 # ── Not Found ─────────────────────────────────────────────────────────────────
@@ -174,4 +176,32 @@ class SpaceNotPublishedException(HTTPException):
         super().__init__(
             status_code=status.HTTP_409_CONFLICT,
             detail="This space is not published and is not accessible to trainees.",
+        )
+
+
+class NodePrerequisiteLockedException(HTTPException):
+    """
+    Raised when a trainee tries to access current study material or start a
+    quiz on a node that is gated by an incomplete parent learning unit.
+
+    Durable unlock grants and archive/history paths are not blocked by this.
+    """
+
+    def __init__(
+        self,
+        *,
+        unlock_message: str,
+        blocked_by_node_id: UUID | None = None,
+        blocked_by_title: str | None = None,
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "PREREQUISITE_LOCKED",
+                "message": unlock_message,
+                "blocked_by_node_id": (
+                    str(blocked_by_node_id) if blocked_by_node_id is not None else None
+                ),
+                "blocked_by_title": blocked_by_title,
+            },
         )

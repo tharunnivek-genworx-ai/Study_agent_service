@@ -3,7 +3,44 @@
 
 from __future__ import annotations
 
+from src.api.control.study_agent.prompts.concept import (
+    build_concept_checklist_system_prompt,
+    build_concept_checklist_user_message,
+)
+from src.api.control.study_agent.prompts.concept.shared_blocks import (
+    STEM_NO_RUNNABLE_CODE_BLOCK,
+)
 from test_new_prompts.prompts import concept_checklist_prompt
+
+
+def test_generation_prompt_includes_stem_no_runnable_code_block() -> None:
+    system = build_concept_checklist_system_prompt("generate")
+    assert STEM_NO_RUNNABLE_CODE_BLOCK in system
+    assert "STEM DOMAIN LOCK" in system
+    assert "Family B is forbidden" in system
+    assert "keyed only to the domain label STEM" in system
+
+
+def test_generation_prompt_includes_a1_viability_and_stem_app_routing() -> None:
+    system = build_concept_checklist_system_prompt("generate")
+    assert "A1 VIABILITY GATE" in system
+    assert "STEM APPLICATION / ALGORITHM / EXPERIMENT ROUTING" in system
+    assert "A2 HARD FILL RULE" in system
+    assert "prefer FAMILY C" in system
+
+
+def test_rework_prompt_includes_stem_no_runnable_code_block() -> None:
+    system = build_concept_checklist_system_prompt("improve")
+    assert STEM_NO_RUNNABLE_CODE_BLOCK in system
+    assert "Family B count is exactly zero" in system
+    assert "A1 VIABILITY GATE" in system
+
+
+def test_user_message_closing_bans_stem_family_b() -> None:
+    msg = build_concept_checklist_user_message("Quantum Mechanics")
+    assert "If domain is STEM, Family B is forbidden" in msg
+    assert "prefer Family C" in msg
+    assert "A1 VIABILITY GATE" in msg
 
 
 def test_system_prompt_includes_domain_disambiguation_for_software_topics() -> None:

@@ -14,6 +14,7 @@ from src.api.schemas.progress_schemas import (
 def build_subtopic_progress_badge(
     *,
     is_published: bool,
+    access_status: str = "available",
     completed_units: int,
     total_units: int,
     progress: TraineeNodeProgressBatchItemOut | None,
@@ -33,8 +34,10 @@ def build_subtopic_progress_badge(
     the badge label for intermediate nodes where the ``progress`` snapshot
     belongs to the subtopic node itself (which may have no direct material).
     """
-    if not is_published:
+    if access_status == "coming_soon" or not is_published:
         return "locked", "Coming soon"
+    if access_status == "prerequisite_locked":
+        return "prerequisite_locked", "Prerequisite"
     if total_units > 0 and completed_units >= total_units:
         return "completed", "Done ✓"
     # Any directly-known progress on the subtopic node itself

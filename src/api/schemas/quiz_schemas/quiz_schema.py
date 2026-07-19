@@ -110,12 +110,19 @@ class QuizDeleteOut(BaseModel):
 class QuizPublishRequest(BaseModel):
     """
     Body for PATCH /nodes/:id/quizzes/:quiz_id/publish.
-    No body fields needed — publish is an action on the quiz identified in the path.
-    Kept as an explicit schema (rather than a bare PATCH with no body) so that
-    future fields (e.g., scheduled_publish_at) can be added without a route change.
+
+    When ``pass_threshold_percent`` is omitted, the existing quiz threshold is
+    preserved (new quizzes already default to 70 via the column server default).
+    Clients that set a custom score must send the field explicitly.
     """
 
-    pass
+    pass_threshold_percent: int | None = Field(default=None, ge=1, le=100, strict=True)
+
+
+class QuizPassThresholdUpdateRequest(BaseModel):
+    """Mentor-set pass score for either a draft or a live quiz."""
+
+    pass_threshold_percent: int = Field(..., ge=1, le=100, strict=True)
 
 
 class QuizUnpublishRequest(BaseModel):
@@ -315,6 +322,7 @@ class QuizOut(BaseModel):
     difficulty: QuizDifficulty
     is_published: bool
     published_at: datetime | None
+    pass_threshold_percent: int
     created_by: UUID
     created_at: datetime
     updated_at: datetime
@@ -364,6 +372,7 @@ class QuizSummaryOut(BaseModel):
     difficulty: QuizDifficulty
     is_published: bool
     published_at: datetime | None
+    pass_threshold_percent: int
     created_at: datetime
 
 
@@ -514,6 +523,9 @@ class TraineeQuizOut(BaseModel):
     started_at: datetime
     resume_question_id: UUID | None = None
     score_percent: int | None = None
+    pass_threshold_percent: int
+    best_score_percent: int | None = None
+    has_met_pass_threshold: bool = False
     total_correct: int | None = None
     total_skipped: int | None = None
     questions: list[TraineeQuizQuestionOut]
@@ -616,6 +628,13 @@ class QuizAttemptOut(BaseModel):
     total_skipped: int | None
     started_at: datetime
     submitted_at: datetime | None
+    newly_unlocked_node_ids: list[UUID] = Field(
+        default_factory=list,
+        description=(
+            "Direct children unlocked when this submit completed the node. "
+            "Empty when the node was already complete or is not yet complete."
+        ),
+    )
 
 
 class QuizQuestionResponseOut(BaseModel):

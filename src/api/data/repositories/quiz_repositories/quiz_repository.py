@@ -291,6 +291,15 @@ class QuizRepository:
         await self.db.refresh(quiz)
         return quiz
 
+    async def update_pass_threshold(
+        self, quiz: Quiz, pass_threshold_percent: int
+    ) -> Quiz:
+        quiz.pass_threshold_percent = pass_threshold_percent
+        quiz.updated_at = datetime.now(UTC)
+        await self.db.flush()
+        await self.db.refresh(quiz)
+        return quiz
+
     async def unpublish_quiz(self, quiz: Quiz, *, commit: bool = False) -> Quiz:
         """Hide quiz from trainees while retaining publish metadata."""
         transition_quiz_to_hidden(quiz)

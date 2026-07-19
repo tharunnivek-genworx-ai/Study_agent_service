@@ -55,6 +55,13 @@ from src.api.utils.trainee_progress_utils.panel_rollups import (
     build_overall_progress_label,
     build_subtopic_progress_badge,
 )
+from src.api.utils.trainee_progress_utils.unlocking import (
+    AccessResult,
+    UnlockTreeContext,
+    build_unlock_progress_context,
+    resolve_node_access,
+    resolve_node_access_with_grant,
+)
 from src.api.utils.trainee_study_utils.content_preview import build_content_preview
 from src.api.utils.trainee_study_utils.node_panel_type import get_node_panel_type
 from src.api.utils.trainee_study_utils.panel_labels import (
@@ -107,6 +114,26 @@ class TraineeNodePanelService:
         for child_ids in children_by_parent.values():
             child_ids.sort(key=lambda child_id: node_by_id[child_id].order_index)
 
+        unlock_tree = UnlockTreeContext(
+            children_by_parent=children_by_parent,
+            published_node_ids=published_ids,
+            node_titles={item.node_id: item.title for item in space_nodes},
+            parent_by_node={item.node_id: item.parent_id for item in space_nodes},
+        )
+        unlock_progress = await build_unlock_progress_context(
+            self.session,
+            trainee_id=user_id,
+            node_ids=list(node_by_id),
+        )
+        node_access = await resolve_node_access_with_grant(
+            self.session,
+            trainee_id=user_id,
+            node_id=node.node_id,
+            space_id=node.space_id,
+            tree=unlock_tree,
+            progress=unlock_progress,
+        )
+
         direct_children = [
             node_by_id[child_id]
             for child_id in children_by_parent.get(node.node_id, [])
@@ -152,27 +179,48 @@ class TraineeNodePanelService:
         )
 
         node_progress = progress_by_node.get(node.node_id)
-        study_material_summary = await self._build_study_material_summary(
-            node.node_id, user_id, role, node_progress
+        study_material_summary = (
+            await self._build_study_material_summary(
+                node.node_id, user_id, role, node_progress
+            )
+            if node_access.status == "available"
+            else None
         )
 
-        subtopics = [
-            self._build_subtopic_item(
-                child,
-                published_ids=published_ids,
-                children_by_parent=children_by_parent,
-                progress_by_node=progress_by_node,
-                quiz_published_node_ids=quiz_published_node_ids,
+        subtopics: list[SubtopicPanelItemOut] = []
+        for child in direct_children:
+            child_access = await resolve_node_access_with_grant(
+                self.session,
+                trainee_id=user_id,
+                node_id=child.node_id,
+                space_id=node.space_id,
+                tree=unlock_tree,
+                progress=unlock_progress,
             )
-            for child in direct_children
-        ]
+            subtopics.append(
+                self._build_subtopic_item(
+                    child,
+                    access=child_access,
+                    published_ids=published_ids,
+                    children_by_parent=children_by_parent,
+                    progress_by_node=progress_by_node,
+                    quiz_published_node_ids=quiz_published_node_ids,
+                )
+            )
 
-        available_count = sum(1 for item in subtopics if item.is_published)
+        available_count = sum(
+            1 for item in subtopics if item.access_status == "available"
+        )
         locked_count = len(subtopics) - available_count
         all_subtopics_locked = len(subtopics) > 0 and available_count == 0
 
         completed_available = 0
         for child in direct_children:
+            child_panel = next(
+                item for item in subtopics if item.node_id == child.node_id
+            )
+            if child_panel.access_status != "available":
+                continue
             if not has_accessible_learning_content(
                 child.node_id, published_ids, children_by_parent
             ):
@@ -202,6 +250,17 @@ class TraineeNodePanelService:
 
         siblings = await self.repo.get_siblings(node)
         parent_node = node_by_id.get(node.parent_id) if node.parent_id else None
+        sibling_navigable_ids: set[UUID] = set()
+        for sibling in siblings:
+            if sibling.node_id == node.node_id:
+                continue
+            sibling_access = resolve_node_access(
+                node_id=sibling.node_id,
+                tree=unlock_tree,
+                progress=unlock_progress,
+            )
+            if sibling_access.status == "available":
+                sibling_navigable_ids.add(sibling.node_id)
         sibling_suggestions = [
             NavSuggestionOut(node_id=item_id, title=title)
             for item_id, title in find_available_siblings(
@@ -210,6 +269,7 @@ class TraineeNodePanelService:
                 published_ids,
                 children_by_parent,
                 limit=2,
+                navigable_node_ids=sibling_navigable_ids,
             )
         ]
         next_up_raw = find_next_up(
@@ -218,6 +278,7 @@ class TraineeNodePanelService:
             published_ids,
             children_by_parent,
             parent=parent_node,
+            navigable_node_ids=sibling_navigable_ids,
         )
         next_up = (
             NavSuggestionOut(
@@ -252,14 +313,20 @@ class TraineeNodePanelService:
         archive_summary = await self._build_archive_summary(node_id)
 
         study_service = TraineeStudyService(self.session)
-        topic_resources_list = await study_service.list_topic_resources(
-            node_id, user_id, role
+        topic_resources_list = (
+            await study_service.list_topic_resources(node_id, user_id, role)
+            if node_access.status == "available"
+            else None
         )
 
         return TraineeNodePanelOut(
             panel_type=panel_type,
             title=node.title,
             header_meta=header_meta,
+            access_status=node_access.status,
+            blocked_by_node_id=node_access.blocked_by_node_id,
+            blocked_by_title=node_access.blocked_by_title,
+            unlock_message=node_access.unlock_message,
             study_material=study_material_summary,
             subtopics=subtopics,
             availability_summary=(
@@ -283,9 +350,17 @@ class TraineeNodePanelService:
             all_subtopics_locked=all_subtopics_locked,
             is_fully_complete=is_fully_complete,
             archive_summary=archive_summary,
-            topic_resources=topic_resources_list.items,
-            topic_resources_section_title=topic_resources_list.section_title,
-            topic_resources_empty_message=topic_resources_list.empty_message,
+            topic_resources=topic_resources_list.items if topic_resources_list else [],
+            topic_resources_section_title=(
+                topic_resources_list.section_title
+                if topic_resources_list
+                else "Topic resources"
+            ),
+            topic_resources_empty_message=(
+                topic_resources_list.empty_message
+                if topic_resources_list
+                else "Resources unlock with this topic."
+            ),
         )
 
     async def _build_archive_summary(self, node_id: UUID) -> ArchiveSummaryOut | None:
@@ -359,6 +434,7 @@ class TraineeNodePanelService:
         self,
         child: TopicNode,
         *,
+        access: AccessResult,
         published_ids: set[UUID],
         children_by_parent: dict[UUID | None, list[UUID]],
         progress_by_node: dict[UUID, TraineeNodeProgressBatchItemOut],
@@ -389,6 +465,7 @@ class TraineeNodePanelService:
         )
         badge_kind, badge_label = build_subtopic_progress_badge(
             is_published=is_accessible,
+            access_status=access.status,
             completed_units=completed_units,
             total_units=total_units,
             progress=progress_by_node.get(child.node_id),
@@ -404,6 +481,10 @@ class TraineeNodePanelService:
             node_id=child.node_id,
             title=child.title,
             is_published=is_accessible,
+            access_status=access.status,
+            blocked_by_node_id=access.blocked_by_node_id,
+            blocked_by_title=access.blocked_by_title,
+            unlock_message=access.unlock_message,
             lesson_count=lesson_count,
             child_count=child_count,
             meta_label=build_subtopic_meta_label(

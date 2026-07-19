@@ -19,6 +19,7 @@ from src.api.core.exceptions.identity_exceptions.auth_exceptions import (
 )
 from src.api.core.exceptions.progress_exceptions.progress_exceptions import (
     NodeNotActiveException,
+    NodePrerequisiteLockedException,
     ReadPercentOutOfRangeException,
     ReadPercentRegressionException,
     SpaceNotPublishedException,
@@ -136,6 +137,7 @@ __all__ = [
     "NodeMediaReorderIncompleteException",
     "NodeNotActiveException",
     "NodeNotFoundException",
+    "NodePrerequisiteLockedException",
     "QuestionAlreadyLockedException",
     "QuestionBelongsToAnotherAttemptException",
     "QuizAlreadyPublishedException",

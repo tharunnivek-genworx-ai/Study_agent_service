@@ -55,6 +55,7 @@ from src.api.schemas.quiz_schemas import (
     QuizHistoryItemOut,
     QuizMentorUiStateOut,
     QuizOut,
+    QuizPassThresholdUpdateRequest,
     QuizPublishRequest,
     QuizQuestionCreateRequest,
     QuizQuestionDeletedOut,
@@ -109,6 +110,8 @@ from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
 from src.api.utils.trainee_progress_utils.progress_resets import (
+    recompute_node_completion_after_quiz_unpublish,
+    recompute_node_quiz_passed_for_threshold,
     reset_node_quiz_passed_for_all_trainees,
 )
 
@@ -974,7 +977,7 @@ class QuizService:
         self,
         node_id: UUID,
         quiz_id: UUID,
-        request: QuizPublishRequest,  # noqa: ARG002
+        request: QuizPublishRequest,
         user_id: UUID,
         role: str,
     ) -> QuizOut:
@@ -1016,6 +1019,8 @@ class QuizService:
         # Capture scalars before repo commit — ORM attributes expire after commit.
         space_id = quiz.space_id
 
+        if request.pass_threshold_percent is not None:
+            await repo.update_pass_threshold(quiz, request.pass_threshold_percent)
         await repo.publish_quiz(quiz, published_by=user_id)
 
         quiz = await repo.get_quiz_by_id_for_update(quiz_id)
@@ -1046,6 +1051,53 @@ class QuizService:
             )
 
         return quiz_out
+
+    async def update_pass_threshold(
+        self,
+        node_id: UUID,
+        quiz_id: UUID,
+        request: QuizPassThresholdUpdateRequest,
+        user_id: UUID,
+        role: str,
+    ) -> QuizOut:
+        """Update a draft/live threshold and refresh live trainee pass state."""
+        _assert_mentor(role)
+        await _get_node_and_assert_space_access(
+            self.session, node_id, user_id, owner_only=True
+        )
+        repo = QuizRepository(self.session)
+        quiz = await repo.get_quiz_by_id_for_update(quiz_id)
+        if quiz is None or quiz.node_id != node_id:
+            raise QuizNotFoundException()
+        if is_discarded(lifecycle_status=quiz.lifecycle_status):
+            raise QuizNotFoundException()
+        if quiz.lifecycle_status not in (LIFECYCLE_DRAFT, LIFECYCLE_ACTIVE):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error_code": "QUIZ_THRESHOLD_NOT_EDITABLE",
+                    "message": (
+                        "Pass threshold can only be edited on draft or live quizzes."
+                    ),
+                },
+            )
+
+        is_live = bool(quiz.is_published) and quiz.lifecycle_status == LIFECYCLE_ACTIVE
+        space_id = quiz.space_id
+        await repo.update_pass_threshold(quiz, request.pass_threshold_percent)
+
+        if is_live:
+            # Keep threshold + pass recompute in one commit path (recompute commits).
+            await recompute_node_quiz_passed_for_threshold(
+                self.session,
+                node_id=node_id,
+                space_id=space_id,
+                pass_threshold_percent=request.pass_threshold_percent,
+            )
+        else:
+            await self.session.commit()
+
+        return await self._build_quiz_out(quiz_id)
 
     async def preview_unpublish_quiz(
         self,
@@ -1125,16 +1177,21 @@ class QuizService:
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
         quiz_out.hints_status = compute_hints_status(active_questions)
 
-        # EC-20 / EC-23: quiz unpublish reverts completion to reading-only for
-        # trainees who already read the material. Recompute so the cached rollup
-        # correctly treats those trainees as 100% complete (no quiz required).
+        # EC-20 / EC-23 / C3: quiz unpublish reverts completion to reading-only.
+        # Sync node completion + durable-grant children for reading-complete
+        # trainees, then refresh space rollups.
         try:
+            await recompute_node_completion_after_quiz_unpublish(
+                self.session,
+                node_id=node_id,
+                space_id=space_id,
+            )
             await recompute_all_trainees_space_progress(self.session, space_id=space_id)
         except Exception:
             logger.warning(
-                "unpublish_quiz: space-progress recompute failed for "
-                "space_id=%s node_id=%s — progress data may be stale until "
-                "next mentor dashboard refresh",
+                "unpublish_quiz: completion/unlock sync or space-progress "
+                "recompute failed for space_id=%s node_id=%s — progress data "
+                "may be stale until next mentor dashboard refresh",
                 space_id,
                 node_id,
                 exc_info=True,

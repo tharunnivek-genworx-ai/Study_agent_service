@@ -24,7 +24,8 @@ def test_realign_system_prompt_routes_stem_only() -> None:
     assert "stem application" in lower
     assert "concept-scoped note binding (stem)" in lower
     assert "self-check before output (stem)" in lower
-    assert "no accidental code" in lower
+    assert "stem hard ban" in lower or "zero code" in lower
+    assert "never choose programming implementation" in lower
     # Other domain policies must not be bloated into this prompt.
     assert "domain policy — programming" not in lower
     assert "domain policy — conceptual" not in lower
@@ -111,7 +112,7 @@ def test_realign_user_message_shape_is_domain_aware() -> None:
     assert "<research_notes>" in msg
     assert "Realign the JSON plan now for this STEM topic." in msg
     assert "not derivation in every section, and not code" in msg
-    assert "vague 'specific values'" in msg
+    assert "vague fillers like 'specific values'" in msg
 
 
 def test_realign_user_message_programming_closing() -> None:
@@ -127,7 +128,8 @@ def test_realign_user_message_programming_closing() -> None:
     )
     assert "<domain>Programming</domain>" in msg
     assert "Realign the JSON plan now for this Programming topic." in msg
-    assert "not algebraic derivation" in msg
+    assert "note-backed implementation gates" in msg
+    assert "Artifact Conflict Rule" in msg
 
 
 def test_truncate_research_notes_head_tail_with_marker() -> None:

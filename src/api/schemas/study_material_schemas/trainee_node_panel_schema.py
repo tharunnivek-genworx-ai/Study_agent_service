@@ -18,7 +18,10 @@ from src.api.schemas.study_material_schemas.trainee_topic_resource_schema import
 )
 
 NodePanelType = Literal["pure-parent", "mixed-parent", "leaf-available", "leaf-locked"]
-SubtopicBadgeKind = Literal["available", "in_progress", "completed", "locked"]
+AccessStatus = Literal["coming_soon", "prerequisite_locked", "available"]
+SubtopicBadgeKind = Literal[
+    "available", "in_progress", "completed", "locked", "prerequisite_locked"
+]
 QuizBadgeKind = Literal["none", "not_taken", "in_progress", "completed"]
 QuizButtonVariant = Literal["primary", "secondary"]
 MixedParentTab = Literal["study", "subtopics"]
@@ -45,6 +48,10 @@ class SubtopicPanelItemOut(BaseModel):
     node_id: UUID
     title: str
     is_published: bool
+    access_status: AccessStatus
+    blocked_by_node_id: UUID | None = None
+    blocked_by_title: str | None = None
+    unlock_message: str | None = None
     lesson_count: int
     child_count: int
     meta_label: str
@@ -106,6 +113,10 @@ class TraineeNodePanelOut(BaseModel):
     panel_type: NodePanelType
     title: str
     header_meta: str
+    access_status: AccessStatus
+    blocked_by_node_id: UUID | None = None
+    blocked_by_title: str | None = None
+    unlock_message: str | None = None
     study_material: StudyMaterialSummaryOut | None = None
     subtopics: list[SubtopicPanelItemOut] = Field(default_factory=list)
     availability_summary: str | None = None

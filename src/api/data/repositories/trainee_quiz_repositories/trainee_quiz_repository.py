@@ -170,6 +170,21 @@ class TraineeQuizRepository:
         )
         return int(result.scalar() or 0)
 
+    async def get_best_submitted_score(
+        self, quiz_id: UUID, trainee_id: UUID
+    ) -> float | None:
+        result = await self.db.execute(
+            select(func.max(QuizAttempt.score)).where(
+                and_(
+                    QuizAttempt.quiz_id == quiz_id,
+                    QuizAttempt.trainee_id == trainee_id,
+                    QuizAttempt.status == "submitted",
+                )
+            )
+        )
+        value = result.scalar()
+        return float(value) if value is not None else None
+
     async def abandon_in_progress_attempts_for_quizzes(
         self, quiz_ids: list[UUID]
     ) -> int:

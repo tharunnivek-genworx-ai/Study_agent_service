@@ -139,6 +139,13 @@ class TraineeNodeProgressOut(BaseModel):
     )
 
     updated_at: datetime
+    newly_unlocked_node_ids: list[UUID] = Field(
+        default_factory=list,
+        description=(
+            "Direct children unlocked when this update completed the node "
+            "(durable grants). Empty when completion did not change."
+        ),
+    )
 
 
 class TraineeNodeProgressBatchItemOut(BaseModel):

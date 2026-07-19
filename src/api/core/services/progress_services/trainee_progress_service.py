@@ -48,6 +48,11 @@ from src.api.utils.space_node_utils.node_role_assert import (
 from src.api.utils.trainee_progress_utils.completion import (
     compute_completion_status,
     compute_progress_percentage,
+    score_meets_pass_threshold,
+)
+from src.api.utils.trainee_progress_utils.unlocking import (
+    assert_trainee_node_unlocked,
+    grant_unlocks_after_node_completed,
 )
 
 
@@ -141,7 +146,11 @@ class TraineeProgressService:
         user_id: UUID,
         role: str,
     ) -> None:
-        """Record first material open — called when trainee loads full content."""
+        """Record first material open — called when trainee loads full content.
+
+        Callers that expose current study material must already have passed
+        ``assert_trainee_node_unlocked`` (see ``TraineeStudyService``).
+        """
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=False
         )
@@ -201,6 +210,13 @@ class TraineeProgressService:
         if not has_published_material:
             raise StudyMaterialNotPublishedException()
 
+        await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=space_id,
+        )
+
         if payload.read_percent < 0 or payload.read_percent > 100:
             raise ReadPercentOutOfRangeException()
 
@@ -216,6 +232,17 @@ class TraineeProgressService:
         has_published_quiz = (
             await self.quiz_repo.get_published_quiz_by_node(node_id) is not None
         )
+        prior_completion = (
+            compute_completion_status(
+                study_material_completed=progress_row.study_material_completed,
+                quiz_passed=progress_row.quiz_passed,
+                study_material_read_percent=progress_row.study_material_read_percent,
+                quiz_attempt_count=progress_row.quiz_attempt_count,
+                has_published_quiz=has_published_quiz,
+            )
+            if progress_row is not None
+            else "not_started"
+        )
         progress_row = await self.guard_repo.upsert_node_progress(
             trainee_id=user_id,
             node_id=node_id,
@@ -224,6 +251,19 @@ class TraineeProgressService:
             study_material_completed=study_material_completed,
             has_published_quiz=has_published_quiz,
         )
+
+        newly_unlocked_node_ids: list[UUID] = []
+        if (
+            progress_row.completion_status == "completed"
+            and prior_completion != "completed"
+        ):
+            newly_unlocked_node_ids = await grant_unlocks_after_node_completed(
+                self.session,
+                trainee_id=user_id,
+                completed_node_id=node_id,
+                space_id=space_id,
+            )
+
         space_progress_service = TraineeSpaceProgressService(self.session)
         await space_progress_service.recompute_after_node_update(
             trainee_id=user_id,
@@ -261,6 +301,7 @@ class TraineeProgressService:
             completion_status=completion_status,
             progress_percentage=progress_percentage,
             updated_at=progress_row.updated_at,
+            newly_unlocked_node_ids=newly_unlocked_node_ids,
         )
 
     async def record_quiz_attempt_submission(
@@ -270,20 +311,37 @@ class TraineeProgressService:
         node_id: UUID,
         space_id: UUID,
         score: float,
-    ) -> None:
+    ) -> list[UUID]:
         """Update node progress after quiz submit (called by ``TraineeQuizService``).
 
         Also refreshes the space-level rollup to keep trainee-space progress in sync.
+        Returns newly unlocked direct-child node ids when this submit completes
+        the learning unit.
         """
         existing = await self.repo.get_by_trainee_and_node(trainee_id, node_id)
         prior_best = existing.quiz_best_score if existing else None
         best_score = score if prior_best is None else max(prior_best, score)
         quiz_passed = existing.quiz_passed if existing else False
-        if best_score >= 0.70:
+        published_quiz = await self.quiz_repo.get_published_quiz_by_node(node_id)
+        pass_threshold_percent = (
+            published_quiz.pass_threshold_percent
+            if published_quiz is not None
+            else None
+        )
+        if score_meets_pass_threshold(best_score, pass_threshold_percent):
             quiz_passed = True
         prior_attempts = existing.quiz_attempt_count if existing else 0
-        has_published_quiz = (
-            await self.quiz_repo.get_published_quiz_by_node(node_id) is not None
+        has_published_quiz = published_quiz is not None
+        prior_completion = (
+            compute_completion_status(
+                study_material_completed=existing.study_material_completed,
+                quiz_passed=existing.quiz_passed,
+                study_material_read_percent=existing.study_material_read_percent,
+                quiz_attempt_count=existing.quiz_attempt_count,
+                has_published_quiz=has_published_quiz,
+            )
+            if existing is not None
+            else "not_started"
         )
         completion_status = compute_completion_status(
             study_material_completed=(
@@ -301,10 +359,22 @@ class TraineeProgressService:
             node_id=node_id,
             space_id=space_id,
             score=score,
+            pass_threshold_percent=pass_threshold_percent,
             completion_status=completion_status,
         )
+
+        newly_unlocked_node_ids: list[UUID] = []
+        if completion_status == "completed" and prior_completion != "completed":
+            newly_unlocked_node_ids = await grant_unlocks_after_node_completed(
+                self.session,
+                trainee_id=trainee_id,
+                completed_node_id=node_id,
+                space_id=space_id,
+            )
+
         space_progress_service = TraineeSpaceProgressService(self.session)
         await space_progress_service.recompute_after_node_update(
             trainee_id=trainee_id,
             space_id=space_id,
         )
+        return newly_unlocked_node_ids
