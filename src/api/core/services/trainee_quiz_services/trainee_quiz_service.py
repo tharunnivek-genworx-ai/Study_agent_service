@@ -90,6 +90,10 @@ from src.api.utils.space_node_utils.node_role_assert import (
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
+from src.api.utils.trainee_progress_utils.completion import (
+    score_meets_pass_threshold,
+)
+from src.api.utils.trainee_progress_utils.unlocking import assert_trainee_node_unlocked
 
 
 def _assert_trainee_owns_attempt(attempt_trainee_id: UUID, user_id: UUID) -> None:
@@ -197,6 +201,7 @@ class TraineeQuizService:
         attempt: QuizAttempt,
         questions: list[QuizQuestion],
         responses_map: dict[UUID, QuizQuestionResponse],
+        best_score: float | None = None,
     ) -> TraineeQuizOut:
         attempt_submitted = attempt.status == "submitted"
         trainee_questions = [
@@ -215,6 +220,7 @@ class TraineeQuizService:
                 if attempt.resume_question_id in active_question_ids
                 else compute_resume_question_id(questions, responses_map)
             )
+        effective_best_score = best_score if best_score is not None else attempt.score
 
         return TraineeQuizOut(
             quiz_id=quiz.quiz_id,
@@ -227,6 +233,11 @@ class TraineeQuizService:
             started_at=attempt.started_at,
             resume_question_id=resume_question_id,
             score_percent=_score_percent(attempt.score),
+            pass_threshold_percent=quiz.pass_threshold_percent,
+            best_score_percent=_score_percent(effective_best_score),
+            has_met_pass_threshold=score_meets_pass_threshold(
+                effective_best_score, quiz.pass_threshold_percent
+            ),
             total_correct=attempt.total_correct if attempt_submitted else None,
             total_skipped=attempt.total_skipped if attempt_submitted else None,
             questions=trainee_questions,
@@ -281,6 +292,7 @@ class TraineeQuizService:
 
         quiz = await self.repo.get_published_quiz_by_node(node_id)
         if quiz is None:
+            # Review-only / history path for hidden quizzes — no unlock assert.
             hidden = await self.repo.get_hidden_quiz_with_trainee_attempts(
                 node_id, user_id
             )
@@ -313,6 +325,15 @@ class TraineeQuizService:
                     "You can review your past attempts but cannot start a new one."
                 ),
             )
+
+        access = await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=node.space_id,
+        )
+        if access.newly_granted:
+            await self.session.commit()
 
         active_attempt = await self.repo.get_active_attempt_by_quiz_and_trainee(
             quiz.quiz_id, user_id
@@ -394,6 +415,12 @@ class TraineeQuizService:
             self.session, node_id, user_id, owner_only=False
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
+        await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=node.space_id,
+        )
 
         quiz = await self.repo.get_published_quiz_by_node(node_id)
         if quiz is None or quiz.quiz_id != quiz_id:
@@ -432,6 +459,7 @@ class TraineeQuizService:
             attempt=attempt,
             questions=questions,
             responses_map=responses_map,
+            best_score=await self.repo.get_best_submitted_score(quiz_id, user_id),
         )
         await self.session.commit()
         return result
@@ -671,7 +699,7 @@ class TraineeQuizService:
         )
 
         progress_service = TraineeProgressService(self.session)
-        await progress_service.record_quiz_attempt_submission(
+        newly_unlocked_node_ids = await progress_service.record_quiz_attempt_submission(
             trainee_id=attempt.trainee_id,
             node_id=attempt.node_id,
             space_id=attempt.space_id,
@@ -680,7 +708,9 @@ class TraineeQuizService:
         # record_quiz_attempt_submission can commit via downstream recompute.
         # Refresh avoids expired-attribute lazy loads during Pydantic serialization.
         await self.session.refresh(attempt)
-        result = QuizAttemptOut.model_validate(attempt)
+        result = QuizAttemptOut.model_validate(attempt).model_copy(
+            update={"newly_unlocked_node_ids": newly_unlocked_node_ids}
+        )
         await self.session.commit()
         return result
 
@@ -706,12 +736,16 @@ class TraineeQuizService:
         quiz = await self._get_quiz_for_attempt(attempt)
         questions = await self.repo.get_all_questions_by_quiz(attempt.quiz_id)
         responses_map = await self.repo.get_responses_map(attempt_id)
+        best_score = await self.repo.get_best_submitted_score(
+            attempt.quiz_id, attempt.trainee_id
+        )
 
         return self._build_trainee_quiz_out(
             quiz=quiz,
             attempt=attempt,
             questions=questions,
             responses_map=responses_map,
+            best_score=best_score,
         )
 
     async def list_archived_quizzes(

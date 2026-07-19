@@ -52,6 +52,7 @@ from src.api.utils.study_agent_utils.media import (
 from src.api.utils.study_agent_utils.version.version_labels import (
     build_version_display_label,
 )
+from src.api.utils.trainee_progress_utils.unlocking import assert_trainee_node_unlocked
 from src.api.utils.trainee_study_utils.trainee_topic_resource_utils import (
     _storage_filename,
     build_trainee_topic_resource_from_reference,
@@ -80,6 +81,12 @@ class TraineeStudyService:
         await _assert_space_access(self.session, node.space_id, user_id, role)
 
         if role == "trainee":
+            await assert_trainee_node_unlocked(
+                self.session,
+                trainee_id=user_id,
+                node_id=node_id,
+                space_id=node.space_id,
+            )
             await self.progress_service.mark_study_material_viewed(
                 node_id=node_id,
                 user_id=user_id,
@@ -122,6 +129,14 @@ class TraineeStudyService:
             self.session, node_id, user_id, owner_only=False
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
+        access = await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=node.space_id,
+        )
+        if access.newly_granted:
+            await self.session.commit()
 
         version = await self.repo.get_published_study_material(node_id)
         if version is None:
@@ -273,6 +288,14 @@ class TraineeStudyService:
             self.session, node_id, user_id, owner_only=False
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
+        access = await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=node.space_id,
+        )
+        if access.newly_granted:
+            await self.session.commit()
 
         repo = ReferenceMaterialRepository(self.session)
         visible_refs = await repo.get_visible_by_node(node_id)
@@ -313,6 +336,14 @@ class TraineeStudyService:
             self.session, node_id, user_id, owner_only=False
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
+        access = await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=node.space_id,
+        )
+        if access.newly_granted:
+            await self.session.commit()
 
         repo = ReferenceMaterialRepository(self.session)
         media = await repo.get_media_by_id(media_id)
@@ -353,6 +384,14 @@ class TraineeStudyService:
             self.session, node_id, user_id, owner_only=False
         )
         await _assert_space_access(self.session, node.space_id, user_id, role)
+        access = await assert_trainee_node_unlocked(
+            self.session,
+            trainee_id=user_id,
+            node_id=node_id,
+            space_id=node.space_id,
+        )
+        if access.newly_granted:
+            await self.session.commit()
 
         repo = ReferenceMaterialRepository(self.session)
         material = await repo.get_by_id(material_id)

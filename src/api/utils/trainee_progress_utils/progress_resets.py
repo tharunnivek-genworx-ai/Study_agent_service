@@ -5,6 +5,12 @@ M4b — EC-20 quiz publish: reset quiz_passed while preserving quiz_best_score.
 
 Both paths update stored ``completion_status`` and fan out space-progress
 recompute so ``count_completed_nodes`` stays accurate.
+
+Durable unlock policy (progressive subtopic unlocking):
+  C1/C2 — These resets MUST NOT delete ``trainee_node_unlocks``. Children stay
+          usable after a parent reading or quiz_passed reset.
+  C6    — Parent SM unpublish is handled by resolve rules (gate drops); do not
+          revoke child grants or reset child progress here.
 """
 
 from __future__ import annotations
@@ -141,4 +147,100 @@ async def reset_node_quiz_passed_for_all_trainees(
             exc_info=True,
         )
 
+    return updated
+
+
+async def recompute_node_quiz_passed_for_threshold(
+    session: AsyncSession,
+    *,
+    node_id: UUID,
+    space_id: UUID,
+    pass_threshold_percent: int,
+) -> int:
+    """Re-evaluate cached pass/completion state after a live threshold change.
+
+    Lowering the threshold may auto-pass trainees and batch-grant child unlocks.
+    Raising it may clear ``quiz_passed`` but never revokes durable child grants.
+    """
+    from src.api.utils.trainee_progress_utils.unlocking import (  # noqa: PLC0415
+        grant_unlocks_for_completed_trainees_on_node,
+    )
+
+    threshold = pass_threshold_percent / 100.0
+    passed = TraineeNodeProgress.quiz_best_score.is_not(None) & (
+        TraineeNodeProgress.quiz_best_score >= threshold
+    )
+    completion_status = case(
+        (
+            TraineeNodeProgress.study_material_completed.is_(True) & passed,
+            "completed",
+        ),
+        (
+            (TraineeNodeProgress.study_material_read_percent > 0)
+            | (TraineeNodeProgress.quiz_attempt_count > 0)
+            | TraineeNodeProgress.study_material_completed.is_(True),
+            "in_progress",
+        ),
+        else_="not_started",
+    )
+    result = await session.execute(
+        update(TraineeNodeProgress)
+        .where(
+            and_(
+                TraineeNodeProgress.node_id == node_id,
+                TraineeNodeProgress.space_id == space_id,
+            )
+        )
+        .values(
+            quiz_passed=passed,
+            completion_status=completion_status,
+            updated_at=utc_now(),
+        )
+    )
+    updated = int(getattr(result, "rowcount", 0) or 0)
+    await grant_unlocks_for_completed_trainees_on_node(
+        session, node_id=node_id, space_id=space_id
+    )
+    await session.commit()
+    await recompute_all_trainees_space_progress(session, space_id=space_id)
+    return updated
+
+
+async def recompute_node_completion_after_quiz_unpublish(
+    session: AsyncSession,
+    *,
+    node_id: UUID,
+    space_id: UUID,
+) -> int:
+    """C3: after quiz unpublish, reading-complete trainees become completed.
+
+    Syncs stored ``completion_status`` (quiz no longer required) and durable-
+    grants eligible children. Does not clear ``quiz_passed`` / best score —
+    those remain historical. Never revokes existing child unlocks.
+    """
+    from src.api.utils.trainee_progress_utils.unlocking import (  # noqa: PLC0415
+        grant_unlocks_for_completed_trainees_on_node,
+    )
+
+    now = utc_now()
+    result = await session.execute(
+        update(TraineeNodeProgress)
+        .where(
+            and_(
+                TraineeNodeProgress.node_id == node_id,
+                TraineeNodeProgress.space_id == space_id,
+            )
+        )
+        .values(
+            completion_status=_completion_after_quiz_passed_reset(
+                has_published_quiz=False
+            ),
+            updated_at=now,
+        )
+    )
+    updated = int(getattr(result, "rowcount", 0) or 0)
+    await grant_unlocks_for_completed_trainees_on_node(
+        session, node_id=node_id, space_id=space_id
+    )
+    await session.commit()
     return updated

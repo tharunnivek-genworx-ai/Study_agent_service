@@ -16,6 +16,7 @@ from src.api.control.study_agent.prompts.concept.shared_blocks import (
     JSON_OUTPUT_SCHEMA,
     REFERENCE_CONTEXT_BLOCK,
     REWORK_PLAN_CONTEXT_BLOCK,
+    STEM_NO_RUNNABLE_CODE_BLOCK,
     STRUCTURAL_INTEGRITY_BLOCK,
     TOPIC_SPLIT_STYLE_BLOCK,
 )
@@ -75,7 +76,7 @@ First, a preservation check:
   □ Is every untouched topic_split entry and must_cover item from <previous_plan> present, unchanged?
   □ If I removed an entry, did I remove ALL must_cover items pointing at it, leaving no orphans?
 Then re-run the STRUCTURAL INTEGRITY check on the full output.
-Every item's family classification, skeleton, and word-ban scan was already verified inline while drafting — do not re-derive it here. Confirm only: no bracketed placeholders remain, and A1 count across the document is ≤ 2.
+Every item's family classification, skeleton, and word-ban scan was already verified inline while drafting — do not re-derive it here. Confirm only: no bracketed placeholders remain, A1 count across the document is ≤ 2, every A1 item still passes the A1 VIABILITY GATE (same start/end; concrete start; ≥4 real steps), every A2 item names a concrete equation and concrete values/symbols (not "specific values" leftovers), STEM algorithm/protocol/experiment items prefer Family C over forced A1/A2, and if domain is STEM then Family B count is exactly zero (no runnable-code depth_gates).
 Do not output until this passes."""
 
     return f"""\
@@ -84,6 +85,8 @@ You are a curriculum architect. You are revising an existing JSON plan \
 
 STEP 1 — DOMAIN
 {DOMAIN_REUSE_FROM_PREVIOUS_PLAN_BLOCK}
+
+{STEM_NO_RUNNABLE_CODE_BLOCK}
 {rework_step}{reference_step}
 {action_block}
 

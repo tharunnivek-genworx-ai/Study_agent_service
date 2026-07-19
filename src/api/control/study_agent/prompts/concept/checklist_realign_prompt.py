@@ -87,11 +87,23 @@ defaults)
 
 SAFE DEFAULTS
 - Default quantitative item is STEM APPLICATION, not derivation.
-- Zero derivations and zero code items are normal and expected.
+- Zero derivations and zero code items are normal and expected — and for this STEM domain run, zero code items are mandatory.
 - Do not create code because notes say process, procedure, algorithm, model, \
-simulation, implementation, method, steps, system, or calculation.
+simulation, implementation, method, steps, system, calculation, or computing.
 - Do not force an equation exercise into every section — mechanisms, \
 experiments, and scientific comparisons may use STEM EXPLANATION.
+- HARD BAN: runnable code / scripts / library demos are never valid STEM \
+depth_gates on this run. Downstream STEM sections have no code_blocks field.
+- After the code ban: prefer STEM EXPLANATION (named algorithm / protocol / \
+experiment / thought experiment + causal reasoning) over inventing a numeric \
+APPLICATION gate. Use STEM APPLICATION only when notes supply a named equation \
+and named quantities/values to substitute. Never invent A1/A2 merely because \
+code is forbidden.
+- DERIVATION VIABILITY: keep a derivation only when requirement and depth_gate \
+share the same concrete note-backed start and the same final result, and notes \
+support a real multi-step formula_block chain. Vague starts ("principles of…", \
+"wave-particle duality" as a theme) or start≠end mismatches → rewrite to \
+APPLICATION or EXPLANATION.
 
 MODE DECISION (per item; stop at first match)
 1. Pedagogical point IS building a result from a note-backed primitive law / \
@@ -99,12 +111,15 @@ definition / axiom, with enough support for a real multi-step chain → STEM \
 DERIVATION (exceptional; ≤ 2 in the whole plan).
 2. Correctness rests on applying a note-backed equation, law, stoichiometry, \
 count, or empirical relation → STEM APPLICATION (default).
-3. Correctness rests on a named mechanism, stage sequence, experiment, or \
-scientific comparison without a numerical result → STEM EXPLANATION.
-4. Teaching instruction explicitly requests programming, OR notes contain \
-source code whose runtime behaviour is itself the learning objective for THIS \
-concept → Programming implementation allowed for that item only. Otherwise \
-code is forbidden.
+3. Correctness rests on a named mechanism, stage sequence, experiment, \
+algorithm-as-concept, protocol, thought experiment, or scientific comparison \
+without a numerical result → STEM EXPLANATION.
+4. NEVER choose Programming implementation on a STEM-domain plan — even if \
+notes show source code, an algorithm name, a simulator, or the instruction \
+mentions "implement." Prefer STEM EXPLANATION for algorithms/protocols/\
+experiments; use STEM APPLICATION only with a note-backed equation + quantities. \
+If the mentor truly needed code as mastery evidence, the domain would be \
+Programming or Mixed; it is STEM here.
 
 STEM DERIVATION (exceptional)
 Slot labels are planning cues only — never copy brackets or angle-slot names \
@@ -166,7 +181,8 @@ derivation or one equation per section. Order foundations → mechanism → \
 application/evidence → limitations when the draft order is unusable.
 
 PROHIBITIONS
-- No API / runnable code / function-call gates unless mode 4 passed.
+- No API / runnable code / function-call / script / notebook gates — ever, on \
+a STEM-domain plan (mode 4 never authorizes code here).
 - No derivation language unless mode 1 passed.
 - No invented values, units, rates, or frameworks.
 - No square-bracket placeholders left in output."""
@@ -444,8 +460,14 @@ PROHIBITIONS
 _STEM_VALIDATION_BLOCK = """\
 SELF-CHECK BEFORE OUTPUT (STEM)
 □ Domain equals <draft_plan>.domain exactly?
-□ No accidental code / API / runnable gates (unless instruction/notes force it)?
+□ Zero code / API / runnable / script gates — STEM hard ban, no instruction or \
+notes exception?
 □ Derivation count ≤ 2, and zero is acceptable? No derivation-per-section?
+□ Every derivation shares the same concrete start/end in requirement and \
+depth_gate, with a real note-backed multi-step chain (no vague "principles of…" \
+starts)?
+□ Algorithm / protocol / experiment items use STEM EXPLANATION rather than \
+invented numeric APPLICATION gates when notes lack a substitutable equation?
 □ Every required item binds a concept-local note equation/relation/mechanism \
 (not a flashy unrelated equation elsewhere)?
 □ Every quantitative gate quotes the actual note formula/relation text — no \

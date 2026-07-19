@@ -9,6 +9,9 @@ from src.api.data.models.postgres.progress_models.trainee_node_progress import (
 )
 from src.api.schemas.progress_schemas import CompletionStatus
 from src.api.utils.common_utils import utc_now
+from src.api.utils.trainee_progress_utils.completion import (
+    score_meets_pass_threshold,
+)
 
 
 class TraineeNodeProgressRepository:
@@ -87,6 +90,7 @@ class TraineeNodeProgressRepository:
         space_id: UUID,
         score: float,
         *,
+        pass_threshold_percent: int | None,
         completion_status: CompletionStatus,
     ) -> TraineeNodeProgress:
         """Persist quiz contribution to node progress after attempt submission."""
@@ -98,7 +102,7 @@ class TraineeNodeProgressRepository:
         )
         row.quiz_best_score = best_score
         row.quiz_attempt_count = max(row.quiz_attempt_count + 1, 1)
-        if best_score >= 0.70:
+        if score_meets_pass_threshold(best_score, pass_threshold_percent):
             row.quiz_passed = True
 
         row.completion_status = completion_status

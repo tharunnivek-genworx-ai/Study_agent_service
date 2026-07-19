@@ -8,6 +8,7 @@ from src.api.control.study_agent.prompts.concept.shared_blocks import (
     EVIDENCE_FAMILY_BLOCK,
     JSON_OUTPUT_SCHEMA,
     REFERENCE_CONTEXT_BLOCK,
+    STEM_NO_RUNNABLE_CODE_BLOCK,
     STRUCTURAL_INTEGRITY_BLOCK,
     TOPIC_SPLIT_SIZING_BLOCK,
     TOPIC_SPLIT_STYLE_BLOCK,
@@ -41,6 +42,8 @@ You are a curriculum architect. Given a topic and an optional teaching instructi
 
 STEP 1 — CLASSIFY DOMAIN
 {DOMAIN_CLASSIFICATION_BLOCK}
+
+{STEM_NO_RUNNABLE_CODE_BLOCK}
 {reference_step}
 STEP {step} — BUILD topic_split
 {TOPIC_SPLIT_SIZING_BLOCK}
@@ -62,12 +65,15 @@ First, a coverage check on the plan as a whole:
   □ If the teaching_instruction asked for thorough, complete, or foundational coverage, does my section and item count actually sit in the upper half of the allowed ranges?
 Then run the STRUCTURAL INTEGRITY check above on the full plan.
 Then, for every must_cover item, verify in order:
-  □ Which family (A, B, or C) does this item actually belong to — run the FAMILY DECISION TEST above in order, do not guess from the domain label or from surface verbs like "implement" or "method"?
+  □ If domain is STEM: confirm Family B count is exactly zero and no requirement/depth_gate contains runnable/code-block/script/API-demo language — rewrite any such item as Family A or C before output.
+  □ If domain is STEM and the item is an algorithm, protocol, experiment, thought experiment, or qualitative application: is it Family C (preferred) rather than a forced A1/A2? If you used A2, did you name a real equation and concrete values/symbols — or should this be Family C?
+  □ Which family (A, B, or C) does this item actually belong to — run the FAMILY DECISION TEST above in order (including the STEM DOMAIN LOCK), do not guess from surface verbs like "implement" or "method"?
+  □ If this item is A1: did it pass the A1 VIABILITY GATE (same start and end in requirement and depth_gate; start is a concrete law/equation/definition; ≥4 real mechanical steps imaginable)? If not, rewrite as A2 or Family C.
   □ Did I copy that family's depth_gate skeleton exactly, filling only the brackets?
   □ Did I scan the finished requirement and depth_gate for the Family-A word list, and confirm none appear unless this item is genuinely Family A?
-  □ If this item is Family B, is there a genuine runnable software artifact involved — not just a mathematical, chemical, or procedural topic that happens to use words like "implement" or "method"? If there is no code, reclassify it to Family A or C and rewrite it from that family's skeleton.
+  □ If this item is Family B, is domain Programming or Mixed, and is there a genuine runnable software artifact involved — not just a mathematical, chemical, or procedural topic that happens to use words like "implement" or "method"? If domain is STEM or there is no code, reclassify it to Family A or C and rewrite it from that family's skeleton.
   □ Have I replaced every bracketed placeholder (e.g. "[name it]", "[state the result]") with real, topic-specific content? A literal "[" or "]" left anywhere in the output is a failure.
-  □ Can a reviewer answer YES or NO by locating a specific artifact (the named equation + steps, the runnable code, or the named case)?
+  □ Can a reviewer answer YES or NO by locating a specific artifact (the named equation + steps, the runnable code only when domain allows Family B, or the named case)?
   □ Does this go beyond restating the requirement in different words?
 If any item fails a check, rewrite it from its family's skeleton before producing the JSON. Do not output until every item passes all checks above.
 

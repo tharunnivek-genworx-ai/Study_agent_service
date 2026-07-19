@@ -40,6 +40,7 @@ from src.api.schemas.quiz_schemas import (
     QuizGenerateRequest,
     QuizMentorUiStateOut,
     QuizOut,
+    QuizPassThresholdUpdateRequest,
     QuizPublishRequest,
     QuizQuestionCreateRequest,
     QuizQuestionDeletedOut,
@@ -154,6 +155,24 @@ async def publish_quiz(
     """Mentor publishes a quiz, making it visible to trainees (is_published=True)."""
     service = QuizService(db)
     return await service.publish_quiz(
+        node_id, quiz_id, payload, current_user.sub, current_user.role
+    )
+
+
+@router.patch(
+    "/nodes/{node_id}/quizzes/{quiz_id}/pass-threshold",
+    response_model=QuizOut,
+)
+async def update_quiz_pass_threshold(
+    node_id: UUID,
+    quiz_id: UUID,
+    payload: QuizPassThresholdUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenPayload = Depends(get_current_user),
+) -> QuizOut:
+    """Mentor updates the pass score for a draft or live quiz."""
+    service = QuizService(db)
+    return await service.update_pass_threshold(
         node_id, quiz_id, payload, current_user.sub, current_user.role
     )
 

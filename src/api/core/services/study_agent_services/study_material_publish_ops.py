@@ -40,6 +40,9 @@ from src.api.utils.mentor_progress_utils.space_recompute import (
 from src.api.utils.trainee_progress_utils.progress_resets import (
     reset_node_read_progress_for_all_trainees,
 )
+from src.api.utils.trainee_progress_utils.unlocking import (
+    grant_unlocks_after_child_content_published,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +122,23 @@ async def execute_publish_version_cascade(
                     node_id,
                     exc_info=True,
                 )
+
+        # Late-published child: if the gate parent is already complete for any
+        # trainee, write durable grants now so a later C1/C2 parent reset cannot
+        # re-lock this node.
+        try:
+            await grant_unlocks_after_child_content_published(
+                session, node_id=node_id, space_id=space_id
+            )
+            await session.commit()
+        except Exception:
+            logger.warning(
+                "execute_publish_version_cascade: unlock grant for newly published "
+                "child failed for space_id=%s node_id=%s",
+                space_id,
+                node_id,
+                exc_info=True,
+            )
 
         # Recompute commits per trainee and expires ORM state; reload before
         # the caller validates into StudyMaterialVersionOut.

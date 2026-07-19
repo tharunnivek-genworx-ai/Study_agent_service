@@ -29,6 +29,8 @@ _USER_MESSAGE_CLOSING = (
     "\nGenerate the JSON plan now. "
     "For every must_cover item, pick its evidence family (A/B/C) from what the item is actually about, "
     "copy that family's depth_gate skeleton, and fill only the brackets. "
+    "If domain is STEM, Family B is forbidden — never write runnable-code / script depth_gates; use Family A or C instead. "
+    "For STEM algorithms, protocols, experiments, and qualitative applications, prefer Family C; use A1 only if the A1 VIABILITY GATE passes; use A2 only when you can name a real equation and concrete values or symbols. "
     "Run the Family-A word-ban scan on every Family B and Family C item before output. "
     "Ensure each section has linked checklist items with specific requirements and fully filled-in depth_gates — "
     "not a thin or generic plan."

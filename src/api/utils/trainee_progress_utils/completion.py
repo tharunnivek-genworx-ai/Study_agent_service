@@ -13,6 +13,17 @@ both reading and a passing score (50% per component).
 from src.api.schemas.progress_schemas import CompletionStatus
 
 
+def score_meets_pass_threshold(
+    score: float | None, pass_threshold_percent: int | None
+) -> bool:
+    """Return whether a normalized score meets a configured percentage."""
+    return (
+        score is not None
+        and pass_threshold_percent is not None
+        and score >= pass_threshold_percent / 100.0
+    )
+
+
 def compute_progress_percentage(
     *,
     study_material_completed: bool,

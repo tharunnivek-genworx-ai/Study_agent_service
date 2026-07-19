@@ -7,6 +7,9 @@ from src.api.data.repositories.progress_repositories.mentor_progress_repository 
 from src.api.data.repositories.progress_repositories.trainee_node_progress_repository import (
     TraineeNodeProgressRepository,
 )
+from src.api.data.repositories.progress_repositories.trainee_node_unlock_repository import (
+    TraineeNodeUnlockRepository,
+)
 from src.api.data.repositories.progress_repositories.trainee_space_progress_repository import (
     TraineeSpaceProgressRepository,
 )
@@ -53,6 +56,7 @@ __all__ = [
     "StudyMaterialRepository",
     "TraineeNodePanelRepository",
     "TraineeNodeProgressRepository",
+    "TraineeNodeUnlockRepository",
     "TraineeQuizRepository",
     "TraineeSpaceProgressRepository",
     "TraineeStudyRepository",
