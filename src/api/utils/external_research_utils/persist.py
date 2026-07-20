@@ -26,6 +26,7 @@ async def persist_external_research_cache(
     resolved_subtopic: str | None,
     ground_truth_reference: str | None,
     source_urls: list[Any] | None,
+    video_urls: list[Any] | None = None,
     per_website_summary_count: int,
     knowledge_distillation_model_used: str | None,
 ) -> None:
@@ -44,6 +45,7 @@ async def persist_external_research_cache(
         resolved_subtopic=resolved_subtopic,
         ground_truth_reference=ground_truth_reference,
         source_urls=list(source_urls or []),
+        video_urls=list(video_urls or []),
         per_website_summary_count=per_website_summary_count,
         token_count=token_count,
         knowledge_distillation_model_used=knowledge_distillation_model_used,

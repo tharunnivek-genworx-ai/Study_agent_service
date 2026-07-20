@@ -75,6 +75,7 @@ async def _load_persisted_external_research(
         "resolved_topic": existing.resolved_topic,
         "resolved_subtopic": existing.resolved_subtopic,
         "knowledge_distillation_model_used": existing.knowledge_distillation_model_used,
+        "external_video_urls": list(existing.video_urls or []),
     }
     if existing.status == "success" and existing.ground_truth_reference:
         updates["ground_truth_reference"] = existing.ground_truth_reference

@@ -19,6 +19,7 @@ from src.api.data.repositories import NodeRepository
 from src.api.schemas.study_material_schemas import parse_concept_checklist_response
 from src.api.utils.external_research_utils.attach_sources import (
     attach_source_urls_to_node_media,
+    attach_video_urls_to_node_media,
 )
 from src.api.utils.LLM_utils.groq_retry import GroqCallResult, call_groq_with_rotation
 from src.api.utils.study_agent_utils.artifacts.study_material_artifacts import (
@@ -163,6 +164,55 @@ async def _maybe_attach_source_urls(
     )
 
 
+async def _maybe_attach_video_urls(
+    state: StudyMaterialGraphState,
+    config: RunnableConfig,
+) -> None:
+    """Idempotent re-attach of cached YouTube videos (covers cache-hit path)."""
+    if state.get("reference_mode") != "external":
+        return
+
+    video_urls = [
+        item
+        for item in (state.get("external_video_urls") or [])
+        if isinstance(item, dict) and item.get("url")
+    ]
+    if not video_urls:
+        return
+
+    configurable = config.get("configurable") or {}
+    session = configurable.get("session")
+    user_raw = configurable.get("user_id")
+    node_id = state.get("node_id")
+    if session is None or node_id is None or user_raw is None:
+        return
+
+    try:
+        mentor_id = UUID(str(user_raw))
+    except (TypeError, ValueError):
+        return
+
+    try:
+        node_repo = NodeRepository(session)
+        node = await node_repo.get_node_by_id(node_id)
+        if node is None:
+            return
+
+        await attach_video_urls_to_node_media(
+            session,
+            node_id=node_id,
+            space_id=cast(UUID, node.space_id),
+            mentor_id=mentor_id,
+            video_urls=video_urls,
+        )
+    except Exception:
+        logger.warning(
+            "checklist_realign_node: video attach failed for node %s",
+            node_id,
+            exc_info=True,
+        )
+
+
 async def checklist_realign_node(
     state: StudyMaterialGraphState,
     config: RunnableConfig,
@@ -179,6 +229,7 @@ async def checklist_realign_node(
 
     # Always attempt idempotent attach when URLs are present (cache-hit safety).
     await _maybe_attach_source_urls(state, config)
+    await _maybe_attach_video_urls(state, config)
 
     if not _should_run_realign(state):
         logger.info(

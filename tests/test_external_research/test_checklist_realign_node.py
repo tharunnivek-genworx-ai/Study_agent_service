@@ -213,3 +213,72 @@ async def test_realign_calls_attach_when_urls_present() -> None:
     assert kwargs["mentor_id"] == mentor_id
     assert kwargs["status"] == "success"
     assert kwargs["source_urls"] == urls
+
+
+@pytest.mark.asyncio
+async def test_realign_attaches_videos_on_fail_soft_without_article_success() -> None:
+    node_id = uuid4()
+    space_id = uuid4()
+    mentor_id = uuid4()
+    videos = [
+        {
+            "url": "https://www.youtube.com/watch?v=abc123",
+            "video_id": "abc123",
+            "title": "React Hooks Explained",
+            "channel": "Code Channel",
+            "duration_sec": 600,
+            "views": 10000,
+            "likes": 500,
+            "score": 123.4,
+        }
+    ]
+    state = _draft_state(
+        node_id=node_id,
+        external_research_status="fail_soft",
+        external_source_urls=[],
+        external_video_urls=videos,
+        ground_truth_reference="",
+        extracted_reference_text="",
+    )
+    mock_node = MagicMock()
+    mock_node.space_id = space_id
+    mock_session = MagicMock()
+    config = {
+        "configurable": {
+            "session": mock_session,
+            "user_id": str(mentor_id),
+        }
+    }
+
+    with (
+        patch(_REPORT_PATCH, new_callable=AsyncMock),
+        patch(
+            "src.api.control.study_agent.nodes.checklist_realign_node.NodeRepository"
+        ) as repo_cls,
+        patch(
+            "src.api.control.study_agent.nodes.checklist_realign_node."
+            "attach_source_urls_to_node_media",
+            new_callable=AsyncMock,
+        ) as attach_articles,
+        patch(
+            "src.api.control.study_agent.nodes.checklist_realign_node."
+            "attach_video_urls_to_node_media",
+            new_callable=AsyncMock,
+        ) as attach_videos,
+        patch(
+            "src.api.control.study_agent.nodes.checklist_realign_node."
+            "call_groq_with_rotation",
+            new_callable=AsyncMock,
+        ) as llm,
+    ):
+        repo_cls.return_value.get_node_by_id = AsyncMock(return_value=mock_node)
+        await checklist_realign_node(state, config)
+
+    llm.assert_not_called()
+    attach_articles.assert_not_awaited()
+    attach_videos.assert_awaited_once()
+    kwargs = attach_videos.await_args.kwargs
+    assert kwargs["node_id"] == node_id
+    assert kwargs["space_id"] == space_id
+    assert kwargs["mentor_id"] == mentor_id
+    assert kwargs["video_urls"] == videos

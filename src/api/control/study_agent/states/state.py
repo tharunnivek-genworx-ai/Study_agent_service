@@ -113,6 +113,10 @@ class StudyMaterialGraphState(TypedDict, total=False):
     resolved_topic: str | None
     resolved_subtopic: str | None
     external_source_urls: list[str]
+    external_video_urls: list[dict[str, Any]]
+    youtube_attach_status: Literal["success", "skipped", "failed"] | None
+    youtube_fail_reason: str | None
+    external_research_youtube_backfill_only: bool
     ground_truth_reference: str | None
     # Pipeline intermediates (external branch only)
     search_result_urls: list[str]

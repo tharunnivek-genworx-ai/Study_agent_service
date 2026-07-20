@@ -137,6 +137,8 @@ _STUDY_WITH_EXTERNAL_RESEARCH_NODES: dict[str, int] = {
     "external_research_cross_website_merge": 1,
     "external_research_persist_cache": 1,
     "external_research_attach_sources": 1,
+    "external_research_youtube_discover": 1,
+    "external_research_attach_videos": 1,
     "checklist_realign": 1,
     "study_agent": 2,
     "quality_check": 3,

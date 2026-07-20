@@ -39,6 +39,8 @@ class ExternalResearchReference(Base):
     ground_truth_reference = Column("groundtruthreference", Text, nullable=True)
     # Only URLs that survived into the final merge
     source_urls = Column("sourceurls", JSONB, nullable=False, default=list)
+    # Ranked YouTube video metadata (url, title, channel, duration_sec, views, likes, score)
+    video_urls = Column("videourls", JSONB, nullable=False, default=list)
     per_website_summary_count = Column(
         "perwebsitesummarycount", Integer, nullable=False, default=0
     )
