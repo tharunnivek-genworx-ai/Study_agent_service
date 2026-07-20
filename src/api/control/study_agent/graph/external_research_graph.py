@@ -1,10 +1,13 @@
 """LangGraph subgraph for External Research Mode (design §2.3).
 
 Internal sequence:
-  cache_check → resolve_research_query → search → content_extraction
-  → content_distillation → chunk_if_needed → knowledge_distillation
-  → website_reduction → cross_website_merge → persist_cache_row
-  → (success) attach_sources → assign extracted_reference_text
+  cache_check → resolve_research_query → youtube_discover → search → …
+  → persist_cache_row → attach_sources → attach_videos
+
+Cache backfill (pre-feature rows with empty ``video_urls``):
+  cache_check → youtube_discover → attach_videos
+
+YouTube failures are isolated — they never set ``external_research_status``.
 
 All LLM calls go through ``call_groq_with_rotation``.
 """
@@ -30,6 +33,7 @@ from src.api.utils.external_research_utils.abort import (
 )
 from src.api.utils.external_research_utils.attach_sources import (
     attach_source_urls_to_node_media,
+    attach_video_urls_to_node_media,
 )
 from src.api.utils.external_research_utils.chunking import chunk_cleaned_pages
 from src.api.utils.external_research_utils.content_distillation import (
@@ -55,6 +59,8 @@ from src.api.utils.external_research_utils.topic_resolution import (
 from src.api.utils.external_research_utils.website_reduction import (
     reduce_distilled_pages,
 )
+from src.api.utils.external_research_utils.youtube_client import YouTubeApiError
+from src.api.utils.external_research_utils.youtube_rank import search_and_rank
 from src.api.utils.generation_progress.reporter import maybe_report_node_enter
 
 logger = logging.getLogger(__name__)
@@ -74,6 +80,8 @@ EXTERNAL_RESEARCH_INTERNAL_NODES = frozenset(
         "external_research_cross_website_merge",
         "external_research_persist_cache",
         "external_research_attach_sources",
+        "external_research_youtube_discover",
+        "external_research_attach_videos",
     }
 )
 
@@ -124,6 +132,8 @@ async def external_research_cache_check_node(
         "resolved_topic": existing.resolved_topic,
         "resolved_subtopic": existing.resolved_subtopic,
         "knowledge_distillation_model_used": existing.knowledge_distillation_model_used,
+        "external_video_urls": list(existing.video_urls or []),
+        "external_research_youtube_backfill_only": False,
     }
     if existing.status == "success" and existing.ground_truth_reference:
         updates["ground_truth_reference"] = existing.ground_truth_reference
@@ -136,6 +146,12 @@ async def external_research_cache_check_node(
         updates["extracted_reference_text"] = (
             state.get("extracted_reference_text") or ""
         )
+
+    has_videos = bool(existing.video_urls)
+    has_api_key = bool(external_research_settings.youtube_api_key.strip())
+    if not has_videos and has_api_key:
+        updates["external_research_youtube_backfill_only"] = True
+
     return updates
 
 
@@ -166,7 +182,67 @@ async def external_research_resolve_query_node(
         "external_research_query": resolved["search_query"],
         "resolved_topic": resolved["resolved_topic"],
         "resolved_subtopic": resolved["resolved_subtopic"],
+        "external_research_youtube_backfill_only": False,
     }
+
+
+async def external_research_youtube_discover_node(
+    state: StudyMaterialGraphState,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    await _report(config, "external_research_youtube_discover")
+    should_continue = build_should_continue_from_config(config)
+    await abort_if_should_stop(should_continue)
+
+    api_key = external_research_settings.youtube_api_key.strip()
+    if not api_key:
+        return {
+            "external_video_urls": [],
+            "youtube_attach_status": "skipped",
+            "youtube_fail_reason": "no_api_key",
+        }
+
+    query = (
+        state.get("external_research_query") or state.get("node_title") or ""
+    ).strip()
+    if not query:
+        return {
+            "external_video_urls": [],
+            "youtube_attach_status": "success",
+            "youtube_fail_reason": None,
+        }
+
+    try:
+        videos = search_and_rank(query, api_key=api_key)
+        return {
+            "external_video_urls": videos,
+            "youtube_attach_status": "success",
+            "youtube_fail_reason": None,
+        }
+    except YouTubeApiError as exc:
+        logger.warning(
+            "YouTube discovery failed for query=%r: %s",
+            query,
+            exc,
+            exc_info=True,
+        )
+        return {
+            "external_video_urls": [],
+            "youtube_attach_status": "failed",
+            "youtube_fail_reason": str(exc) or "youtube_api_error",
+        }
+    except Exception as exc:
+        logger.warning(
+            "Unexpected YouTube discovery error for query=%r: %s",
+            query,
+            exc,
+            exc_info=True,
+        )
+        return {
+            "external_video_urls": [],
+            "youtube_attach_status": "failed",
+            "youtube_fail_reason": str(exc) or type(exc).__name__,
+        }
 
 
 async def external_research_search_node(
@@ -329,6 +405,7 @@ async def external_research_persist_cache_node(
     status = state.get("external_research_status") or "fail_soft"
     ground_truth = state.get("ground_truth_reference")
     source_urls = list(state.get("external_source_urls") or [])
+    video_urls = list(state.get("external_video_urls") or [])
 
     await persist_external_research_cache(
         session,
@@ -342,6 +419,7 @@ async def external_research_persist_cache_node(
         resolved_subtopic=state.get("resolved_subtopic"),
         ground_truth_reference=ground_truth if status == "success" else None,
         source_urls=source_urls if status == "success" else [],
+        video_urls=video_urls,
         per_website_summary_count=len(state.get("reduced_pages") or []),
         knowledge_distillation_model_used=state.get(
             "knowledge_distillation_model_used"
@@ -391,14 +469,63 @@ async def external_research_attach_sources_node(
     return {}
 
 
+async def external_research_attach_videos_node(
+    state: StudyMaterialGraphState,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    await _report(config, "external_research_attach_videos")
+    should_continue = build_should_continue_from_config(config)
+    await abort_if_should_stop(should_continue)
+
+    session, user_id = _session_and_user(config)
+    node_id = state.get("node_id")
+    if session is None or node_id is None or user_id is None:
+        return {}
+
+    try:
+        node_repo = NodeRepository(session)
+        node = await node_repo.get_node_by_id(node_id)
+        if node is None:
+            return {}
+
+        await attach_video_urls_to_node_media(
+            session,
+            node_id=node_id,
+            space_id=cast(UUID, node.space_id),
+            mentor_id=user_id,
+            video_urls=list(state.get("external_video_urls") or []),
+        )
+    except Exception:
+        logger.warning(
+            "external_research_attach_videos failed for node %s",
+            node_id,
+            exc_info=True,
+        )
+    return {}
+
+
 def _route_after_cache_check(
     state: StudyMaterialGraphState,
-) -> Literal["external_research_resolve_query", "__end__"]:
+) -> Literal[
+    "external_research_resolve_query",
+    "external_research_youtube_discover",
+    "__end__",
+]:
     if state.get("error"):
         return "__end__"
-    if state.get("external_research_cache_hit"):
-        return "__end__"
-    return "external_research_resolve_query"
+    if not state.get("external_research_cache_hit"):
+        return "external_research_resolve_query"
+    if state.get("external_research_youtube_backfill_only"):
+        return "external_research_youtube_discover"
+    return "__end__"
+
+
+def _route_after_youtube_discover(
+    state: StudyMaterialGraphState,
+) -> Literal["external_research_search", "external_research_attach_videos"]:
+    if state.get("external_research_youtube_backfill_only"):
+        return "external_research_attach_videos"
+    return "external_research_search"
 
 
 def _route_after_extraction(
@@ -435,9 +562,7 @@ def _route_after_persist(
 ) -> Literal["external_research_attach_sources", "__end__"]:
     if state.get("error"):
         return "__end__"
-    if state.get("external_research_status") == "success":
-        return "external_research_attach_sources"
-    return "__end__"
+    return "external_research_attach_sources"
 
 
 def build_external_research_graph() -> Any:
@@ -481,6 +606,14 @@ def build_external_research_graph() -> Any:
         "external_research_attach_sources",
         external_research_attach_sources_node,
     )
+    graph.add_node(
+        "external_research_youtube_discover",
+        external_research_youtube_discover_node,
+    )
+    graph.add_node(
+        "external_research_attach_videos",
+        external_research_attach_videos_node,
+    )
 
     graph.set_entry_point("external_research_cache_check")
     graph.add_conditional_edges(
@@ -488,10 +621,22 @@ def build_external_research_graph() -> Any:
         _route_after_cache_check,
         {
             "external_research_resolve_query": "external_research_resolve_query",
+            "external_research_youtube_discover": "external_research_youtube_discover",
             "__end__": END,
         },
     )
-    graph.add_edge("external_research_resolve_query", "external_research_search")
+    graph.add_edge(
+        "external_research_resolve_query",
+        "external_research_youtube_discover",
+    )
+    graph.add_conditional_edges(
+        "external_research_youtube_discover",
+        _route_after_youtube_discover,
+        {
+            "external_research_search": "external_research_search",
+            "external_research_attach_videos": "external_research_attach_videos",
+        },
+    )
     graph.add_edge("external_research_search", "external_research_content_extraction")
     graph.add_conditional_edges(
         "external_research_content_extraction",
@@ -541,7 +686,10 @@ def build_external_research_graph() -> Any:
             "__end__": END,
         },
     )
-    graph.add_edge("external_research_attach_sources", END)
+    graph.add_edge(
+        "external_research_attach_sources", "external_research_attach_videos"
+    )
+    graph.add_edge("external_research_attach_videos", END)
 
     return graph.compile()
 

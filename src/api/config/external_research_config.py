@@ -1,4 +1,4 @@
-"""External Research Mode settings (Tavily search, extraction, merge floors)."""
+"""External Research Mode settings (Tavily search, YouTube discovery, merge floors)."""
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,6 +49,11 @@ class ExternalResearchSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     tavily_api_key: str = ""
+    youtube_api_key: str = ""
+
+    external_research_max_youtube_videos: int = 3
+    external_research_min_video_duration_sec: int = 300
+    external_research_youtube_search_pool: int = 15
 
     external_research_domain_blocklist: list[str] = Field(
         default_factory=lambda: list(_DEFAULT_DOMAIN_BLOCKLIST),

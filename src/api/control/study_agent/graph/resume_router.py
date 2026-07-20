@@ -91,6 +91,8 @@ STUDY_MATERIAL_GRAPH_NODES = frozenset(
         "external_research_cross_website_merge",
         "external_research_persist_cache",
         "external_research_attach_sources",
+        "external_research_youtube_discover",
+        "external_research_attach_videos",
         "checklist_realign",
         "study_agent",
         "quality_check",
