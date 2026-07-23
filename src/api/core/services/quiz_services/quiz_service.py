@@ -81,6 +81,7 @@ from src.api.utils.generation_progress.store import quiz_step_profile_for_mode
 from src.api.utils.mentor_progress_utils.space_recompute import (
     recompute_all_trainees_space_progress,
 )
+from src.api.utils.qc_response_projection import project_quiz_out
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.mentor_quiz_history import (
     can_delete_history_quiz,
@@ -259,7 +260,7 @@ class QuizService:
         if run_id is not None:
             quiz_out.run_id = run_id
             quiz_out.progress_session_id = run_id
-        return quiz_out
+        return project_quiz_out(quiz_out)
 
     async def _assert_no_concurrent_quiz_work(self, quiz_id: UUID) -> None:
         """Reject when a quiz or hint generation run is already in progress."""
@@ -939,7 +940,7 @@ class QuizService:
         quiz_out = QuizOut.model_validate(quiz)
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
         quiz_out.hints_status = compute_hints_status(active_questions)
-        return quiz_out
+        return project_quiz_out(quiz_out)
 
     async def dismiss_quiz_qc_warning(
         self,
@@ -969,7 +970,7 @@ class QuizService:
         quiz_out = QuizOut.model_validate(dismissed)
         quiz_out.questions = [QuizQuestionOut.model_validate(q) for q in questions]
         quiz_out.hints_status = compute_hints_status(active_questions)
-        return quiz_out
+        return project_quiz_out(quiz_out)
 
     # ── publish ────────────────────────────────────────────────────────
 
@@ -1050,7 +1051,7 @@ class QuizService:
                 exc_info=True,
             )
 
-        return quiz_out
+        return project_quiz_out(quiz_out)
 
     async def update_pass_threshold(
         self,
@@ -1197,7 +1198,7 @@ class QuizService:
                 exc_info=True,
             )
 
-        return quiz_out
+        return project_quiz_out(quiz_out)
 
     # ── question management ────────────────────────────────────────────
 

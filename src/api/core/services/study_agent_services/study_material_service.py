@@ -126,6 +126,10 @@ from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_DRAFT,
 )
 from src.api.utils.generation_progress.store import study_step_profile_for_mode
+from src.api.utils.qc_response_projection import (
+    project_study_material_feedback_response,
+    project_study_material_version_out,
+)
 from src.api.utils.space_node_utils.build_node import (
     format_effective_instruction,
     resolve_effective_instruction_parts,
@@ -364,9 +368,9 @@ def _study_material_version_out(
         if action_required is not None:
             updates["action_required"] = action_required
 
-    if not updates:
-        return out
-    return out.model_copy(update=updates)
+    if updates:
+        out = out.model_copy(update=updates)
+    return project_study_material_version_out(out)
 
 
 def _strip_internal_scores_from_qc_dict(qc_dict: dict[str, Any]) -> dict[str, Any]:
@@ -630,14 +634,16 @@ class StudyMaterialService:
                 )
             )
         else:
-            result = StudyMaterialFeedbackResponse(
-                has_new_version=True,
-                new_version_id=version_out.version_id,
-                status="ok",
-                new_version=version_out,
-                qc_failed_permanently=version_out.qc_failed_permanently,
-                qc_result=version_out.qc_result,
-                run_id=run_id,
+            result = project_study_material_feedback_response(
+                StudyMaterialFeedbackResponse(
+                    has_new_version=True,
+                    new_version_id=version_out.version_id,
+                    status="ok",
+                    new_version=version_out,
+                    qc_failed_permanently=version_out.qc_failed_permanently,
+                    qc_result=version_out.qc_result,
+                    run_id=run_id,
+                )
             )
         await self._persist_run_result(run_id, result)
         await self._complete_generation_run(run_id)
@@ -834,14 +840,16 @@ class StudyMaterialService:
                 run_id=run_id,
             )
         else:
-            result = StudyMaterialFeedbackResponse(
-                has_new_version=True,
-                new_version_id=version_out.version_id,
-                status="ok",
-                new_version=version_out,
-                qc_failed_permanently=version_out.qc_failed_permanently,
-                qc_result=version_out.qc_result,
-                run_id=run_id,
+            result = project_study_material_feedback_response(
+                StudyMaterialFeedbackResponse(
+                    has_new_version=True,
+                    new_version_id=version_out.version_id,
+                    status="ok",
+                    new_version=version_out,
+                    qc_failed_permanently=version_out.qc_failed_permanently,
+                    qc_result=version_out.qc_result,
+                    run_id=run_id,
+                )
             )
 
         await self._persist_run_result(run_id, result)
