@@ -23,17 +23,27 @@ def _now() -> datetime:
 
 
 def transition_sm_to_archived(version: StudyMaterialVersion) -> None:
-    """Supersede path: retain publish metadata, move to trainee archive lifecycle."""
+    """Supersede/unpublish path: move live material to trainee Previous history.
+
+    Clears ``is_active`` so ``get_active_version`` does not treat Previous as the
+    mentor workspace working pointer.
+    """
     version.is_published = False
     version.lifecycle_status = LIFECYCLE_ARCHIVED
     version.superseded_at = _now()
+    version.is_active = False
 
 
 def transition_sm_to_hidden(version: StudyMaterialVersion) -> None:
-    """Explicit unpublish: retain publish metadata; return to mentor draft workspace."""
+    """Explicit unpublish: retain publish metadata; leave mentor Removed/draft layer.
+
+    Clears ``is_active`` so unpublished Previous/Removed history is not resurrected
+    as the workspace active pointer via ``get_active_version``.
+    """
     version.is_published = False
     version.lifecycle_status = LIFECYCLE_DRAFT
     version.superseded_at = None
+    version.is_active = False
 
 
 def transition_sm_to_active(version: StudyMaterialVersion, published_by: UUID) -> None:

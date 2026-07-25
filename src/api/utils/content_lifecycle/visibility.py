@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import ColumnElement
 
 from src.api.data.models.postgres.e_learning_content.quizzes import Quiz
@@ -105,3 +107,57 @@ def is_trainee_live_quiz(quiz: Quiz) -> bool:
         lifecycle_status=quiz.lifecycle_status,
         is_published=quiz.is_published,
     )
+
+
+def is_trainee_previous_sm(version: StudyMaterialVersion) -> bool:
+    """Student previous history: superseded live material kept for trainees."""
+    return bool(version.lifecycle_status == LIFECYCLE_ARCHIVED)
+
+
+def is_removed_from_students_sm(version: StudyMaterialVersion) -> bool:
+    """Unpublished-from-live row still shown as Removed (hybrid clearable trash).
+
+    Not live, not Previous, not mentor shelf. Must have been published at least
+    once (``published_at`` set) and sit in draft/hidden lifecycle.
+    """
+    if is_trainee_live_sm(version):
+        return False
+    if is_trainee_previous_sm(version):
+        return False
+    if version.is_archived:
+        return False
+    if version.published_at is None:
+        return False
+    return version.lifecycle_status in (LIFECYCLE_DRAFT, LIFECYCLE_HIDDEN)
+
+
+def is_workspace_draft_sm(version: StudyMaterialVersion) -> bool:
+    """Mentor workspace draft layer ("Your draft") — not live/history/shelf.
+
+    Matches unpublished WIP in draft/hidden lifecycle, plus orphaned ``active``
+    rows that lost their publish flag without ``published_at``.
+    """
+    if is_discarded(lifecycle_status=version.lifecycle_status):
+        return False
+    if version.is_archived:
+        return False
+    if is_trainee_previous_sm(version):
+        return False
+    if is_trainee_live_sm(version):
+        return False
+    if version.published_at is not None:
+        return False
+    if version.lifecycle_status in (LIFECYCLE_DRAFT, LIFECYCLE_HIDDEN):
+        return True
+    # Orphan active unpublished without a prior publish timestamp.
+    return version.lifecycle_status == LIFECYCLE_ACTIVE and not version.is_published
+
+
+def node_has_live_sm(versions: Iterable[StudyMaterialVersion]) -> bool:
+    """True when any version in the iterable is live for students."""
+    return any(is_trainee_live_sm(version) for version in versions)
+
+
+def node_has_workspace_draft_sm(versions: Iterable[StudyMaterialVersion]) -> bool:
+    """True when any version in the iterable is a workspace draft."""
+    return any(is_workspace_draft_sm(version) for version in versions)
