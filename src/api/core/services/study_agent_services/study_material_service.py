@@ -120,6 +120,7 @@ from src.api.utils.content_lifecycle import (
     is_mentor_openable_sm,
     is_mentor_visible_sm,
     is_trainee_live_sm,
+    is_trainee_previous_sm,
 )
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ARCHIVED,
@@ -192,6 +193,7 @@ def _clear_drafts_block_reason_no_discardable_versions(
     """Explain why clear-all-drafts is unavailable when nothing is discardable."""
     live_sm_count = sum(1 for v in versions if is_trainee_live_sm(v))
     accessible_count = sum(1 for v in versions if is_mentor_openable_sm(v))
+    trainee_previous_count = sum(1 for v in versions if is_trainee_previous_sm(v))
     mentor_archived_count = sum(
         1
         for v in versions
@@ -218,6 +220,12 @@ def _clear_drafts_block_reason_no_discardable_versions(
         return (
             "There are no unpublished drafts to discard—only live or student-archive "
             "versions remain. Open existing material to edit or improve it."
+        )
+    if trainee_previous_count > 0:
+        return (
+            "Previous student material is kept as history and cannot be cleared. "
+            "Generate creates a new draft beside it, or open History to review "
+            "past versions."
         )
     if mentor_archived_count > 0:
         return (

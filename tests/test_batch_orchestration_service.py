@@ -338,8 +338,78 @@ async def test_claim_next_step_skips_existing_material() -> None:
 
     assert claimed is None
     assert step.status == "skipped"
+    assert step.error_message == (
+        "Skipped — existing workspace draft or live material."
+    )
     assert batch.skipped_steps == 1
     finalize_batch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_should_skip_step_only_for_live_or_workspace_draft() -> None:
+    """Option 2: Previous/Removed/shelf alone do not skip; draft/live do."""
+    batch = _make_batch(policy={"mode": "skip_existing"})
+    step = _make_step(batch_id=batch.batch_id, position=1)
+    service = BatchOrchestrationService(MagicMock())
+
+    previous = SimpleNamespace(
+        lifecycle_status="archived",
+        is_published=False,
+        is_archived=False,
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    removed = SimpleNamespace(
+        lifecycle_status="hidden",
+        is_published=False,
+        is_archived=False,
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    shelf = SimpleNamespace(
+        lifecycle_status="draft",
+        is_published=False,
+        is_archived=True,
+        published_at=None,
+    )
+    draft = SimpleNamespace(
+        lifecycle_status="draft",
+        is_published=False,
+        is_archived=False,
+        published_at=None,
+    )
+    live = SimpleNamespace(
+        lifecycle_status="active",
+        is_published=True,
+        is_archived=False,
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    cases = [
+        ([], False),
+        ([previous], False),
+        ([removed], False),
+        ([shelf], False),
+        ([draft], True),
+        ([live], True),
+        ([previous, draft], True),
+        ([previous, live], True),
+    ]
+    for versions, expected in cases:
+        with patch.object(
+            service,
+            "_non_discarded_sm_versions",
+            new_callable=AsyncMock,
+            return_value=versions,
+        ):
+            assert await service._should_skip_step(batch, step) is expected
+
+    regenerate_batch = _make_batch(policy={"mode": "regenerate_all"})
+    with patch.object(
+        service,
+        "_non_discarded_sm_versions",
+        new_callable=AsyncMock,
+        return_value=[draft],
+    ):
+        assert await service._should_skip_step(regenerate_batch, step) is False
 
 
 @pytest.mark.asyncio
@@ -390,7 +460,7 @@ async def test_claim_next_step_regenerate_all_fails_when_clear_blocked() -> None
         return_value=StudyMaterialClearDraftsEligibilityOut(
             can_clear=False,
             version_count=1,
-            quiz_count=0,
+            quiz_count=1,
             block_reason="Published quiz blocks clear.",
         )
     )
@@ -427,6 +497,195 @@ async def test_claim_next_step_regenerate_all_fails_when_clear_blocked() -> None
     assert step.status == "failed"
     assert batch.failed_steps == 1
     assert "Published quiz" in (step.error_message or "")
+    study_material_service.clear_all_drafts.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_claim_next_step_regenerate_all_fails_when_live_blocks_clear() -> None:
+    batch_id = uuid4()
+    batch = _make_batch(batch_id=batch_id, policy={"mode": "regenerate_all"})
+    step = _make_step(batch_id=batch_id, position=1)
+
+    session = MagicMock()
+    session.flush = AsyncMock()
+    service = BatchOrchestrationService(session)
+
+    study_material_service = MagicMock()
+    study_material_service.get_clear_drafts_eligibility = AsyncMock(
+        return_value=StudyMaterialClearDraftsEligibilityOut(
+            can_clear=False,
+            version_count=0,
+            quiz_count=0,
+            block_reason=(
+                "Study material is live for trainees. "
+                "Unpublish it before regenerating from scratch."
+            ),
+        )
+    )
+    study_material_service.clear_all_drafts = AsyncMock()
+
+    with (
+        patch.object(service, "_get_batch", new_callable=AsyncMock, return_value=batch),
+        patch.object(
+            service, "_has_running_step", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(
+            service,
+            "_next_pending_step_for_batch",
+            new_callable=AsyncMock,
+            side_effect=[step, None],
+        ),
+        patch.object(
+            service, "_should_skip_step", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(
+            service,
+            "_node_has_study_material_version",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            service,
+            "_node_has_live_study_material",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "src.api.core.services.batch_orchestration_service.StudyMaterialService",
+            return_value=study_material_service,
+        ),
+        patch.object(service, "_maybe_finalize_batch", new_callable=AsyncMock),
+    ):
+        claimed = await service.claim_next_step(batch_id)
+
+    assert claimed is None
+    assert step.status == "failed"
+    assert batch.failed_steps == 1
+    assert "live for trainees" in (step.error_message or "")
+    study_material_service.clear_all_drafts.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_claim_next_step_regenerate_all_soft_continues_previous_only() -> None:
+    """Previous-only: no discardable drafts — claim without clear, do not fail."""
+    batch_id = uuid4()
+    batch = _make_batch(batch_id=batch_id, policy={"mode": "regenerate_all"})
+    step = _make_step(batch_id=batch_id, position=1)
+
+    session = MagicMock()
+    session.flush = AsyncMock()
+    service = BatchOrchestrationService(session)
+
+    study_material_service = MagicMock()
+    study_material_service.get_clear_drafts_eligibility = AsyncMock(
+        return_value=StudyMaterialClearDraftsEligibilityOut(
+            can_clear=False,
+            version_count=0,
+            quiz_count=0,
+            block_reason=(
+                "Previous student material is kept as history and cannot be cleared. "
+                "Generate creates a new draft beside it, or open History to review "
+                "past versions."
+            ),
+        )
+    )
+    study_material_service.clear_all_drafts = AsyncMock()
+
+    with (
+        patch.object(service, "_get_batch", new_callable=AsyncMock, return_value=batch),
+        patch.object(
+            service, "_has_running_step", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(
+            service,
+            "_next_pending_step_for_batch",
+            new_callable=AsyncMock,
+            return_value=step,
+        ),
+        patch.object(
+            service, "_should_skip_step", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(
+            service,
+            "_node_has_study_material_version",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            service,
+            "_node_has_live_study_material",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "src.api.core.services.batch_orchestration_service.StudyMaterialService",
+            return_value=study_material_service,
+        ),
+    ):
+        claimed = await service.claim_next_step(batch_id)
+
+    assert claimed is step
+    assert step.status == "running"
+    assert batch.failed_steps == 0
+    study_material_service.clear_all_drafts.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_claim_next_step_regenerate_all_clears_when_eligible() -> None:
+    """Draft (+ optional Previous): clear discardable drafts, then claim."""
+    batch_id = uuid4()
+    batch = _make_batch(batch_id=batch_id, policy={"mode": "regenerate_all"})
+    step = _make_step(batch_id=batch_id, position=1)
+
+    session = MagicMock()
+    session.flush = AsyncMock()
+    service = BatchOrchestrationService(session)
+
+    study_material_service = MagicMock()
+    study_material_service.get_clear_drafts_eligibility = AsyncMock(
+        return_value=StudyMaterialClearDraftsEligibilityOut(
+            can_clear=True,
+            version_count=1,
+            quiz_count=0,
+            block_reason=None,
+        )
+    )
+    study_material_service.clear_all_drafts = AsyncMock()
+
+    with (
+        patch.object(service, "_get_batch", new_callable=AsyncMock, return_value=batch),
+        patch.object(
+            service, "_has_running_step", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(
+            service,
+            "_next_pending_step_for_batch",
+            new_callable=AsyncMock,
+            return_value=step,
+        ),
+        patch.object(
+            service, "_should_skip_step", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(
+            service,
+            "_node_has_study_material_version",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "src.api.core.services.batch_orchestration_service.StudyMaterialService",
+            return_value=study_material_service,
+        ),
+    ):
+        claimed = await service.claim_next_step(batch_id)
+
+    assert claimed is step
+    assert step.status == "running"
+    study_material_service.clear_all_drafts.assert_awaited_once_with(
+        step.node_id,
+        batch.mentor_id,
+        "mentor",
+    )
 
 
 @pytest.mark.asyncio

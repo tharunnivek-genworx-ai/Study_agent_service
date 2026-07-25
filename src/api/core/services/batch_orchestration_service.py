@@ -41,11 +41,16 @@ from src.api.schemas.batch_schemas import (
 )
 from src.api.schemas.common import GenerationRunStatus
 from src.api.utils.common_utils import utc_now
-from src.api.utils.content_lifecycle.visibility import exclude_discarded
+from src.api.utils.content_lifecycle.visibility import (
+    exclude_discarded,
+    node_has_live_sm,
+    node_has_workspace_draft_sm,
+)
 from src.api.utils.space_node_utils.node_role_assert import _assert_space_access
 
 _TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _ACTIVE_BATCH_STATUSES = frozenset({"pending", "running"})
+_SKIP_EXISTING_MESSAGE = "Skipped — existing workspace draft or live material."
 
 
 class BatchOrchestrationService:
@@ -304,6 +309,7 @@ class BatchOrchestrationService:
 
             if await self._should_skip_step(batch, step):
                 step.status = "skipped"
+                step.error_message = _SKIP_EXISTING_MESSAGE
                 step.completed_at = utc_now()
                 batch.skipped_steps += 1
                 batch.updated_at = utc_now()
@@ -321,7 +327,17 @@ class BatchOrchestrationService:
                             "mentor",
                         )
                     )
-                    if not eligibility.can_clear:
+                    if eligibility.can_clear:
+                        await study_material_service.clear_all_drafts(
+                            step.node_id,
+                            batch.mentor_id,
+                            "mentor",
+                        )
+                    elif (
+                        eligibility.quiz_count > 0
+                        or await self._node_has_live_study_material(step.node_id)
+                    ):
+                        # Live material or blocking quiz still fails regenerate.
                         step.status = "failed"
                         step.error_message = (
                             eligibility.block_reason
@@ -332,11 +348,8 @@ class BatchOrchestrationService:
                         batch.updated_at = utc_now()
                         await self.session.flush()
                         continue
-                    await study_material_service.clear_all_drafts(
-                        step.node_id,
-                        batch.mentor_id,
-                        "mentor",
-                    )
+                    # Soft-continue: Previous-only / shelf-only / no discardable
+                    # drafts — claim without clearing protected history.
 
             now = utc_now()
             step.status = "running"
@@ -472,9 +485,27 @@ class BatchOrchestrationService:
         )
 
     async def _should_skip_step(self, batch: BatchJob, step: BatchJobStep) -> bool:
+        """Skip only when a workspace draft or live material already exists.
+
+        Previous / Removed / mentor-shelf-only history must still generate a new
+        draft (Generate All Option 2).
+        """
         if self._policy_mode(batch.policy) != "skip_existing":
             return False
-        return await self._node_has_study_material_version(step.node_id)
+        versions = await self._non_discarded_sm_versions(step.node_id)
+        return node_has_live_sm(versions) or node_has_workspace_draft_sm(versions)
+
+    async def _non_discarded_sm_versions(
+        self, node_id: UUID
+    ) -> list[StudyMaterialVersion]:
+        """Non-discarded study material versions for a node."""
+        result = await self.session.scalars(
+            select(StudyMaterialVersion).where(
+                StudyMaterialVersion.node_id == node_id,
+                exclude_discarded(StudyMaterialVersion.lifecycle_status),
+            )
+        )
+        return list(result.all())
 
     async def _node_has_study_material_version(self, node_id: UUID) -> bool:
         """True when the node has non-discarded study material (matches repo reads)."""
@@ -488,6 +519,11 @@ class BatchOrchestrationService:
                 .limit(1)
             )
         )
+
+    async def _node_has_live_study_material(self, node_id: UUID) -> bool:
+        """True when the node has live (published active) study material."""
+        versions = await self._non_discarded_sm_versions(node_id)
+        return node_has_live_sm(versions)
 
     async def _node_ids_with_active_runs(self, node_ids: list[UUID]) -> set[UUID]:
         if not node_ids:
