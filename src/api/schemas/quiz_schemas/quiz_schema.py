@@ -456,8 +456,8 @@ class TraineeQuizQuestionOut(BaseModel):
 
     IMPORTANT — what is NEVER shown during a live attempt:
       - The correct answer (correct_option) is never exposed here.
-      - explanation is post-submit only; it is served in a separate
-        post-submission response, not in this live-attempt schema.
+      - explanation and correct_option are only revealed after submit when the
+        trainee has met the quiz pass threshold (best score >= pass_threshold_percent).
 
     The service merges the question row with the response row before building
     this response — the schema accepts Optional for all gated fields.

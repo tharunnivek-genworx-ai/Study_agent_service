@@ -52,6 +52,7 @@ from src.api.utils.generation_progress.store import (
     step_defs_for_profile,
     step_profile_from_request_params,
 )
+from src.api.utils.qc_response_projection import project_generation_run_result_payload
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +342,7 @@ class GenerationRunService:
     ) -> GenerationRunResultOut:
         run = await self._get_run_for_mentor(run_id, mentor_id)
         params = run.request_params or {}
-        stored = params.get("result") or {}
+        stored = project_generation_run_result_payload(params.get("result") or {})
         return GenerationRunResultOut(
             run_id=run.run_id,
             pipeline=run.pipeline,

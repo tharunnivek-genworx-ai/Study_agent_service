@@ -52,6 +52,7 @@ from src.api.schemas.quiz_schemas import (
     QuizQuestionOut,
 )
 from src.api.utils.generation_progress.store import hint_step_profile_for_mode
+from src.api.utils.qc_response_projection import project_quiz_out
 from src.api.utils.quiz_utils.hints_status import compute_hints_status
 from src.api.utils.quiz_utils.study_material_link import (
     require_mentor_quiz_study_material_source,
@@ -180,7 +181,7 @@ class HintService:
         if run_id is not None:
             quiz_out.run_id = run_id
             quiz_out.progress_session_id = run_id
-        return quiz_out
+        return project_quiz_out(quiz_out)
 
     async def _run_hint_graph(
         self,

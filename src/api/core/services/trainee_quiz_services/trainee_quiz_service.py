@@ -151,6 +151,7 @@ class TraineeQuizService:
         response: QuizQuestionResponse | None,
         *,
         attempt_submitted: bool,
+        reveal_answers: bool = False,
     ) -> TraineeQuizQuestionOut:
         hint_level = response.hint_level_reached if response is not None else 0
         was_locked = response.was_locked if response is not None else False
@@ -175,8 +176,8 @@ class TraineeQuizService:
             was_locked=was_locked,
             selected_option=response.selected_option if response is not None else None,
             is_correct=response.is_correct if response is not None else None,
-            correct_option=question.correct_option if attempt_submitted else None,
-            explanation=question.explanation if attempt_submitted else None,
+            correct_option=question.correct_option if reveal_answers else None,
+            explanation=question.explanation if reveal_answers else None,
             nav_status=compute_nav_status(
                 response,
                 attempt_submitted=attempt_submitted,
@@ -204,9 +205,17 @@ class TraineeQuizService:
         best_score: float | None = None,
     ) -> TraineeQuizOut:
         attempt_submitted = attempt.status == "submitted"
+        effective_best_score = best_score if best_score is not None else attempt.score
+        has_met_pass_threshold = score_meets_pass_threshold(
+            effective_best_score, quiz.pass_threshold_percent
+        )
+        reveal_answers = attempt_submitted and has_met_pass_threshold
         trainee_questions = [
             self._build_question_out(
-                q, responses_map.get(q.question_id), attempt_submitted=attempt_submitted
+                q,
+                responses_map.get(q.question_id),
+                attempt_submitted=attempt_submitted,
+                reveal_answers=reveal_answers,
             )
             for q in questions
         ]
@@ -220,7 +229,6 @@ class TraineeQuizService:
                 if attempt.resume_question_id in active_question_ids
                 else compute_resume_question_id(questions, responses_map)
             )
-        effective_best_score = best_score if best_score is not None else attempt.score
 
         return TraineeQuizOut(
             quiz_id=quiz.quiz_id,
@@ -235,9 +243,7 @@ class TraineeQuizService:
             score_percent=_score_percent(attempt.score),
             pass_threshold_percent=quiz.pass_threshold_percent,
             best_score_percent=_score_percent(effective_best_score),
-            has_met_pass_threshold=score_meets_pass_threshold(
-                effective_best_score, quiz.pass_threshold_percent
-            ),
+            has_met_pass_threshold=has_met_pass_threshold,
             total_correct=attempt.total_correct if attempt_submitted else None,
             total_skipped=attempt.total_skipped if attempt_submitted else None,
             questions=trainee_questions,
