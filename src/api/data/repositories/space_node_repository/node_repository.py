@@ -30,6 +30,23 @@ class SubtreePreviewNode:
     inherits_section_default: bool
 
 
+def _path_ancestors(
+    path_node_ids: list[UUID],
+    node_by_id: dict[UUID, TopicNode],
+) -> list[TopicNode]:
+    """Resolve root-to-parent ancestors from the recursive CTE path.
+
+    Every active node in a subtree is loaded in the single ``node_by_id`` query,
+    so resolving the path in memory avoids one database round trip per ancestor
+    per preview node.
+    """
+    return [
+        node_by_id[ancestor_id]
+        for ancestor_id in path_node_ids[:-1]
+        if ancestor_id in node_by_id
+    ]
+
+
 class NodeRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.db = session
@@ -141,13 +158,13 @@ class NodeRepository:
             if node is None:
                 continue
 
-            ancestors = await self.get_ancestors(node)
-            instruction_parts = resolve_effective_instruction_parts(node, ancestors)
-            effective_instruction = format_effective_instruction(instruction_parts)
-
             path_node_ids = [
                 UUID(str(v)) for v in cast(list[Any], row["path_node_ids"])
             ]
+            ancestors = _path_ancestors(path_node_ids, node_by_id)
+            instruction_parts = resolve_effective_instruction_parts(node, ancestors)
+            effective_instruction = format_effective_instruction(instruction_parts)
+
             path_titles = [str(v) for v in cast(list[Any], row["path_titles"])]
 
             preview_nodes.append(

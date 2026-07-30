@@ -512,6 +512,27 @@ def render_sections_to_markdown(doc: dict[str, Any]) -> str:
     return "\n\n".join(parts).strip()
 
 
+def normalize_legacy_study_content(raw: str) -> str:
+    """Recover markdown when older clients stored the full API JSON as a string.
+
+    Matches the former frontend ``normalizeStudyContent`` behaviour: if ``raw``
+    is a JSON object with a string ``content`` field, return that field;
+    otherwise return ``raw`` unchanged.
+    """
+    trimmed = raw.strip()
+    if not trimmed.startswith("{") or '"content"' not in trimmed:
+        return raw
+    try:
+        parsed = json.loads(trimmed)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+    if isinstance(parsed, dict):
+        inner = parsed.get("content")
+        if isinstance(inner, str):
+            return inner
+    return raw
+
+
 def content_for_persistence(raw_content: str) -> str:
     """Render JSON study documents to markdown; pass through legacy markdown."""
     text = raw_content.strip()

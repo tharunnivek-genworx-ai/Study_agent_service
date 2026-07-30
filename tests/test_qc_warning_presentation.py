@@ -188,3 +188,71 @@ def test_enrich_qc_result_attaches_humanized_issues() -> None:
     assert enriched["humanized_issues"] == [
         'The "Derivation of the Power Rule" section does not provide a derivation.'
     ]
+
+
+def test_enrich_placement_only_hides_mentor_qc_warning() -> None:
+    qc = _qc_with_failed_checks(
+        [
+            {
+                "id": "det_equation_in_content",
+                "category": "document_coherence",
+                "question": "q",
+                "severity": "critical",
+                "section_id": "ts_3",
+            },
+            {
+                "id": "det_code_in_formula_block",
+                "category": "document_coherence",
+                "question": "q",
+                "severity": "critical",
+                "section_id": "ts_3",
+            },
+        ]
+    )
+    enriched = enrich_qc_result_for_client(qc, CONCEPT_PLAN)
+    assert enriched is not None
+    assert enriched["should_show_mentor_qc_warning"] is False
+    assert enriched["failure_class"] == "placement_only"
+
+
+def test_enrich_substance_failure_shows_mentor_qc_warning() -> None:
+    qc = _qc_with_failed_checks(
+        [
+            {
+                "id": "det_structure_coverage",
+                "category": "structure",
+                "question": "Sections exist?",
+                "severity": "critical",
+                "evidence": "Missing section ids: ts_1",
+            }
+        ]
+    )
+    enriched = enrich_qc_result_for_client(qc, CONCEPT_PLAN)
+    assert enriched is not None
+    assert enriched["should_show_mentor_qc_warning"] is True
+    assert enriched["failure_class"] == "substance"
+
+
+def test_enrich_mixed_failure_shows_mentor_qc_warning() -> None:
+    qc = _qc_with_failed_checks(
+        [
+            {
+                "id": "det_equation_in_content",
+                "category": "document_coherence",
+                "question": "q",
+                "severity": "critical",
+                "section_id": "ts_3",
+            },
+            {
+                "id": "mc_2",
+                "category": "must_cover",
+                "question": "Derivation missing",
+                "severity": "critical",
+                "section_id": "ts_3",
+            },
+        ]
+    )
+    enriched = enrich_qc_result_for_client(qc, CONCEPT_PLAN)
+    assert enriched is not None
+    assert enriched["should_show_mentor_qc_warning"] is True
+    assert enriched["failure_class"] == "mixed"

@@ -77,6 +77,14 @@ if "procrastinate" not in sys.modules:
 
                 return _Ctx()
 
+        class _AppNotOpen(Exception):
+            pass
+
+        procrastinate_exceptions_mod = types.ModuleType("procrastinate.exceptions")
+        procrastinate_exceptions_mod.AppNotOpen = _AppNotOpen
+
         procrastinate_mod.App = _App
         procrastinate_mod.PsycopgConnector = _PsycopgConnector
+        procrastinate_mod.exceptions = procrastinate_exceptions_mod
         sys.modules["procrastinate"] = procrastinate_mod
+        sys.modules["procrastinate.exceptions"] = procrastinate_exceptions_mod

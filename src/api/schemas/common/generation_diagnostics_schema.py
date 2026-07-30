@@ -147,6 +147,14 @@ class GenerationDiagnosticsOut(BaseModel):
     summary: str = ""
     warning_presentation: QcWarningPresentationOut | None = None
 
+    # ── Mentor QC warning placement policy (server SoT) ───────────────────
+    should_show_mentor_qc_warning: bool | None = Field(
+        default=None, alias="shouldShowMentorQcWarning"
+    )
+    failure_class: Literal["placement_only", "substance", "mixed", "none"] | None = (
+        Field(default=None, alias="failureClass")
+    )
+
     # ── Study material two-pass QC metadata (optional) ────────────────────
     must_cover_checklist: list[dict[str, Any]] | None = None
     qc_llm_model_used: str | None = Field(default=None, alias="qcLlmModelUsed")

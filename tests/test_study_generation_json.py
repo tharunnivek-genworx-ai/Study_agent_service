@@ -11,6 +11,7 @@ from src.api.utils.study_agent_utils.generation.must_cover_checklist_format impo
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     canonicalize_generation_json,
     content_for_persistence,
+    normalize_legacy_study_content,
     render_sections_to_markdown,
     validate_section_id_coverage,
 )
@@ -225,6 +226,27 @@ class TestStudyGenerationJson:
         assert "```\n```" not in md
         assert "Peterson step." in md
         assert "Thread example." in md
+
+    def test_normalize_legacy_study_content_plain_markdown_unchanged(self):
+        raw = "## Hello\n\nPlain markdown body."
+        assert normalize_legacy_study_content(raw) == raw
+
+    def test_normalize_legacy_study_content_extracts_json_content(self):
+        inner = "## Recovered\n\nBody text."
+        raw = json.dumps({"content": inner, "version_id": "ignored"})
+        assert normalize_legacy_study_content(raw) == inner
+
+    def test_normalize_legacy_study_content_invalid_json(self):
+        raw = '{"content": "unterminated'
+        assert normalize_legacy_study_content(raw) == raw
+
+    def test_normalize_legacy_study_content_json_without_content(self):
+        raw = json.dumps({"title": "no content field", "sections": []})
+        assert normalize_legacy_study_content(raw) == raw
+
+    def test_normalize_legacy_study_content_non_string_content(self):
+        raw = json.dumps({"content": {"nested": True}})
+        assert normalize_legacy_study_content(raw) == raw
 
     def test_content_for_persistence_renders_json(self):
         persisted = content_for_persistence(json.dumps(_SAMPLE))

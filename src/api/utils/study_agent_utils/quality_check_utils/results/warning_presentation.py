@@ -5,6 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
+from src.api.utils.study_agent_utils.quality_check_utils.core.failure_class import (
+    classify_failure_class,
+    is_placement_only_failure,
+)
+
 DetDisplayTier = Literal["formatting", "structure", "evidence"]
 QcWarningKind = Literal["det_only", "llm_content", "mixed"]
 
@@ -413,6 +418,13 @@ def enrich_qc_result_for_client(
 
     enriched = dict(qc_result)
     section_labels = build_section_label_map(concept_plan)
+
+    failed = extract_failed_checks(enriched)
+    failure_class = classify_failure_class(failed)
+    # Placement-only DET failures are remediable document-structure noise; mentors
+    # should not see the permanent-QC warning banner for those alone.
+    enriched["should_show_mentor_qc_warning"] = not is_placement_only_failure(failed)
+    enriched["failure_class"] = failure_class
 
     presentation = build_qc_warning_presentation(enriched, concept_plan)
     if presentation:

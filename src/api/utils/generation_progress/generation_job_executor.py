@@ -54,10 +54,10 @@ async def _defer_generation_run_job(
     role: str,
     is_resume: bool,
 ) -> None:
-    from src.api.batch.procrastinate_app import app
+    from src.api.batch.procrastinate_app import deferring_app
     from src.api.batch.tasks import execute_generation_run_job
 
-    async with app.open_async():
+    async with deferring_app():
         task = execute_generation_run_job
         configure = getattr(task, "configure", None)
         if callable(configure):
