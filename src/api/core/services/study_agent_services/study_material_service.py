@@ -119,8 +119,10 @@ from src.api.utils.content_lifecycle import (
     is_mentor_discardable_sm,
     is_mentor_openable_sm,
     is_mentor_visible_sm,
+    is_removed_from_students_sm,
     is_trainee_live_sm,
     is_trainee_previous_sm,
+    is_workspace_draft_sm,
 )
 from src.api.utils.content_lifecycle.constants import (
     LIFECYCLE_ARCHIVED,
@@ -234,6 +236,29 @@ def _clear_drafts_block_reason_no_discardable_versions(
             "or use Generate draft to create new material."
         )
     return "No study material has been generated for this topic yet."
+
+
+def _compute_show_history_hub(versions: list[StudyMaterialVersion]) -> bool:
+    """Return server eligibility for the mentor History Hub.
+
+    Progress remains a client-only override. This mirrors the frontend history
+    partitions: a live version or any workspace draft suppresses the hub, while
+    Previous, Removed, and mentor-shelf versions make up its historical content.
+    """
+    visible_versions = [
+        version for version in versions if is_mentor_visible_sm(version)
+    ]
+    has_live_version = any(version.is_published for version in visible_versions)
+    has_workspace_draft = any(
+        is_workspace_draft_sm(version) for version in visible_versions
+    )
+    has_historical_version = any(
+        is_trainee_previous_sm(version)
+        or is_removed_from_students_sm(version)
+        or version.is_archived
+        for version in visible_versions
+    )
+    return not has_live_version and not has_workspace_draft and has_historical_version
 
 
 def _build_check_items(raw_checks: list[Any] | None) -> list[QualityCheckItemOut]:
@@ -1762,6 +1787,7 @@ class StudyMaterialService:
         active = await sm_repo.get_active_version(node_id)
         has_versions = any(is_mentor_visible_sm(v) for v in all_versions)
         has_workspace_versions = any(is_mentor_openable_sm(v) for v in all_versions)
+        show_history_hub = _compute_show_history_hub(all_versions)
 
         generation_snapshot: str | None = None
         instruction_changed = False
@@ -1813,6 +1839,7 @@ class StudyMaterialService:
             node_id=node_id,
             has_versions=has_versions,
             has_workspace_versions=has_workspace_versions,
+            show_history_hub=show_history_hub,
             active_version_id=active.version_id if active else None,
             published_version_id=published.version_id if published else None,
             can_access_study_material=has_versions,

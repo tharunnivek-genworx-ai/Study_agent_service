@@ -532,6 +532,7 @@ class StudyMaterialMentorUiStateOut(BaseModel):
     node_id: UUID
     has_versions: bool
     has_workspace_versions: bool = False
+    show_history_hub: bool
     active_version_id: UUID | None
     published_version_id: UUID | None = None
     can_access_study_material: bool
