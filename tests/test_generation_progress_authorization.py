@@ -69,3 +69,29 @@ async def test_progress_store_rejects_foreign_run_before_serializing() -> None:
 
     assert result is None
     store.get_record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_progress_store_serializes_owned_run_with_one_repository_read() -> None:
+    run_id = uuid4()
+    mentor_id = uuid4()
+    run = MagicMock(
+        run_id=run_id,
+        mentor_id=mentor_id,
+        pipeline="study_material",
+        status="running",
+        request_params={},
+        progress_step_index=0,
+        error_message=None,
+    )
+    run.created_at.timestamp.return_value = 1.0
+    run.updated_at.timestamp.return_value = 2.0
+    store = DbGenerationProgressStore(MagicMock())
+    store._repo = MagicMock()
+    store._repo.get_by_id = AsyncMock(return_value=run)
+
+    result = await store.to_progress_out_for_mentor(run_id, mentor_id)
+
+    assert result is not None
+    assert result.session_id == str(run_id)
+    store._repo.get_by_id.assert_awaited_once_with(run_id)

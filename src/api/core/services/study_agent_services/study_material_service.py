@@ -150,6 +150,7 @@ from src.api.utils.study_agent_utils.generation.generation_outcome_resolver impo
 from src.api.utils.study_agent_utils.generation.study_generation_json import (
     build_action_required,
     content_for_persistence,
+    normalize_legacy_study_content,
     parse_generation_document,
 )
 from src.api.utils.study_agent_utils.media import (
@@ -353,7 +354,9 @@ def _study_material_version_out(
 ) -> StudyMaterialVersionOut:
     """Build API output with mentor-facing QC warning copy computed server-side."""
     out = StudyMaterialVersionOut.model_validate(version)
-    updates: dict[str, Any] = {}
+    updates: dict[str, Any] = {
+        "content": normalize_legacy_study_content(out.content),
+    }
 
     if isinstance(version.qc_result, dict):
         enriched = enrich_qc_result_for_client(
@@ -376,8 +379,7 @@ def _study_material_version_out(
         if action_required is not None:
             updates["action_required"] = action_required
 
-    if updates:
-        out = out.model_copy(update=updates)
+    out = out.model_copy(update=updates)
     return project_study_material_version_out(out)
 
 
@@ -1626,13 +1628,14 @@ class StudyMaterialService:
         user_id: UUID,
         role: str,
         *,
-        archived: bool = False,
+        archived: bool | None = False,
         viewing_version_id: UUID | None = None,
     ) -> StudyMaterialVersionHistoryOut:
         """Returns versions ordered by version_number DESC.
 
         archived=False — working history (default).
         archived=True — archive shelf.
+        archived=None — both shelves in one response.
         """
         node = await _get_node_and_assert_space_access(
             self.session, node_id, user_id, owner_only=False
@@ -1643,7 +1646,11 @@ class StudyMaterialService:
         if role == "mentor":
             await repo.reconcile_published_versions(node_id)
         versions = await repo.get_all_versions(node_id, archived=archived)
-        all_versions = await repo.get_all_versions(node_id, archived=None)
+        all_versions = (
+            versions
+            if archived is None
+            else await repo.get_all_versions(node_id, archived=None)
+        )
         version_lookup = {v.version_id: v for v in all_versions}
         summaries = [
             StudyMaterialVersionSummary.from_version_row(

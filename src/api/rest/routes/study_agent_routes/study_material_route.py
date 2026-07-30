@@ -310,6 +310,10 @@ async def list_study_material_versions(
         default=False,
         description="When true, return archived versions only.",
     ),
+    include_archived: bool = Query(
+        default=False,
+        description="When true, return working and archived versions in one response.",
+    ),
     viewing_version_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: TokenPayload = Depends(get_current_user),
@@ -320,7 +324,7 @@ async def list_study_material_versions(
         node_id,
         current_user.sub,
         current_user.role,
-        archived=archived,
+        archived=None if include_archived else archived,
         viewing_version_id=viewing_version_id,
     )
 

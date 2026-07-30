@@ -45,6 +45,9 @@ from src.api.utils.space_node_utils.node_role_assert import (
     _get_node_and_assert_space_access,
 )
 from src.api.utils.storage.object_storage import download_bytes, exists
+from src.api.utils.study_agent_utils.generation.study_generation_json import (
+    normalize_legacy_study_content,
+)
 from src.api.utils.study_agent_utils.media import (
     build_study_material_pdf_filename,
     render_study_material_pdf,
@@ -110,7 +113,7 @@ class TraineeStudyService:
             node_id=version.node_id,
             space_id=version.space_id,
             version_number=version.version_number,
-            content=version.content,
+            content=normalize_legacy_study_content(version.content),
             reference_material_id=version.reference_material_id,
             published_at=version.published_at,
             study_material_read_percent=snapshot.study_material_read_percent,
@@ -246,7 +249,7 @@ class TraineeStudyService:
             version_label=build_version_display_label(
                 version.version_number, version.generation_type
             ),
-            content=version.content,
+            content=normalize_legacy_study_content(version.content),
             reference_material_id=version.reference_material_id,
             published_at=version.published_at,
             superseded_at=version.superseded_at,

@@ -19,10 +19,10 @@ async def dispatch_batch_job(batch_id: UUID | str) -> None:
         await process_batch(batch_id_str)
         return
 
-    from src.api.batch.procrastinate_app import app
+    from src.api.batch.procrastinate_app import deferring_app
     from src.api.batch.tasks import process_batch
 
-    async with app.open_async():
+    async with deferring_app():
         job_id = await process_batch.defer_async(batch_id=batch_id_str)
     logger.info(
         "Deferred process_batch job",

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.data.models.postgres.generation.generation_runs import GenerationRun
 from src.api.data.repositories import GenerationRunRepository
 from src.api.schemas import (
     GenerationJobStatus,
@@ -112,7 +113,10 @@ class DbGenerationProgressStore:
         run = await self._repo.get_by_id(run_id)
         if run is None:
             return None
+        return self._record_from_run(run)
 
+    @staticmethod
+    def _record_from_run(run: GenerationRun) -> GenerationProgressRecord:
         pipeline = GenerationPipeline(run.pipeline)
         profile = step_profile_from_request_params(
             run.request_params, pipeline=pipeline
@@ -148,7 +152,4 @@ class DbGenerationProgressStore:
         run = await self._repo.get_by_id(run_id)
         if run is None or run.mentor_id != mentor_id:
             return None
-        record = await self.get_record(run_id)
-        if record is None:
-            return None
-        return record.to_progress_out()
+        return self._record_from_run(run).to_progress_out()
